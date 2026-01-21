@@ -1,0 +1,237 @@
+import { Component, inject, OnInit, signal } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { FormBuilder, FormGroup, Validators, ReactiveFormsModule } from '@angular/forms';
+import { MatDialogRef, MAT_DIALOG_DATA, MatDialogModule } from '@angular/material/dialog';
+import { MatFormFieldModule } from '@angular/material/form-field';
+import { MatInputModule } from '@angular/material/input';
+import { MatSelectModule } from '@angular/material/select';
+import { MatButtonModule } from '@angular/material/button';
+import { MatIconModule } from '@angular/material/icon';
+import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
+import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
+import { User, Role } from '../../core/models/user.model';
+import { UserService } from '../../core/services/user.service';
+import { RoleService } from '../../core/services/role.service';
+
+@Component({
+  selector: 'app-user-form-dialog',
+  standalone: true,
+  imports: [
+    CommonModule,
+    ReactiveFormsModule,
+    MatDialogModule,
+    MatFormFieldModule,
+    MatInputModule,
+    MatSelectModule,
+    MatButtonModule,
+    MatIconModule,
+    MatProgressSpinnerModule,
+    MatSnackBarModule
+  ],
+  template: `
+    <div class="dialog-container">
+      <div class="dialog-header">
+        <h2>{{ isEditMode ? 'Edit User' : 'Add New User' }}</h2>
+        <button mat-icon-button (click)="close()">
+          <mat-icon>close</mat-icon>
+        </button>
+      </div>
+
+      <form [formGroup]="form" (ngSubmit)="onSubmit()" class="dialog-content">
+        <mat-form-field appearance="outline" class="full-width">
+          <mat-label>Username</mat-label>
+          <input matInput formControlName="username" placeholder="Enter username">
+          @if (form.get('username')?.hasError('required')) {
+            <mat-error>Username is required</mat-error>
+          }
+          @if (form.get('username')?.hasError('minlength')) {
+            <mat-error>Username must be at least 3 characters</mat-error>
+          }
+        </mat-form-field>
+
+        <mat-form-field appearance="outline" class="full-width">
+          <mat-label>Email</mat-label>
+          <input matInput formControlName="email" type="email" placeholder="Enter email">
+          @if (form.get('email')?.hasError('required')) {
+            <mat-error>Email is required</mat-error>
+          }
+          @if (form.get('email')?.hasError('email')) {
+            <mat-error>Please enter a valid email</mat-error>
+          }
+        </mat-form-field>
+
+        <mat-form-field appearance="outline" class="full-width">
+          <mat-label>Full Name</mat-label>
+          <input matInput formControlName="full_name" placeholder="Enter full name">
+        </mat-form-field>
+
+        <mat-form-field appearance="outline" class="full-width">
+          <mat-label>Password {{ isEditMode ? '(leave empty to keep current)' : '' }}</mat-label>
+          <input matInput formControlName="password" type="password" placeholder="Enter password">
+          @if (form.get('password')?.hasError('minlength')) {
+            <mat-error>Password must be at least 6 characters</mat-error>
+          }
+        </mat-form-field>
+
+        <mat-form-field appearance="outline" class="full-width">
+          <mat-label>User Level</mat-label>
+          <mat-select formControlName="user_level">
+            @for (level of [1,2,3,4,5,6,7,8,9,10]; track level) {
+              <mat-option [value]="level">Level {{ level }}</mat-option>
+            }
+          </mat-select>
+        </mat-form-field>
+
+        <mat-form-field appearance="outline" class="full-width">
+          <mat-label>Roles</mat-label>
+          <mat-select formControlName="role_ids" multiple>
+            @for (role of roles(); track role.id) {
+              <mat-option [value]="role.id">{{ role.name }}</mat-option>
+            }
+          </mat-select>
+        </mat-form-field>
+
+        <div class="dialog-actions">
+          <button type="button" class="btn-glass" (click)="close()">Cancel</button>
+          <button type="submit" class="btn-gradient" [disabled]="form.invalid || isSubmitting()">
+            @if (isSubmitting()) {
+              <mat-spinner diameter="20"></mat-spinner>
+            }
+            <span>{{ isEditMode ? 'Update' : 'Create' }}</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  `,
+  styles: [`
+    .dialog-container {
+      background: var(--bg-secondary);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+    }
+
+    .dialog-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 20px 24px;
+      border-bottom: 1px solid var(--glass-border);
+
+      h2 {
+        margin: 0;
+        font-size: 18px;
+        font-weight: 600;
+        color: var(--text-primary);
+      }
+
+      button {
+        color: var(--text-secondary);
+      }
+    }
+
+    .dialog-content {
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .full-width {
+      width: 100%;
+    }
+
+    .dialog-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 12px;
+      margin-top: 8px;
+
+      button {
+        min-width: 100px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+      }
+    }
+
+    ::ng-deep .glass-dialog .mat-mdc-dialog-container {
+      background: transparent !important;
+      padding: 0 !important;
+    }
+  `]
+})
+export class UserFormDialogComponent implements OnInit {
+  private dialogRef = inject(MatDialogRef<UserFormDialogComponent>);
+  private data = inject(MAT_DIALOG_DATA) as { user?: User };
+  private fb = inject(FormBuilder);
+  private userService = inject(UserService);
+  private roleService = inject(RoleService);
+  private snackBar = inject(MatSnackBar);
+
+  form!: FormGroup;
+  roles = signal<Role[]>([]);
+  isSubmitting = signal(false);
+
+  get isEditMode(): boolean {
+    return !!this.data?.user;
+  }
+
+  ngOnInit(): void {
+    this.initForm();
+    this.loadRoles();
+  }
+
+  private initForm(): void {
+    const user = this.data?.user;
+    this.form = this.fb.group({
+      username: [user?.username || '', [Validators.required, Validators.minLength(3)]],
+      email: [user?.email || '', [Validators.required, Validators.email]],
+      full_name: [user?.full_name || ''],
+      password: ['', this.isEditMode ? [Validators.minLength(6)] : [Validators.required, Validators.minLength(6)]],
+      user_level: [user?.user_level || 1],
+      role_ids: [user?.roles?.map(r => r.id) || []]
+    });
+
+    if (this.isEditMode) {
+      this.form.get('username')?.disable();
+    }
+  }
+
+  private loadRoles(): void {
+    this.roleService.getRoles().subscribe({
+      next: (roles) => this.roles.set(roles)
+    });
+  }
+
+  onSubmit(): void {
+    if (this.form.invalid) return;
+
+    this.isSubmitting.set(true);
+    const formData = this.form.getRawValue();
+
+    if (this.isEditMode && !formData.password) {
+      delete formData.password;
+    }
+    delete formData.username;
+
+    const request = this.isEditMode
+      ? this.userService.updateUser(this.data.user!.id, formData)
+      : this.userService.createUser(formData);
+
+    request.subscribe({
+      next: () => {
+        this.snackBar.open(`User ${this.isEditMode ? 'updated' : 'created'} successfully`, 'Close', { duration: 3000 });
+        this.dialogRef.close(true);
+      },
+      error: (err) => {
+        this.snackBar.open(err.error?.detail || 'An error occurred', 'Close', { duration: 3000 });
+        this.isSubmitting.set(false);
+      }
+    });
+  }
+
+  close(): void {
+    this.dialogRef.close();
+  }
+}

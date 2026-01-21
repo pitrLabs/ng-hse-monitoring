@@ -1,0 +1,9 @@
+version: "3.9"
+
+services:
+  admin-ui:
+    build: .
+    ports:
+      - "4222:4222"
+    env_file:
+      - .env

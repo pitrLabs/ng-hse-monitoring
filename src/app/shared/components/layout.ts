@@ -288,15 +288,16 @@ interface NavItem {
       width: 32px;
       height: 32px;
       color: var(--text-secondary);
-
-      .sidebar.collapsed & {
-        display: none;
-      }
+      flex-shrink: 0;
     }
 
     .sidebar.collapsed .sidebar-header {
       justify-content: center;
-      padding: 20px 12px;
+      padding: 16px 12px;
+    }
+
+    .sidebar.collapsed .logo-wrapper {
+      display: none;
     }
 
     // Navigation
@@ -482,18 +483,28 @@ interface NavItem {
     }
 
     .user-menu-btn {
-      display: flex;
-      align-items: center;
+      display: flex !important;
+      flex-direction: row !important;
+      align-items: center !important;
       gap: 12px;
       padding: 8px 12px;
       border-radius: var(--radius-sm);
       background: var(--glass-bg);
       border: 1px solid var(--glass-border);
       margin-left: 8px;
+      height: auto !important;
+      line-height: normal !important;
 
       &:hover {
         background: var(--glass-bg-hover);
         border-color: var(--glass-border-hover);
+      }
+
+      ::ng-deep .mdc-button__label {
+        display: flex !important;
+        flex-direction: row !important;
+        align-items: center !important;
+        gap: 12px;
       }
     }
 

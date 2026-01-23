@@ -23,21 +23,16 @@ import { AuthService } from '../../core/services/auth.service';
   ],
   template: `
     <div class="login-container">
-      <!-- Animated background elements -->
-      <div class="bg-orbs">
-        <div class="orb orb-1"></div>
-        <div class="orb orb-2"></div>
-        <div class="orb orb-3"></div>
-      </div>
+      <!-- Background image -->
+      <div class="bg-image"></div>
+      <div class="bg-overlay"></div>
 
       <div class="login-card glass-card-static animate-fade-in">
         <!-- Logo/Brand -->
         <div class="brand">
           <div class="logo">
-            <mat-icon class="logo-icon">security</mat-icon>
+            <img src="/Picture2.png" alt="Logo" class="logo-img">
           </div>
-          <h1 class="brand-title">HSE Monitoring</h1>
-          <p class="brand-subtitle">Health, Safety & Environment</p>
         </div>
 
         <!-- Login Form -->
@@ -87,7 +82,7 @@ import { AuthService } from '../../core/services/auth.service';
 
         <!-- Footer -->
         <div class="login-footer">
-          <p>Powered by <span class="text-gradient">Object Detection AI</span></p>
+          <p>Powered by <span class="text-gradient">pitrLabs</span></p>
         </div>
       </div>
     </div>
@@ -103,65 +98,29 @@ import { AuthService } from '../../core/services/auth.service';
       overflow: hidden;
     }
 
-    .bg-orbs {
+    .bg-image {
       position: fixed;
       top: 0;
       left: 0;
       right: 0;
       bottom: 0;
-      pointer-events: none;
+      background: url('/240_F_404622143_vlgoOVBtqVkKQ50utCnv411gV2o27AMs.jpg') center/cover no-repeat;
       z-index: 0;
     }
 
-    .orb {
-      position: absolute;
-      border-radius: 50%;
-      filter: blur(80px);
-      opacity: 0.5;
-      animation: float 20s ease-in-out infinite;
-    }
-
-    .orb-1 {
-      width: 400px;
-      height: 400px;
-      background: var(--accent-primary);
-      top: -100px;
-      left: -100px;
-      animation-delay: 0s;
-    }
-
-    .orb-2 {
-      width: 300px;
-      height: 300px;
-      background: var(--accent-secondary);
-      bottom: -50px;
-      right: -50px;
-      animation-delay: -5s;
-    }
-
-    .orb-3 {
-      width: 200px;
-      height: 200px;
-      background: linear-gradient(var(--accent-primary), var(--accent-secondary));
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      animation-delay: -10s;
-    }
-
-    @keyframes float {
-      0%, 100% {
-        transform: translate(0, 0) scale(1);
-      }
-      25% {
-        transform: translate(30px, -30px) scale(1.05);
-      }
-      50% {
-        transform: translate(-20px, 20px) scale(0.95);
-      }
-      75% {
-        transform: translate(20px, 10px) scale(1.02);
-      }
+    .bg-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: linear-gradient(
+        135deg,
+        rgba(10, 14, 23, 0.92) 0%,
+        rgba(10, 14, 23, 0.85) 50%,
+        rgba(10, 14, 23, 0.92) 100%
+      );
+      z-index: 1;
     }
 
     .login-card {
@@ -178,22 +137,17 @@ import { AuthService } from '../../core/services/auth.service';
     }
 
     .logo {
-      width: 80px;
-      height: 80px;
-      margin: 0 auto 20px;
-      background: var(--accent-gradient);
-      border-radius: 20px;
+      width: 200px;
+      margin: 0 auto 30px;
       display: flex;
       align-items: center;
       justify-content: center;
-      box-shadow: 0 8px 32px rgba(0, 212, 255, 0.3);
     }
 
-    .logo-icon {
-      font-size: 40px;
-      width: 40px;
-      height: 40px;
-      color: white;
+    .logo-img {
+      width: 100%;
+      height: auto;
+      object-fit: contain;
     }
 
     .brand-title {

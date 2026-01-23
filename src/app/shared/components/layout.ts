@@ -42,14 +42,8 @@ interface NavItem {
         <div class="sidebar-header">
           <div class="logo-wrapper">
             <div class="logo-icon">
-              <mat-icon>visibility</mat-icon>
+              <img src="/Picture2.png" alt="Logo" class="logo-img">
             </div>
-            @if (!sidebarCollapsed()) {
-              <div class="logo-text">
-                <span class="logo-title">SartEye</span>
-                <span class="logo-subtitle">VMS</span>
-              </div>
-            }
           </div>
           <button mat-icon-button class="collapse-btn" (click)="toggleSidebar()">
             <mat-icon>{{ sidebarCollapsed() ? 'chevron_right' : 'chevron_left' }}</mat-icon>
@@ -246,20 +240,23 @@ interface NavItem {
     }
 
     .logo-icon {
-      width: 40px;
-      height: 40px;
-      background: var(--accent-gradient);
-      border-radius: 10px;
+      flex: 1;
       display: flex;
       align-items: center;
-      justify-content: center;
-      flex-shrink: 0;
+      justify-content: flex-start;
 
-      mat-icon {
-        color: white;
-        font-size: 22px;
-        width: 22px;
-        height: 22px;
+      .logo-img {
+        height: 40px;
+        width: auto;
+        object-fit: contain;
+      }
+    }
+
+    .sidebar.collapsed .logo-icon {
+      justify-content: center;
+
+      .logo-img {
+        height: 36px;
       }
     }
 

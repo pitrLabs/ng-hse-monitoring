@@ -111,7 +111,10 @@ export class VideoPlayerComponent implements OnInit, OnDestroy {
   errorMessage = signal('');
 
   private peerConnection: RTCPeerConnection | null = null;
-  private mediaServerUrl = environment.mediaServerUrl;
+
+  private getMediaServerUrl(): string {
+    return (window as any).__env?.MEDIA_SERVER_URL || environment.mediaServerUrl;
+  }
 
   ngOnInit() {
     if (this.streamName) {
@@ -158,7 +161,7 @@ export class VideoPlayerComponent implements OnInit, OnDestroy {
       await this.waitForIceGathering();
 
       // Send offer to MediaMTX WHEP endpoint
-      const whepUrl = `${this.mediaServerUrl}/${this.streamName}/whep`;
+      const whepUrl = `${this.getMediaServerUrl()}/${this.streamName}/whep`;
       const response = await fetch(whepUrl, {
         method: 'POST',
         headers: {

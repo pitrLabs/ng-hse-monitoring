@@ -1,4 +1,4 @@
-import { Component, signal } from '@angular/core';
+import { Component, signal, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MatIconModule } from '@angular/material/icon';
@@ -6,22 +6,11 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatMenuModule } from '@angular/material/menu';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatCheckboxModule } from '@angular/material/checkbox';
-import { MatDialogModule, MatDialog } from '@angular/material/dialog';
+import { MatDialogModule } from '@angular/material/dialog';
 import { MatTabsModule } from '@angular/material/tabs';
-
-interface Device {
-  id: number;
-  name: string;
-  online: boolean;
-  type: string;
-}
-
-interface DeviceGroup {
-  id: number;
-  name: string;
-  expanded: boolean;
-  devices: Device[];
-}
+import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
+import { VideoSourceService, VideoSource } from '../../core/services/video-source.service';
+import { VideoPlayerComponent } from '../../shared/components/video-player';
 
 @Component({
   selector: 'app-monitor',
@@ -35,7 +24,9 @@ interface DeviceGroup {
     MatTooltipModule,
     MatCheckboxModule,
     MatDialogModule,
-    MatTabsModule
+    MatTabsModule,
+    MatProgressSpinnerModule,
+    VideoPlayerComponent
   ],
   template: `
     <div class="monitor-container">
@@ -44,118 +35,64 @@ interface DeviceGroup {
         <div class="search-section">
           <div class="search-box">
             <mat-icon>search</mat-icon>
-            <input type="text" placeholder="Search device name/ID..." [(ngModel)]="searchQuery" class="search-input">
+            <input type="text" placeholder="Search video sources..." [(ngModel)]="searchQuery" class="search-input">
           </div>
-          <button mat-icon-button matTooltip="Refresh" (click)="refresh()">
+          <button mat-icon-button matTooltip="Refresh" (click)="loadVideoSources()">
             <mat-icon>refresh</mat-icon>
           </button>
-          <button mat-icon-button matTooltip="Add Device" (click)="openAddDialog()">
-            <mat-icon>add</mat-icon>
-          </button>
         </div>
-        <div class="broadcast-section">
-          <button mat-button class="broadcast-btn" [matMenuTriggerFor]="broadcastMenu">
-            <mat-icon>campaign</mat-icon>
-            Broadcast
-            <mat-icon>expand_more</mat-icon>
-          </button>
-          <mat-menu #broadcastMenu="matMenu" class="broadcast-panel">
-            <div class="broadcast-content" (click)="$event.stopPropagation()">
-              <div class="broadcast-tables">
-                <div class="broadcast-table">
-                  <h4>Filter Devices</h4>
-                  <input type="text" placeholder="Search..." class="table-search">
-                  <div class="table-list">
-                    @for (device of allDevices(); track device.id) {
-                      <div class="table-item">
-                        <mat-checkbox></mat-checkbox>
-                        <span>{{ device.name }}</span>
-                      </div>
-                    }
-                  </div>
-                </div>
-                <div class="broadcast-table">
-                  <h4>Selected Devices</h4>
-                  <button mat-button class="table-action">Broadcast</button>
-                  <div class="table-list">
-                    <div class="empty-state">No devices selected</div>
-                  </div>
-                </div>
-                <div class="broadcast-table">
-                  <h4>Broadcast Results</h4>
-                  <div class="table-list">
-                    <div class="empty-state">No results yet</div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </mat-menu>
+        <div class="source-count">
+          <mat-icon>videocam</mat-icon>
+          <span>{{ filteredVideoSources().length }} Sources</span>
         </div>
         <div class="top-actions">
-          <button mat-icon-button matTooltip="Minimize">
-            <mat-icon>remove</mat-icon>
-          </button>
-          <button mat-icon-button matTooltip="Close">
-            <mat-icon>close</mat-icon>
+          <button mat-icon-button matTooltip="Fullscreen" (click)="toggleFullscreen()">
+            <mat-icon>{{ isFullscreen ? 'fullscreen_exit' : 'fullscreen' }}</mat-icon>
           </button>
         </div>
       </div>
 
       <!-- Main Content -->
       <div class="main-content">
-        <!-- Left Panel - Device Lists -->
-        <div class="left-panel">
-          <mat-tab-group>
-            <mat-tab label="Device List">
-              <div class="tab-content">
-                <mat-checkbox [(ngModel)]="deviceOnlineOnly" color="primary" class="filter-checkbox">
-                  Online Only
-                </mat-checkbox>
-                <div class="device-tree">
-                  @for (group of filteredDeviceGroups(); track group.id) {
-                    <div class="tree-node">
-                      <div class="node-header" (click)="toggleGroup(group)">
-                        <mat-icon class="expand-icon" [class.expanded]="group.expanded">
-                          chevron_right
-                        </mat-icon>
-                        <mat-icon class="folder-icon">folder</mat-icon>
-                        <span class="node-name">{{ group.name }}</span>
-                      </div>
-                      @if (group.expanded) {
-                        <div class="node-children">
-                          @for (device of getFilteredDevices(group); track device.id) {
-                            <div class="device-item" (click)="selectDevice(device)" [class.selected]="isDeviceSelected(device)">
-                              <mat-icon class="device-icon" [class.online]="device.online">
-                                {{ getDeviceIcon(device.type) }}
-                              </mat-icon>
-                              <span class="device-name">{{ device.name }}</span>
-                              <span class="status-dot" [class.online]="device.online"></span>
-                            </div>
-                          }
-                        </div>
-                      }
-                    </div>
-                  }
+        <!-- Left Panel - Video Source List -->
+        <div class="left-panel glass-card-static">
+          <div class="panel-header">
+            <h3>Video Sources</h3>
+            <mat-checkbox [(ngModel)]="showActiveOnly" color="primary" (change)="loadVideoSources()">
+              Active Only
+            </mat-checkbox>
+          </div>
+
+          @if (loading()) {
+            <div class="loading-state">
+              <mat-spinner diameter="32"></mat-spinner>
+              <span>Loading sources...</span>
+            </div>
+          } @else if (filteredVideoSources().length === 0) {
+            <div class="empty-state">
+              <mat-icon>videocam_off</mat-icon>
+              <span>No video sources found</span>
+            </div>
+          } @else {
+            <div class="source-list">
+              @for (source of filteredVideoSources(); track source.id) {
+                <div
+                  class="source-item"
+                  [class.selected]="isSourceSelected(source)"
+                  [class.active]="source.is_active"
+                  (click)="selectSource(source)"
+                  (dblclick)="addToGrid(source)"
+                >
+                  <mat-icon class="source-icon">videocam</mat-icon>
+                  <div class="source-info">
+                    <span class="source-name">{{ source.name }}</span>
+                    <span class="source-location">{{ source.location || 'No location' }}</span>
+                  </div>
+                  <span class="status-indicator" [class.online]="source.is_active"></span>
                 </div>
-              </div>
-            </mat-tab>
-            <mat-tab label="User List">
-              <div class="tab-content">
-                <mat-checkbox [(ngModel)]="userOnlineOnly" color="primary" class="filter-checkbox">
-                  Online Only
-                </mat-checkbox>
-                <div class="device-tree">
-                  @for (user of users(); track user.id) {
-                    <div class="user-item" [class.online]="user.online">
-                      <mat-icon class="user-icon">person</mat-icon>
-                      <span class="user-name">{{ user.name }}</span>
-                      <span class="status-dot" [class.online]="user.online"></span>
-                    </div>
-                  }
-                </div>
-              </div>
-            </mat-tab>
-          </mat-tab-group>
+              }
+            </div>
+          }
         </div>
 
         <!-- Center - Video Grid -->
@@ -175,37 +112,46 @@ interface DeviceGroup {
                 <mat-icon>view_module</mat-icon>
               </button>
             </div>
-            <button mat-icon-button matTooltip="Fullscreen">
-              <mat-icon>fullscreen</mat-icon>
-            </button>
-            <button mat-button class="group-btn" [matMenuTriggerFor]="videoGroupMenu">
-              <mat-icon>video_library</mat-icon>
-              Video Group
-            </button>
-            <mat-menu #videoGroupMenu="matMenu">
-              <button mat-menu-item>Group A</button>
-              <button mat-menu-item>Group B</button>
-              <button mat-menu-item>All Cameras</button>
-            </mat-menu>
             <button mat-button class="clear-btn" (click)="clearAllWindows()">
               <mat-icon>clear_all</mat-icon>
-              Clear Window
+              Clear All
             </button>
           </div>
 
           <div class="video-grid" [class]="'grid-' + gridLayout()">
-            @for (i of getGridCells(); track i) {
-              <div class="video-cell">
-                <div class="video-placeholder">
-                  <mat-icon>videocam</mat-icon>
-                  <span>Channel {{ i }}</span>
-                </div>
-                <div class="video-overlay">
-                  <span class="channel-label">CH {{ i }}</span>
-                  <button mat-icon-button class="cell-close-btn">
-                    <mat-icon>close</mat-icon>
-                  </button>
-                </div>
+            @for (cell of gridCells(); track cell.index) {
+              <div
+                class="video-cell"
+                [class.has-source]="cell.source"
+                (dragover)="onDragOver($event)"
+                (drop)="onDrop($event, cell.index)"
+              >
+                @if (cell.source) {
+                  <div class="video-content">
+                    <app-video-player [streamName]="cell.source.stream_name" [muted]="true"></app-video-player>
+                    <div class="video-info">
+                      <span class="video-name">{{ cell.source.name }}</span>
+                      <span class="video-type">{{ cell.source.source_type | uppercase }}</span>
+                    </div>
+                  </div>
+                  <div class="video-overlay">
+                    <span class="channel-label">{{ cell.source.name }}</span>
+                    <div class="overlay-actions">
+                      <button mat-icon-button class="action-btn" matTooltip="Fullscreen" (click)="fullscreenCell(cell.index)">
+                        <mat-icon>fullscreen</mat-icon>
+                      </button>
+                      <button mat-icon-button class="action-btn close" matTooltip="Remove" (click)="removeFromGrid(cell.index)">
+                        <mat-icon>close</mat-icon>
+                      </button>
+                    </div>
+                  </div>
+                } @else {
+                  <div class="video-placeholder" (click)="openSourceSelector(cell.index)">
+                    <mat-icon>add_circle_outline</mat-icon>
+                    <span>Click to add source</span>
+                    <span class="hint">or drag from list</span>
+                  </div>
+                }
               </div>
             }
           </div>
@@ -267,78 +213,22 @@ interface DeviceGroup {
       }
     }
 
-    .broadcast-section {
-      flex: 1;
+    .source-count {
       display: flex;
-      justify-content: center;
-    }
-
-    .broadcast-btn {
+      align-items: center;
+      gap: 8px;
+      padding: 8px 16px;
       background: var(--glass-bg);
       border: 1px solid var(--glass-border);
+      border-radius: var(--radius-sm);
       color: var(--text-secondary);
-    }
+      font-size: 13px;
 
-    .broadcast-content {
-      padding: 16px;
-      min-width: 600px;
-    }
-
-    .broadcast-tables {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 16px;
-    }
-
-    .broadcast-table {
-      h4 {
-        font-size: 13px;
-        font-weight: 600;
-        color: var(--text-primary);
-        margin: 0 0 8px;
-      }
-
-      .table-search {
-        width: 100%;
-        padding: 6px 10px;
-        background: var(--glass-bg);
-        border: 1px solid var(--glass-border);
-        border-radius: var(--radius-sm);
-        color: var(--text-primary);
-        font-size: 12px;
-        outline: none;
-        margin-bottom: 8px;
-      }
-
-      .table-action {
-        width: 100%;
-        background: var(--accent-primary);
-        color: white;
-        margin-bottom: 8px;
-      }
-
-      .table-list {
-        height: 150px;
-        overflow-y: auto;
-        background: var(--glass-bg);
-        border-radius: var(--radius-sm);
-        padding: 8px;
-      }
-
-      .table-item {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        padding: 4px 0;
-        font-size: 12px;
-        color: var(--text-secondary);
-      }
-
-      .empty-state {
-        text-align: center;
-        color: var(--text-muted);
-        font-size: 12px;
-        padding: 20px;
+      mat-icon {
+        font-size: 18px;
+        width: 18px;
+        height: 18px;
+        color: var(--accent-primary);
       }
     }
 
@@ -358,29 +248,24 @@ interface DeviceGroup {
 
     // Left Panel
     .left-panel {
-      background: var(--glass-bg);
-      border: 1px solid var(--glass-border);
-      border-radius: var(--radius-lg);
-      overflow: hidden;
-
-      ::ng-deep .mat-mdc-tab-header {
-        background: var(--bg-secondary);
-      }
-
-      ::ng-deep .mat-mdc-tab-body-wrapper {
-        flex: 1;
-      }
-    }
-
-    .tab-content {
-      padding: 12px;
-      height: 100%;
       display: flex;
       flex-direction: column;
+      overflow: hidden;
     }
 
-    .filter-checkbox {
-      margin-bottom: 12px;
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--glass-border);
+
+      h3 {
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin: 0;
+      }
 
       ::ng-deep .mat-mdc-checkbox-label {
         font-size: 12px;
@@ -388,98 +273,96 @@ interface DeviceGroup {
       }
     }
 
-    .device-tree {
+    .loading-state, .empty-state {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      color: var(--text-muted);
+      font-size: 13px;
+
+      mat-icon {
+        font-size: 40px;
+        width: 40px;
+        height: 40px;
+        opacity: 0.5;
+      }
+    }
+
+    .source-list {
       flex: 1;
       overflow-y: auto;
+      padding: 8px;
     }
 
-    .tree-node {
-      margin-bottom: 4px;
-    }
-
-    .node-header {
+    .source-item {
       display: flex;
       align-items: center;
-      gap: 6px;
-      padding: 6px 8px;
+      gap: 10px;
+      padding: 10px 12px;
       border-radius: var(--radius-sm);
       cursor: pointer;
+      margin-bottom: 4px;
+      transition: all 0.2s ease;
+      opacity: 0.6;
+
+      &.active {
+        opacity: 1;
+      }
 
       &:hover {
         background: var(--glass-bg-hover);
       }
-    }
-
-    .expand-icon {
-      font-size: 16px;
-      width: 16px;
-      height: 16px;
-      color: var(--text-tertiary);
-      transition: transform 0.2s;
-
-      &.expanded {
-        transform: rotate(90deg);
-      }
-    }
-
-    .folder-icon {
-      font-size: 16px;
-      width: 16px;
-      height: 16px;
-      color: var(--warning);
-    }
-
-    .node-name {
-      font-size: 12px;
-      color: var(--text-primary);
-    }
-
-    .node-children {
-      padding-left: 24px;
-    }
-
-    .device-item, .user-item {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 6px 8px;
-      border-radius: var(--radius-sm);
-      cursor: pointer;
-
-      &:hover {
-        background: var(--glass-bg);
-      }
 
       &.selected {
         background: rgba(0, 212, 255, 0.15);
+        border: 1px solid var(--accent-primary);
       }
     }
 
-    .device-icon, .user-icon {
-      font-size: 14px;
-      width: 14px;
-      height: 14px;
-      color: var(--text-tertiary);
-
-      &.online {
-        color: var(--success);
-      }
+    .source-icon {
+      font-size: 20px;
+      width: 20px;
+      height: 20px;
+      color: var(--accent-primary);
     }
 
-    .device-name, .user-name {
+    .source-info {
       flex: 1;
-      font-size: 11px;
-      color: var(--text-secondary);
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
     }
 
-    .status-dot {
-      width: 6px;
-      height: 6px;
+    .source-name {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .source-location {
+      font-size: 11px;
+      color: var(--text-tertiary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .status-indicator {
+      width: 8px;
+      height: 8px;
       border-radius: 50%;
       background: var(--text-muted);
 
       &.online {
         background: var(--success);
+        box-shadow: 0 0 8px var(--success);
       }
     }
 
@@ -493,6 +376,7 @@ interface DeviceGroup {
     .video-controls {
       display: flex;
       align-items: center;
+      justify-content: space-between;
       gap: 12px;
       padding: 12px 16px;
       border-bottom: 1px solid var(--glass-border);
@@ -523,7 +407,7 @@ interface DeviceGroup {
       }
     }
 
-    .group-btn, .clear-btn {
+    .clear-btn {
       background: var(--glass-bg);
       border: 1px solid var(--glass-border);
       color: var(--text-secondary);
@@ -543,6 +427,7 @@ interface DeviceGroup {
       gap: 4px;
       padding: 8px;
       background: var(--bg-primary);
+      overflow: auto;
 
       &.grid-1x1 {
         grid-template-columns: 1fr;
@@ -566,10 +451,20 @@ interface DeviceGroup {
 
     .video-cell {
       background: var(--bg-tertiary);
-      border-radius: 4px;
+      border-radius: 8px;
       position: relative;
       overflow: hidden;
-      min-height: 100px;
+      min-height: 120px;
+      border: 2px dashed var(--glass-border);
+      transition: all 0.2s ease;
+
+      &.has-source {
+        border: none;
+      }
+
+      &:hover {
+        border-color: var(--accent-primary);
+      }
     }
 
     .video-placeholder {
@@ -581,16 +476,64 @@ interface DeviceGroup {
       justify-content: center;
       gap: 8px;
       color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.2s ease;
+
+      &:hover {
+        color: var(--accent-primary);
+        background: rgba(0, 212, 255, 0.05);
+      }
 
       mat-icon {
-        font-size: 32px;
-        width: 32px;
-        height: 32px;
+        font-size: 40px;
+        width: 40px;
+        height: 40px;
       }
 
       span {
-        font-size: 11px;
+        font-size: 12px;
       }
+
+      .hint {
+        font-size: 10px;
+        opacity: 0.7;
+      }
+    }
+
+    .video-content {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+
+      app-video-player {
+        flex: 1;
+        min-height: 0;
+      }
+    }
+
+    .video-info {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      background: var(--bg-secondary);
+      border-top: 1px solid var(--glass-border);
+    }
+
+    .video-name {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-primary);
+    }
+
+    .video-type {
+      font-size: 10px;
+      padding: 2px 8px;
+      background: var(--accent-primary);
+      color: white;
+      border-radius: 4px;
+      font-weight: 600;
     }
 
     .video-overlay {
@@ -601,28 +544,42 @@ interface DeviceGroup {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      padding: 4px 8px;
-      background: linear-gradient(180deg, rgba(0,0,0,0.5), transparent);
+      padding: 8px 12px;
+      background: linear-gradient(180deg, rgba(0,0,0,0.7), transparent);
+      opacity: 0;
+      transition: opacity 0.2s ease;
+    }
+
+    .video-cell:hover .video-overlay {
+      opacity: 1;
     }
 
     .channel-label {
-      font-size: 10px;
-      color: var(--text-secondary);
+      font-size: 11px;
+      font-weight: 500;
+      color: white;
     }
 
-    .cell-close-btn {
-      width: 20px;
-      height: 20px;
-      opacity: 0.7;
+    .overlay-actions {
+      display: flex;
+      gap: 4px;
+    }
+
+    .action-btn {
+      width: 28px;
+      height: 28px;
+      color: white;
+      background: rgba(255,255,255,0.1);
+      backdrop-filter: blur(4px);
 
       mat-icon {
-        font-size: 14px;
-        width: 14px;
-        height: 14px;
+        font-size: 16px;
+        width: 16px;
+        height: 16px;
       }
 
-      &:hover {
-        opacity: 1;
+      &.close:hover {
+        background: var(--error);
       }
     }
 
@@ -632,126 +589,157 @@ interface DeviceGroup {
       }
 
       .left-panel {
-        max-height: 250px;
+        max-height: 200px;
       }
     }
   `]
 })
-export class MonitorComponent {
+export class MonitorComponent implements OnInit {
   searchQuery = '';
-  deviceOnlineOnly = false;
-  userOnlineOnly = false;
+  showActiveOnly = true;
+  isFullscreen = false;
   gridLayout = signal('2x2');
-  selectedDevices = signal<number[]>([]);
+  selectedSource = signal<VideoSource | null>(null);
+  loading = signal(false);
+  videoSources = signal<VideoSource[]>([]);
 
-  deviceGroups = signal<DeviceGroup[]>([
-    {
-      id: 1,
-      name: 'Building A',
-      expanded: true,
-      devices: [
-        { id: 1, name: 'Camera 01', online: true, type: 'camera' },
-        { id: 2, name: 'Camera 02', online: true, type: 'camera' },
-        { id: 3, name: 'Camera 03', online: false, type: 'camera' }
-      ]
-    },
-    {
-      id: 2,
-      name: 'Building B',
-      expanded: false,
-      devices: [
-        { id: 4, name: 'Camera 04', online: true, type: 'camera' },
-        { id: 5, name: 'Camera 05', online: false, type: 'camera' }
-      ]
-    },
-    {
-      id: 3,
-      name: 'Warehouse',
-      expanded: false,
-      devices: [
-        { id: 6, name: 'Camera 06', online: true, type: 'camera' },
-        { id: 7, name: 'Camera 07', online: true, type: 'camera' }
-      ]
-    }
+  // Grid cells with optional video source
+  gridCells = signal<{ index: number; source: VideoSource | null }[]>([
+    { index: 0, source: null },
+    { index: 1, source: null },
+    { index: 2, source: null },
+    { index: 3, source: null }
   ]);
 
-  users = signal([
-    { id: 1, name: 'Admin', online: true },
-    { id: 2, name: 'Operator 1', online: true },
-    { id: 3, name: 'Operator 2', online: false },
-    { id: 4, name: 'Security', online: true }
-  ]);
+  constructor(private videoSourceService: VideoSourceService) {}
 
-  allDevices() {
-    return this.deviceGroups().flatMap(g => g.devices);
+  ngOnInit() {
+    this.loadVideoSources();
   }
 
-  filteredDeviceGroups() {
-    return this.deviceGroups();
+  loadVideoSources() {
+    this.loading.set(true);
+    const activeOnly = this.showActiveOnly ? true : undefined;
+    this.videoSourceService.loadVideoSources(activeOnly).subscribe({
+      next: (sources) => {
+        this.videoSources.set(sources);
+        this.loading.set(false);
+      },
+      error: () => {
+        this.loading.set(false);
+      }
+    });
   }
 
-  getFilteredDevices(group: DeviceGroup) {
-    let devices = group.devices;
-    if (this.deviceOnlineOnly) {
-      devices = devices.filter(d => d.online);
-    }
+  filteredVideoSources(): VideoSource[] {
+    let sources = this.videoSources();
     if (this.searchQuery) {
-      devices = devices.filter(d =>
-        d.name.toLowerCase().includes(this.searchQuery.toLowerCase())
+      const query = this.searchQuery.toLowerCase();
+      sources = sources.filter(s =>
+        s.name.toLowerCase().includes(query) ||
+        s.location?.toLowerCase().includes(query)
       );
     }
-    return devices;
+    return sources;
   }
 
-  toggleGroup(group: DeviceGroup): void {
-    group.expanded = !group.expanded;
+  selectSource(source: VideoSource) {
+    this.selectedSource.set(source);
   }
 
-  selectDevice(device: Device): void {
-    const selected = this.selectedDevices();
-    if (selected.includes(device.id)) {
-      this.selectedDevices.set(selected.filter(id => id !== device.id));
-    } else {
-      this.selectedDevices.set([...selected, device.id]);
+  isSourceSelected(source: VideoSource): boolean {
+    return this.selectedSource()?.id === source.id;
+  }
+
+  addToGrid(source: VideoSource) {
+    const cells = this.gridCells();
+    const emptyIndex = cells.findIndex(c => !c.source);
+    if (emptyIndex !== -1) {
+      this.assignSourceToCell(emptyIndex, source);
     }
   }
 
-  isDeviceSelected(device: Device): boolean {
-    return this.selectedDevices().includes(device.id);
+  assignSourceToCell(cellIndex: number, source: VideoSource) {
+    const cells = [...this.gridCells()];
+    cells[cellIndex] = { index: cellIndex, source };
+    this.gridCells.set(cells);
   }
 
-  getDeviceIcon(type: string): string {
-    switch (type) {
-      case 'camera': return 'videocam';
-      case 'sensor': return 'sensors';
-      default: return 'device_hub';
+  removeFromGrid(cellIndex: number) {
+    const cells = [...this.gridCells()];
+    cells[cellIndex] = { index: cellIndex, source: null };
+    this.gridCells.set(cells);
+  }
+
+  openSourceSelector(cellIndex: number) {
+    const selected = this.selectedSource();
+    if (selected) {
+      this.assignSourceToCell(cellIndex, selected);
     }
   }
 
-  setGridLayout(layout: string): void {
+  setGridLayout(layout: string) {
     this.gridLayout.set(layout);
+    this.updateGridCells();
   }
 
-  getGridCells(): number[] {
+  updateGridCells() {
     const layout = this.gridLayout();
+    let count = 4;
     switch (layout) {
-      case '1x1': return [1];
-      case '2x2': return [1, 2, 3, 4];
-      case '3x3': return [1, 2, 3, 4, 5, 6, 7, 8, 9];
-      case '4x4': return [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
-      default: return [1, 2, 3, 4];
+      case '1x1': count = 1; break;
+      case '2x2': count = 4; break;
+      case '3x3': count = 9; break;
+      case '4x4': count = 16; break;
+    }
+
+    const currentCells = this.gridCells();
+    const newCells: { index: number; source: VideoSource | null }[] = [];
+
+    for (let i = 0; i < count; i++) {
+      if (i < currentCells.length) {
+        newCells.push({ index: i, source: currentCells[i].source });
+      } else {
+        newCells.push({ index: i, source: null });
+      }
+    }
+
+    this.gridCells.set(newCells);
+  }
+
+  clearAllWindows() {
+    const cells = this.gridCells().map(c => ({ index: c.index, source: null }));
+    this.gridCells.set(cells);
+  }
+
+  fullscreenCell(index: number) {
+    const cell = this.gridCells().find(c => c.index === index);
+    if (cell?.source) {
+      // For now, just switch to 1x1 with this source
+      this.setGridLayout('1x1');
+      this.gridCells.set([{ index: 0, source: cell.source }]);
     }
   }
 
-  clearAllWindows(): void {
-    console.log('Clearing all windows');
+  toggleFullscreen() {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen();
+      this.isFullscreen = true;
+    } else {
+      document.exitFullscreen();
+      this.isFullscreen = false;
+    }
   }
 
-  refresh(): void {
-    console.log('Refreshing...');
+  onDragOver(event: DragEvent) {
+    event.preventDefault();
   }
 
-  openAddDialog(): void {
-    console.log('Opening add dialog');
+  onDrop(event: DragEvent, cellIndex: number) {
+    event.preventDefault();
+    const selected = this.selectedSource();
+    if (selected) {
+      this.assignSourceToCell(cellIndex, selected);
+    }
   }
 }

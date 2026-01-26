@@ -61,7 +61,6 @@ interface NavItem {
               [matTooltip]="sidebarCollapsed() ? item.label : ''"
               matTooltipPosition="right"
             >
-              <span class="nav-prefix">{{ getPrefix(i) }}</span>
               <mat-icon>{{ item.icon }}</mat-icon>
               @if (!sidebarCollapsed()) {
                 <span class="nav-label">{{ item.label }}</span>

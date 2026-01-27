@@ -82,7 +82,7 @@ import { AuthService } from '../../core/services/auth.service';
 
         <!-- Footer -->
         <div class="login-footer">
-          <p>Powered by <span class="text-gradient">pitrLabs</span></p>
+          <p>Operated by <span class="text-gradient">PLN UP2D JATENG & DIY</span></p>
         </div>
       </div>
     </div>

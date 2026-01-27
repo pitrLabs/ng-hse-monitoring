@@ -15,8 +15,10 @@ import { AuthService } from '../../core/services/auth.service';
 interface NavItem {
   label: string;
   icon: string;
-  route: string;
+  route?: string;
   prefix?: string;
+  children?: NavItem[];
+  adminOnly?: boolean;
 }
 
 @Component({
@@ -67,6 +69,44 @@ interface NavItem {
               }
               <div class="nav-indicator"></div>
             </a>
+          }
+
+          <!-- Admin Menu (only for superusers) -->
+          @if (isAdmin()) {
+            <div class="nav-divider"></div>
+            @for (adminItem of adminNavItems; track adminItem.label) {
+              <div class="nav-group">
+                <button
+                  class="nav-item nav-parent"
+                  [class.expanded]="adminExpanded()"
+                  (click)="toggleAdminMenu()"
+                  [matTooltip]="sidebarCollapsed() ? adminItem.label : ''"
+                  matTooltipPosition="right"
+                >
+                  <mat-icon>{{ adminItem.icon }}</mat-icon>
+                  @if (!sidebarCollapsed()) {
+                    <span class="nav-label">{{ adminItem.label }}</span>
+                    <mat-icon class="expand-icon">{{ adminExpanded() ? 'expand_less' : 'expand_more' }}</mat-icon>
+                  }
+                </button>
+
+                @if (adminExpanded() && !sidebarCollapsed()) {
+                  <div class="nav-children">
+                    @for (child of adminItem.children; track child.route) {
+                      <a
+                        class="nav-item nav-child"
+                        [routerLink]="child.route"
+                        routerLinkActive="active"
+                      >
+                        <mat-icon>{{ child.icon }}</mat-icon>
+                        <span class="nav-label">{{ child.label }}</span>
+                        <div class="nav-indicator"></div>
+                      </a>
+                    }
+                  </div>
+                }
+              </div>
+            }
           }
         </nav>
 
@@ -382,6 +422,73 @@ interface NavItem {
       }
     }
 
+    // Admin menu styles
+    .nav-divider {
+      height: 1px;
+      background: var(--glass-border);
+      margin: 12px 0;
+    }
+
+    .nav-group {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .nav-parent {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 16px;
+      border-radius: var(--radius-sm);
+      color: var(--text-secondary);
+      background: transparent;
+      border: none;
+      width: 100%;
+      cursor: pointer;
+      text-align: left;
+      font-size: 14px;
+      font-weight: 500;
+      transition: all 0.2s ease;
+
+      &:hover {
+        background: var(--glass-bg-hover);
+        color: var(--text-primary);
+      }
+
+      &.expanded {
+        background: rgba(0, 212, 255, 0.05);
+        color: var(--accent-primary);
+      }
+
+      .expand-icon {
+        margin-left: auto;
+        font-size: 20px;
+        width: 20px;
+        height: 20px;
+        transition: transform 0.2s ease;
+      }
+    }
+
+    .nav-children {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      padding-left: 12px;
+      margin-top: 4px;
+      overflow: hidden;
+    }
+
+    .nav-child {
+      padding: 10px 16px 10px 24px !important;
+      font-size: 13px;
+
+      mat-icon {
+        font-size: 18px;
+        width: 18px;
+        height: 18px;
+      }
+    }
+
     // Sidebar Footer
     .sidebar-footer {
       padding: 12px;
@@ -660,8 +767,10 @@ export class LayoutComponent implements OnInit, OnDestroy {
   pageTitle = signal('Home');
   currentDateTime = signal('');
   alarmCount = signal(3);
+  adminExpanded = signal(false);
 
   currentUser = this.authService.currentUser;
+  isAdmin = computed(() => this.currentUser()?.is_superuser === true);
 
   alarms = signal([
     { id: 1, title: 'Motion detected - Camera 01', time: '2 min ago', type: 'warning', icon: 'warning' },
@@ -682,6 +791,43 @@ export class LayoutComponent implements OnInit, OnDestroy {
     { label: 'Attend', icon: 'how_to_reg', route: '/attend' },
     { label: 'Smart AI', icon: 'psychology', route: '/smart-ai' },
     { label: 'Task List', icon: 'assignment', route: '/task-list' },
+  ];
+
+  adminNavItems: NavItem[] = [
+    {
+      label: 'Admin',
+      icon: 'admin_panel_settings',
+      adminOnly: true,
+      children: [
+        { label: 'Dashboard', icon: 'dashboard', route: '/admin/dashboard' },
+        { label: 'Realtime Preview', icon: 'live_tv', route: '/admin/realtime-preview' },
+        { label: 'Users', icon: 'people', route: '/admin/users' },
+        { label: 'Roles', icon: 'security', route: '/admin/roles' },
+        { label: 'Permissions', icon: 'key', route: '/admin/permissions' },
+        { label: 'Video Sources', icon: 'videocam', route: '/admin/video-sources' },
+        { label: 'Local Video', icon: 'video_library', route: '/admin/local-video' },
+        { label: 'AI Tasks', icon: 'smart_toy', route: '/admin/ai-tasks' },
+        { label: 'Alarms', icon: 'notifications_active', route: '/admin/alarms' },
+        { label: 'Alarm Types', icon: 'warning', route: '/admin/alarm-type' },
+        { label: 'AI Model Info', icon: 'model_training', route: '/admin/ai-model' },
+        { label: 'Schedule', icon: 'schedule', route: '/admin/schedule' },
+        { label: 'Statistics', icon: 'bar_chart', route: '/admin/statistics' },
+        { label: 'Sensors', icon: 'sensors', route: '/admin/sensor' },
+        { label: 'Threshold Config', icon: 'tune', route: '/admin/threshold-config' },
+        { label: 'PPE Config', icon: 'checkroom', route: '/admin/suit-config' },
+        { label: 'Network', icon: 'lan', route: '/admin/network' },
+        { label: 'Database', icon: 'storage', route: '/admin/database' },
+        { label: 'Basic Settings', icon: 'settings', route: '/admin/basic' },
+        { label: 'Preference', icon: 'tune', route: '/admin/preference' },
+        { label: 'Tools', icon: 'build', route: '/admin/tools' },
+        { label: 'Features', icon: 'extension', route: '/admin/feature-management' },
+        { label: 'Face Database', icon: 'face', route: '/admin/face-database' },
+        { label: 'Modbus Output', icon: 'electrical_services', route: '/admin/modbus-output' },
+        { label: 'Image Task Alarm', icon: 'photo_camera', route: '/admin/image-task-alarm' },
+        { label: 'Image Task Mgmt', icon: 'photo_library', route: '/admin/image-task-management' },
+        { label: 'Image Task Source', icon: 'add_photo_alternate', route: '/admin/image-task-source' },
+      ]
+    }
   ];
 
   getPrefix(index: number): string {
@@ -738,7 +884,35 @@ export class LayoutComponent implements OnInit, OnDestroy {
       '/attend': 'Attend',
       '/smart-ai': 'Smart AI',
       '/task-list': 'Task List',
-      '/profile': 'Profile Settings'
+      '/profile': 'Profile Settings',
+      // Admin routes
+      '/admin/dashboard': 'Admin Dashboard',
+      '/admin/realtime-preview': 'Realtime Preview',
+      '/admin/users': 'User Management',
+      '/admin/roles': 'Role Management',
+      '/admin/permissions': 'Permissions',
+      '/admin/video-sources': 'Video Sources',
+      '/admin/local-video': 'Local Video Library',
+      '/admin/ai-tasks': 'AI Task Management',
+      '/admin/alarms': 'Alarm Management',
+      '/admin/alarm-type': 'Alarm Types',
+      '/admin/ai-model': 'AI Model Info',
+      '/admin/schedule': 'Schedule',
+      '/admin/statistics': 'Statistics',
+      '/admin/sensor': 'Sensor Management',
+      '/admin/threshold-config': 'Threshold Configuration',
+      '/admin/suit-config': 'PPE Detection Configuration',
+      '/admin/network': 'Network Settings',
+      '/admin/database': 'Database Configuration',
+      '/admin/basic': 'Basic Settings',
+      '/admin/preference': 'Preferences',
+      '/admin/tools': 'System Tools',
+      '/admin/feature-management': 'Feature Management',
+      '/admin/face-database': 'Face Database',
+      '/admin/modbus-output': 'Modbus Output',
+      '/admin/image-task-alarm': 'Image Task Alarm',
+      '/admin/image-task-management': 'Image Task Management',
+      '/admin/image-task-source': 'Image Task Source'
     };
 
     for (const [path, title] of Object.entries(titles)) {
@@ -752,6 +926,14 @@ export class LayoutComponent implements OnInit, OnDestroy {
 
   toggleSidebar(): void {
     this.sidebarCollapsed.update(v => !v);
+    // Collapse admin menu when sidebar is collapsed
+    if (this.sidebarCollapsed()) {
+      this.adminExpanded.set(false);
+    }
+  }
+
+  toggleAdminMenu(): void {
+    this.adminExpanded.update(v => !v);
   }
 
   logout(): void {

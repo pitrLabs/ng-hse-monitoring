@@ -57,4 +57,12 @@ export class VideoSourceService {
   getById(id: string): Observable<VideoSource> {
     return this.http.get<VideoSource>(`${this.apiUrl}/video-sources/${id}`);
   }
+
+  getAll(isActive?: boolean): Observable<VideoSource[]> {
+    let url = `${this.apiUrl}/video-sources`;
+    if (isActive !== undefined) {
+      url += `?is_active=${isActive}`;
+    }
+    return this.http.get<VideoSource[]>(url);
+  }
 }

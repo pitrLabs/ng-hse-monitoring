@@ -38,10 +38,10 @@ import { environment } from '../../../../environments/environment';
       } @else {
         <div class="tasks-grid">
           @for (task of aiTasks(); track task.AlgTaskSession) {
-            <div class="task-card" [class.running]="task.TaskIdx >= 0">
+            <div class="task-card" [class.running]="isTaskRunning(task)">
               <div class="task-header">
-                <div class="task-status" [class.active]="task.TaskIdx >= 0">
-                  <mat-icon>{{ task.TaskIdx >= 0 ? 'play_circle' : 'pause_circle' }}</mat-icon>
+                <div class="task-status" [class.active]="isTaskRunning(task)">
+                  <mat-icon>{{ isTaskRunning(task) ? 'play_circle' : 'pause_circle' }}</mat-icon>
                 </div>
                 <div class="task-info">
                   <h3>{{ task.AlgTaskSession }}</h3>
@@ -49,7 +49,7 @@ import { environment } from '../../../../environments/environment';
                 </div>
                 <div class="task-actions">
                   <button mat-icon-button matTooltip="Toggle" (click)="toggleTask(task)">
-                    <mat-icon>{{ task.TaskIdx >= 0 ? 'stop' : 'play_arrow' }}</mat-icon>
+                    <mat-icon>{{ isTaskRunning(task) ? 'stop' : 'play_arrow' }}</mat-icon>
                   </button>
                   <button mat-icon-button matTooltip="Delete" (click)="deleteTask(task)">
                     <mat-icon>delete</mat-icon>
@@ -58,8 +58,12 @@ import { environment } from '../../../../environments/environment';
               </div>
               <div class="task-body">
                 <div class="task-detail">
+                  <span class="label">Status</span>
+                  <span class="value" [style.color]="task.AlgTaskStatus?.style">{{ task.AlgTaskStatus?.label || 'Unknown' }}</span>
+                </div>
+                <div class="task-detail">
                   <span class="label">Algorithms</span>
-                  <span class="value">{{ task.AlgInfo?.length || 0 }} enabled</span>
+                  <span class="value">{{ getAlgorithmNames(task) }}</span>
                 </div>
                 <div class="task-detail">
                   <span class="label">Description</span>
@@ -179,21 +183,40 @@ export class AdminAiTasksComponent implements OnInit {
   }
 
   loadAbilities() {
-    this.http.get(`${this.apiUrl}/video-sources/bmapp/abilities`).subscribe({
+    this.http.get(`${this.apiUrl}/ai-tasks/abilities`).subscribe({
       next: (res) => console.log('Abilities:', res),
       error: (err) => console.error(err)
     });
   }
 
   toggleTask(task: any) {
-    const action = task.TaskIdx >= 0 ? 'stop' : 'start';
-    this.http.post(`${this.apiUrl}/ai-tasks/${task.AlgTaskSession}/${action}`, {}).subscribe(() => this.loadTasks());
+    const action = task.AlgTaskStatus?.type === 2 ? 'stop' : 'start';
+    this.http.post(`${this.apiUrl}/ai-tasks/${encodeURIComponent(task.AlgTaskSession)}/control`, { action }).subscribe({
+      next: () => this.loadTasks(),
+      error: (err) => console.error('Toggle task error:', err)
+    });
+  }
+
+  isTaskRunning(task: any): boolean {
+    // AlgTaskStatus.type: 0 = stopped, 2 = running
+    return task.AlgTaskStatus?.type === 2;
+  }
+
+  getAlgorithmNames(task: any): string {
+    if (task.BaseAlgItem?.length) {
+      return task.BaseAlgItem.map((a: any) => a.name).join(', ');
+    }
+    return `${task.AlgInfo?.length || 0} enabled`;
   }
 
   openCreateDialog() { console.log('Create task'); }
+
   deleteTask(task: any) {
     if (confirm(`Delete task "${task.AlgTaskSession}"?`)) {
-      this.http.delete(`${this.apiUrl}/ai-tasks/${task.AlgTaskSession}`).subscribe(() => this.loadTasks());
+      this.http.delete(`${this.apiUrl}/ai-tasks/${encodeURIComponent(task.AlgTaskSession)}`).subscribe({
+        next: () => this.loadTasks(),
+        error: (err) => console.error('Delete task error:', err)
+      });
     }
   }
 }

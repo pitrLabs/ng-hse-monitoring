@@ -1,35 +1,44 @@
 import { Component, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { HttpClient } from '@angular/common/http';
 import { MatIconModule } from '@angular/material/icon';
 import { MatButtonModule } from '@angular/material/button';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { BmappVideoPlayerComponent } from '../../../shared/components/bmapp-video-player/bmapp-video-player.component';
+import { WsVideoPlayerComponent } from '../../../shared/components/ws-video-player/ws-video-player.component';
 import { VideoSourceService, VideoSource } from '../../../core/services/video-source.service';
 import { AITaskService, AITask, ZLMStream } from '../../../core/services/ai-task.service';
-import { forkJoin } from 'rxjs';
+import { environment } from '../../../../environments/environment';
 
 interface VideoChannel {
   id: string;
   name: string;
   status: 'online' | 'offline';
+  statusLabel?: string;
+  isConnecting?: boolean;
   stream: string;
   app: string;
+  taskIdx?: number; // For WebSocket video streaming (group/TaskIdx format)
 }
 
 @Component({
   standalone: true,
   selector: 'app-admin-realtime-preview',
-  imports: [CommonModule, MatIconModule, MatButtonModule, MatTooltipModule, MatProgressSpinnerModule, BmappVideoPlayerComponent],
+  imports: [CommonModule, MatIconModule, MatButtonModule, MatTooltipModule, MatProgressSpinnerModule, BmappVideoPlayerComponent, WsVideoPlayerComponent],
   template: `
     <div class="realtime-preview">
       <!-- Toolbar -->
       <div class="preview-toolbar">
         <div class="toolbar-left">
           <div class="tab-group">
+            <button class="tab-btn" [class.active]="sourceMode === 'direct'" (click)="sourceMode = 'direct'; loadVideoSources()">
+              <mat-icon>cast_connected</mat-icon>
+              <span>BM-APP Direct</span>
+            </button>
             <button class="tab-btn" [class.active]="sourceMode === 'bmapp'" (click)="sourceMode = 'bmapp'; loadVideoSources()">
               <mat-icon>smart_display</mat-icon>
-              <span>BM-APP (AI)</span>
+              <span>Via Backend</span>
             </button>
             <button class="tab-btn" [class.active]="sourceMode === 'local'" (click)="sourceMode = 'local'; loadVideoSources()">
               <mat-icon>videocam</mat-icon>
@@ -42,6 +51,16 @@ interface VideoChannel {
         </div>
 
         <div class="toolbar-right">
+          <div class="player-mode-toggle">
+            <button class="mode-btn" [class.active]="playerMode === 'ws'" (click)="playerMode = 'ws'" matTooltip="WebSocket JPEG (Recommended)">
+              <mat-icon>image</mat-icon>
+              <span>WS</span>
+            </button>
+            <button class="mode-btn" [class.active]="playerMode === 'webrtc'" (click)="playerMode = 'webrtc'" matTooltip="WebRTC H.264">
+              <mat-icon>videocam</mat-icon>
+              <span>RTC</span>
+            </button>
+          </div>
           <div class="layout-buttons">
             <button class="layout-btn" [class.active]="gridLayout === '1x1'" (click)="setGridLayout('1x1')" matTooltip="1x1">
               <div class="layout-icon grid-1x1"></div>
@@ -68,8 +87,8 @@ interface VideoChannel {
         <!-- Device List Sidebar -->
         <div class="device-sidebar">
           <div class="sidebar-header">
-            <mat-icon>{{ sourceMode === 'bmapp' ? 'smart_display' : 'videocam' }}</mat-icon>
-            <span>{{ sourceMode === 'bmapp' ? 'BM-APP Cameras' : 'Local Devices' }}</span>
+            <mat-icon>{{ sourceMode === 'direct' ? 'cast_connected' : sourceMode === 'bmapp' ? 'smart_display' : 'videocam' }}</mat-icon>
+            <span>{{ sourceMode === 'direct' ? 'BM-APP Streams' : sourceMode === 'bmapp' ? 'Backend Tasks' : 'Local Devices' }}</span>
           </div>
           <div class="device-list">
             @if (loading) {
@@ -80,14 +99,20 @@ interface VideoChannel {
             } @else if (videoChannels.length === 0) {
               <div class="no-devices">
                 <mat-icon>videocam_off</mat-icon>
-                <span>No video sources configured</span>
+                <span>No video sources found</span>
               </div>
             } @else {
               @for (channel of videoChannels; track channel.id) {
-                <div class="device-item" [class.online]="channel.status === 'online'" (click)="selectChannel(channel)">
-                  <mat-icon>{{ channel.status === 'online' ? 'videocam' : 'videocam_off' }}</mat-icon>
+                <div class="device-item"
+                     [class.online]="channel.status === 'online'"
+                     [class.connecting]="channel.isConnecting"
+                     (click)="selectChannel(channel)"
+                     [matTooltip]="channel.statusLabel || ''">
+                  <mat-icon>{{ channel.status === 'online' ? 'videocam' : channel.isConnecting ? 'sync' : 'videocam_off' }}</mat-icon>
                   <span class="device-name">{{ channel.name }}</span>
-                  <span class="status-dot" [class.online]="channel.status === 'online'"></span>
+                  <span class="status-dot"
+                        [class.online]="channel.status === 'online'"
+                        [class.connecting]="channel.isConnecting"></span>
                 </div>
               }
             }
@@ -100,11 +125,19 @@ interface VideoChannel {
             <div class="video-slot">
               @if (getChannelForSlot(i); as channel) {
                 <div class="video-container">
-                  <app-bmapp-video-player
-                    [app]="channel.app"
-                    [stream]="channel.stream"
-                    [showControls]="true">
-                  </app-bmapp-video-player>
+                  @if (playerMode === 'ws') {
+                    <app-ws-video-player
+                      [stream]="getWsStreamId(channel)"
+                      [showControls]="true"
+                      [showFps]="true">
+                    </app-ws-video-player>
+                  } @else {
+                    <app-bmapp-video-player
+                      [app]="channel.app"
+                      [stream]="channel.stream"
+                      [showControls]="true">
+                    </app-bmapp-video-player>
+                  }
                   <div class="video-overlay-controls">
                     <button mat-icon-button matTooltip="Close" (click)="removeFromSlot(i)">
                       <mat-icon>close</mat-icon>
@@ -185,6 +218,44 @@ interface VideoChannel {
         color: var(--accent-primary);
         background: rgba(0, 212, 255, 0.1);
         border-color: var(--accent-primary);
+      }
+    }
+
+    .player-mode-toggle {
+      display: flex;
+      gap: 2px;
+      background: rgba(0, 0, 0, 0.2);
+      padding: 4px;
+      border-radius: 8px;
+      margin-right: 8px;
+    }
+
+    .mode-btn {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 6px 10px;
+      border: none;
+      background: transparent;
+      color: var(--text-secondary);
+      cursor: pointer;
+      border-radius: 6px;
+      font-size: 11px;
+      transition: all 0.2s ease;
+
+      mat-icon {
+        font-size: 16px;
+        width: 16px;
+        height: 16px;
+      }
+
+      &:hover {
+        background: rgba(255, 255, 255, 0.1);
+      }
+
+      &.active {
+        background: var(--accent-primary);
+        color: white;
       }
     }
 
@@ -376,6 +447,26 @@ interface VideoChannel {
           background: #22c55e;
           box-shadow: 0 0 6px rgba(34, 197, 94, 0.5);
         }
+
+        &.connecting {
+          background: #f59e0b;
+          animation: pulse-connecting 1.5s infinite;
+        }
+      }
+
+      @keyframes pulse-connecting {
+        0%, 100% { opacity: 1; box-shadow: 0 0 6px rgba(245, 158, 11, 0.5); }
+        50% { opacity: 0.5; box-shadow: none; }
+      }
+
+      .device-item.connecting mat-icon {
+        color: #f59e0b;
+        animation: spin 2s linear infinite;
+      }
+
+      @keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
       }
 
       &.online mat-icon {
@@ -520,12 +611,18 @@ interface VideoChannel {
 export class AdminRealtimePreviewComponent implements OnInit {
   gridLayout: '1x1' | '2x2' | '3x3' | '4x4' = '2x2';
   loading = false;
-  sourceMode: 'bmapp' | 'local' = 'bmapp';
+  sourceMode: 'direct' | 'bmapp' | 'local' = 'direct';
+  playerMode: 'ws' | 'webrtc' = 'ws'; // WebSocket JPEG is more reliable
 
   videoChannels: VideoChannel[] = [];
   gridSlots: (VideoChannel | null)[] = [];
 
+  private bmappUrl = environment.bmappUrl;
+  // Use proxy in development to bypass CORS
+  private bmappProxyUrl = '/bmapp-api';
+
   constructor(
+    private http: HttpClient,
     private videoSourceService: VideoSourceService,
     private aiTaskService: AITaskService
   ) {}
@@ -537,65 +634,167 @@ export class AdminRealtimePreviewComponent implements OnInit {
   loadVideoSources() {
     this.loading = true;
 
-    if (this.sourceMode === 'bmapp') {
-      this.loadFromBmapp();
+    if (this.sourceMode === 'direct') {
+      this.loadDirectFromBmapp();
+    } else if (this.sourceMode === 'bmapp') {
+      this.loadFromBackend();
     } else {
       this.loadFromLocal();
     }
   }
 
-  loadFromBmapp() {
-    forkJoin({
-      tasks: this.aiTaskService.getTasks(),
-      streams: this.aiTaskService.getAvailableStreams()
-    }).subscribe({
-      next: ({ tasks, streams }) => {
-        const availableStreams = new Set<string>();
-        streams.forEach(s => {
-          availableStreams.add(s.stream);
-        });
+  // Direct query to BM-APP API via proxy
+  // BM-APP nginx routes: /api/ -> port 10002 (backend API)
+  loadDirectFromBmapp() {
+    console.log('Loading from BM-APP via proxy...');
 
-        this.videoChannels = tasks.map(t => {
-          const isRunning = t.AlgTaskStatus?.type === 2;
-          const streamName = availableStreams.has(t.MediaName)
-            ? t.MediaName
-            : availableStreams.has(t.AlgTaskSession)
-              ? t.AlgTaskSession
-              : t.MediaName;
+    // First try to get tasks (most reliable - uses /api/ route)
+    const taskUrl = `${this.bmappProxyUrl}/api/alg_task_fetch`;
 
-          const streamAvailable = availableStreams.has(streamName);
+    this.http.post<any>(taskUrl, {}).subscribe({
+      next: (res) => {
+        console.log('Task fetch response:', res);
+        if (res.Result?.Code === 0 && res.Content) {
+          this.videoChannels = res.Content.map((t: any) => {
+            // Status types: 0=Stopped, 1=Connecting, 2=Warning/Error, 4=Healthy/Running
+            const statusType = t.AlgTaskStatus?.type;
+            const isOnline = statusType === 4; // Only "Healthy" is truly online
+            const isConnecting = statusType === 1;
 
-          return {
-            id: t.AlgTaskSession,
-            name: t.MediaName,
-            status: (isRunning && streamAvailable) ? 'online' : 'offline',
-            stream: streamName,
-            app: 'live'
-          };
-        });
-
-        streams.forEach(s => {
-          const hasTask = tasks.some(t => t.MediaName === s.stream || t.AlgTaskSession === s.stream);
-          if (!hasTask && s.app === 'live') {
-            this.videoChannels.push({
-              id: s.stream,
-              name: `${s.stream} (raw)`,
-              status: 'online',
-              stream: s.stream,
-              app: s.app
-            });
-          }
-        });
-
+            return {
+              id: t.AlgTaskSession,
+              name: t.MediaName || t.AlgTaskSession,
+              status: isOnline ? 'online' : 'offline',
+              statusLabel: t.AlgTaskStatus?.label || 'Unknown',
+              isConnecting,
+              stream: t.AlgTaskSession, // Task session is the stream name for AI output
+              app: 'live',
+              taskIdx: t.TaskIdx // For WebSocket video streaming
+            };
+          });
+          console.log('Loaded tasks:', this.videoChannels);
+        } else {
+          this.videoChannels = [];
+        }
         this.initializeGrid();
         this.loading = false;
       },
       error: (err) => {
-        console.error('Failed to load BM-APP data:', err);
+        console.error('Task fetch failed:', err);
+        // Fallback to media fetch
+        this.loadMediaFromBmapp();
+      }
+    });
+  }
+
+  // Fallback: Get media/cameras from BM-APP
+  loadMediaFromBmapp() {
+    console.log('Trying BM-APP media fetch...');
+    const mediaUrl = `${this.bmappProxyUrl}/api/alg_media_fetch`;
+
+    this.http.post<any>(mediaUrl, {}).subscribe({
+      next: (res) => {
+        console.log('Media fetch response:', res);
+        if (res.Result?.Code === 0 && res.Content) {
+          this.videoChannels = res.Content.map((m: any) => {
+            // MediaStatus types: 0=Offline, 2=Online
+            const statusType = m.MediaStatus?.type;
+            const isOnline = statusType === 2; // For media, type 2 means online
+
+            return {
+              id: m.MediaName,
+              name: m.MediaName,
+              status: isOnline ? 'online' : 'offline',
+              statusLabel: m.MediaStatus?.label || 'Unknown',
+              stream: m.MediaName,
+              app: 'live'
+            };
+          });
+          console.log('Loaded media:', this.videoChannels);
+        } else {
+          this.videoChannels = [];
+        }
+        this.initializeGrid();
+        this.loading = false;
+      },
+      error: (err) => {
+        console.error('Media fetch failed:', err);
+        console.error('All BM-APP endpoints failed - check proxy config');
+        this.videoChannels = [];
+        this.initializeGrid();
+        this.loading = false;
+      }
+    });
+  }
+
+  loadFromBackend() {
+    // Via backend (needs BMAPP_ENABLED=true on backend)
+    this.aiTaskService.getTasks().subscribe({
+      next: (tasks) => {
+        this.aiTaskService.getAvailableStreams().subscribe({
+          next: (streams) => {
+            this.processBmappData(tasks, streams);
+          },
+          error: () => {
+            console.warn('Streams endpoint unavailable, using tasks only');
+            this.processBmappData(tasks, []);
+          }
+        });
+      },
+      error: (err) => {
+        console.error('Failed to load from backend:', err);
         this.sourceMode = 'local';
         this.loadFromLocal();
       }
     });
+  }
+
+  private processBmappData(tasks: any[], streams: any[]) {
+    const availableStreams = new Set<string>();
+    streams.forEach(s => {
+      availableStreams.add(s.stream);
+    });
+
+    this.videoChannels = tasks.map(t => {
+      // Status types: 0=Stopped, 1=Connecting, 2=Warning/Error, 4=Healthy/Running
+      const statusType = t.AlgTaskStatus?.type;
+      const isHealthy = statusType === 4;
+      const isConnecting = statusType === 1;
+      const streamName = availableStreams.has(t.MediaName)
+        ? t.MediaName
+        : availableStreams.has(t.AlgTaskSession)
+          ? t.AlgTaskSession
+          : t.AlgTaskSession;
+
+      const streamAvailable = streams.length === 0 ? isHealthy : availableStreams.has(streamName);
+
+      return {
+        id: t.AlgTaskSession,
+        name: t.MediaName,
+        status: (isHealthy && streamAvailable) ? 'online' : 'offline',
+        statusLabel: t.AlgTaskStatus?.label || 'Unknown',
+        isConnecting,
+        stream: streamName,
+        app: 'live',
+        taskIdx: t.TaskIdx
+      };
+    });
+
+    streams.forEach(s => {
+      const hasTask = tasks.some(t => t.MediaName === s.stream || t.AlgTaskSession === s.stream);
+      if (!hasTask && s.app === 'live') {
+        this.videoChannels.push({
+          id: s.stream,
+          name: `${s.stream} (raw)`,
+          status: 'online',
+          stream: s.stream,
+          app: s.app
+        });
+      }
+    });
+
+    this.initializeGrid();
+    this.loading = false;
   }
 
   loadFromLocal() {
@@ -661,5 +860,17 @@ export class AdminRealtimePreviewComponent implements OnInit {
 
   removeFromSlot(index: number) {
     this.gridSlots[index] = null;
+  }
+
+  // Get WebSocket stream ID for BM-APP video WebSocket
+  // Format: TaskIdx as string (e.g., "1", "7") for individual camera view
+  // Using "group/X" gives mosaic view, so we use TaskIdx directly
+  getWsStreamId(channel: VideoChannel): string {
+    // Use TaskIdx directly for individual camera view
+    if (channel.taskIdx !== undefined) {
+      return String(channel.taskIdx);
+    }
+    // Fallback: use task session name (also works)
+    return channel.id;
   }
 }

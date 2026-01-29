@@ -12,7 +12,6 @@ import {
 import { CommonModule } from '@angular/common';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
-import { environment } from '../../../../environments/environment';
 
 declare const ZLMRTCClient: any;
 
@@ -257,7 +256,9 @@ export class BmappVideoPlayerComponent implements OnInit, OnDestroy, OnChanges {
   private isDestroyed = false;
 
   private getBmappUrl(): string {
-    return (window as any).__env?.BMAPP_URL || environment.bmappUrl;
+    // Use proxy in development to bypass CORS for WebRTC signaling
+    // In production, configure nginx to proxy /bmapp-api/ to BM-APP
+    return '/bmapp-api';
   }
 
   ngOnInit() {
@@ -269,6 +270,8 @@ export class BmappVideoPlayerComponent implements OnInit, OnDestroy, OnChanges {
   ngOnChanges(changes: SimpleChanges) {
     if (changes['stream'] && !changes['stream'].firstChange) {
       this.resetRetry();
+      this.streamFormats = []; // Reset stream formats to try new stream
+      this.currentFormatIndex = 0;
       this.disconnect();
       if (this.stream) {
         this.connectWithHealthCheck();
@@ -307,37 +310,53 @@ export class BmappVideoPlayerComponent implements OnInit, OnDestroy, OnChanges {
     if (this.isDestroyed) return;
 
     this.status.set('connecting');
-    this.statusMessage.set('Checking server availability...');
+    this.statusMessage.set('Connecting to AI Stream...');
 
-    const isServerReady = await this.checkServerHealth();
-
-    if (this.isDestroyed) return;
-
-    if (isServerReady) {
-      this.statusMessage.set('Connecting to AI Stream...');
-      this.connect();
-    } else {
-      this.status.set('server_down');
-      this.scheduleReconnect();
-    }
+    // Skip health check - directly try to connect
+    // Health check has CORS issues and unreliable endpoint
+    this.connect();
   }
 
   private async checkServerHealth(): Promise<boolean> {
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
+    // Simplified health check - just return true and let WebRTC handle connection
+    // The actual connection will fail/retry if server is down
+    return true;
+  }
 
-      const response = await fetch(`${this.getBmappUrl()}/index/api/getServerConfig`, {
-        method: 'GET',
-        signal: controller.signal
-      });
+  // Stream name formats to try
+  private streamFormats: string[] = [];
+  private currentFormatIndex = 0;
 
-      clearTimeout(timeoutId);
-      return response.ok;
-    } catch (error) {
-      console.log('Health check failed:', error);
-      return false;
+  private generateStreamFormats(): string[] {
+    const formats: string[] = [];
+    const stream = this.stream;
+    const apps = ['live', 'rtp', 'proxy'];
+
+    // Original format
+    formats.push(`${this.app}|${stream}`);
+
+    // Try different app names with original stream
+    for (const app of apps) {
+      formats.push(`${app}|${stream}`);
     }
+
+    // Try with underscores instead of spaces
+    const underscoreStream = stream.replace(/ /g, '_');
+    for (const app of apps) {
+      formats.push(`${app}|${underscoreStream}`);
+    }
+
+    // Try lowercase
+    const lowerStream = stream.toLowerCase().replace(/ /g, '_');
+    for (const app of apps) {
+      formats.push(`${app}|${lowerStream}`);
+    }
+
+    // Try without spaces
+    const noSpaceStream = stream.replace(/ /g, '');
+    formats.push(`live|${noSpaceStream}`);
+
+    return [...new Set(formats)]; // Remove duplicates
   }
 
   connect() {
@@ -355,16 +374,26 @@ export class BmappVideoPlayerComponent implements OnInit, OnDestroy, OnChanges {
       return;
     }
 
+    // Generate stream formats on first connect
+    if (this.streamFormats.length === 0) {
+      this.streamFormats = this.generateStreamFormats();
+      this.currentFormatIndex = 0;
+    }
+
     if (this.status() !== 'reconnecting') {
       this.status.set('connecting');
     }
     this.statusMessage.set('Establishing WebRTC connection...');
     this.disconnect();
 
+    // Get current format to try
+    const currentFormat = this.streamFormats[this.currentFormatIndex] || `${this.app}|${this.stream}`;
+    const [appName, streamName] = currentFormat.split('|');
+
     try {
-      const encodedStream = encodeURIComponent(this.stream);
-      const webrtcUrl = `${this.getBmappUrl()}/webrtc?app=${encodeURIComponent(this.app)}&stream=${encodedStream}&type=play`;
-      console.log('Connecting to BM-APP WebRTC:', webrtcUrl);
+      const encodedStream = encodeURIComponent(streamName);
+      const webrtcUrl = `${this.getBmappUrl()}/webrtc?app=${encodeURIComponent(appName)}&stream=${encodedStream}&type=play`;
+      console.log(`Connecting to BM-APP WebRTC (format ${this.currentFormatIndex + 1}/${this.streamFormats.length}):`, webrtcUrl);
 
       this.player = new ZLMRTCClient.Endpoint({
         element: this.videoElement.nativeElement,
@@ -398,6 +427,14 @@ export class BmappVideoPlayerComponent implements OnInit, OnDestroy, OnChanges {
 
       this.player.on(ZLMRTCClient.Events.WEBRTC_OFFER_ANWSER_EXCHANGE_FAILED, (e: any) => {
         console.error('Offer/Answer exchange failed:', e);
+
+        // Check if stream not found - try next format
+        if (e && (e.code === -1 || e.msg === 'stream not found')) {
+          console.log('Stream not found, trying next format...');
+          this.tryNextStreamFormat();
+          return;
+        }
+
         // Check for HTTP 400 error (server restart scenario)
         if (e && (e.status === 400 || e.message?.includes('400'))) {
           this.handleServerError('Server restarting, please wait...');
@@ -409,6 +446,30 @@ export class BmappVideoPlayerComponent implements OnInit, OnDestroy, OnChanges {
     } catch (error: any) {
       console.error('BM-APP WebRTC error:', error);
       this.handleConnectionError(error.message || 'Connection failed');
+    }
+  }
+
+  private tryNextStreamFormat() {
+    if (this.isDestroyed) return;
+
+    this.currentFormatIndex++;
+
+    if (this.currentFormatIndex < this.streamFormats.length) {
+      const nextFormat = this.streamFormats[this.currentFormatIndex];
+      console.log(`Trying format ${this.currentFormatIndex + 1}/${this.streamFormats.length}: ${nextFormat}`);
+      this.statusMessage.set(`Trying format ${this.currentFormatIndex + 1}/${this.streamFormats.length}...`);
+
+      // Small delay before trying next format
+      setTimeout(() => {
+        if (!this.isDestroyed) {
+          this.connect();
+        }
+      }, 500);
+    } else {
+      // All formats tried, show error
+      console.error('All stream formats tried, none worked');
+      this.status.set('error');
+      this.errorMessage.set('Stream not found (tried all formats)');
     }
   }
 

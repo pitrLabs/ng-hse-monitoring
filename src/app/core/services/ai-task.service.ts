@@ -16,6 +16,7 @@ export interface AITask {
   AlgTaskSession: string;
   MediaName: string;
   TaskDesc: string;
+  TaskIdx: number;  // Task index for WebSocket video streaming (individual camera)
   AlgInfo: number[];
   BaseAlgItem: {
     majorId: number;
@@ -98,6 +99,12 @@ export class AITaskService {
   getAvailableStreams(): Observable<ZLMStream[]> {
     return this.http.get<{ streams: ZLMStream[] }>(`${this.api}/ai-tasks/streams`).pipe(
       map(res => res.streams)
+    );
+  }
+
+  getPreviewChannels(): Observable<any> {
+    return this.http.get<{ channels: any }>(`${this.api}/ai-tasks/preview-channels`).pipe(
+      map(res => res.channels)
     );
   }
 }

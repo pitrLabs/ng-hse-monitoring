@@ -233,7 +233,7 @@ import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
   `]
 })
 export class WsVideoPlayerComponent implements OnInit, OnDestroy, OnChanges {
-  @Input() stream = ''; // Task URL/identifier (e.g., "group/1")
+  @Input() stream = ''; // BM-APP channel URL: "task/<name>" for individual, "group/<n>" for mosaic
   @Input() showControls = true;
   @Input() showFps = false;
   @Input() autoConnect = true;

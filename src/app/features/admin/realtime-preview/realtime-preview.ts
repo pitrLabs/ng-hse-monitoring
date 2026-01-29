@@ -19,7 +19,7 @@ interface VideoChannel {
   isConnecting?: boolean;
   stream: string;
   app: string;
-  taskIdx?: number; // For WebSocket video streaming (group/TaskIdx format)
+  taskIdx?: number; // BM-APP TaskIdx for individual camera view (e.g., 0, 1, 7)
 }
 
 @Component({
@@ -669,18 +669,47 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
   loadDirectFromBmapp() {
     console.log('Loading from BM-APP via proxy...');
 
-    // First try to get tasks (most reliable - uses /api/ route)
+    // Also fetch preview channels to understand the structure
+    const previewUrl = `${this.bmappProxyUrl}/api/app_preview_channel`;
+    this.http.post<any>(previewUrl, {}).subscribe({
+      next: (res) => {
+        console.log('=== PREVIEW CHANNELS RAW RESPONSE ===');
+        console.log(JSON.stringify(res, null, 2));
+        if (res.Content) {
+          console.log('ChnGroup:', res.Content.ChnGroup);
+          console.log('TaskGroup:', res.Content.TaskGroup);
+          // Log individual channel structure
+          if (res.Content.ChnGroup?.length > 0) {
+            console.log('First ChnGroup item:', JSON.stringify(res.Content.ChnGroup[0], null, 2));
+          }
+          if (res.Content.TaskGroup?.length > 0) {
+            console.log('First TaskGroup item:', JSON.stringify(res.Content.TaskGroup[0], null, 2));
+            // Check if tasks have individual URLs
+            const firstTask = res.Content.TaskGroup[0];
+            if (firstTask.chn?.length > 0) {
+              console.log('First task channel:', JSON.stringify(firstTask.chn[0], null, 2));
+            }
+          }
+        }
+      },
+      error: (err) => console.log('Preview channels fetch failed (optional):', err.message)
+    });
+
+    // Get tasks for video display
     const taskUrl = `${this.bmappProxyUrl}/api/alg_task_fetch`;
 
     this.http.post<any>(taskUrl, {}).subscribe({
       next: (res) => {
         console.log('Task fetch response:', res);
         if (res.Result?.Code === 0 && res.Content) {
-          this.videoChannels = res.Content.map((t: any) => {
+          this.videoChannels = res.Content.map((t: any, index: number) => {
             // Status types: 0=Stopped, 1=Connecting, 2=Warning/Error, 4=Healthy/Running
             const statusType = t.AlgTaskStatus?.type;
             const isOnline = statusType === 4; // Only "Healthy" is truly online
             const isConnecting = statusType === 1;
+
+            // Debug: log TaskIdx for each task
+            console.log(`Task[${index}]: ${t.MediaName}, TaskIdx=${t.TaskIdx}, Session=${t.AlgTaskSession}`);
 
             return {
               id: t.AlgTaskSession,
@@ -690,10 +719,10 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
               isConnecting,
               stream: t.AlgTaskSession, // Task session is the stream name for AI output
               app: 'live',
-              taskIdx: t.TaskIdx // For WebSocket video streaming
+              taskIdx: t.TaskIdx // For WebSocket video streaming (individual camera view)
             };
           });
-          console.log('Loaded tasks:', this.videoChannels);
+          console.log('Loaded tasks with TaskIdx:', this.videoChannels.map(c => ({ name: c.name, taskIdx: c.taskIdx })));
         } else {
           this.videoChannels = [];
         }
@@ -884,15 +913,15 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
   }
 
   // Get WebSocket stream ID for BM-APP video WebSocket
-  // Format: TaskIdx as string (e.g., "1", "7") for individual camera view
-  // Using "group/X" gives mosaic view, so we use TaskIdx directly
+  // Based on BM-APP preview channels API response:
+  // - "group/<number>" = mosaic view (9 cameras) e.g., "group/1"
+  // - "task/<task_name>" = individual camera e.g., "task/BWC SALATIGA 2"
+  // The task name is the AlgTaskSession/stream value
   getWsStreamId(channel: VideoChannel): string {
-    // Use TaskIdx directly for individual camera view
-    if (channel.taskIdx !== undefined) {
-      return String(channel.taskIdx);
-    }
-    // Fallback: use task session name (also works)
-    return channel.id;
+    // Use task/<task_name> format for individual camera view
+    const streamUrl = `task/${channel.stream}`;
+    console.log(`[WsStream] Channel: ${channel.name}, URL: ${streamUrl}`);
+    return streamUrl;
   }
 
   toggleFullscreen() {

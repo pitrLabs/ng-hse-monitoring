@@ -1,4 +1,4 @@
-import { Component, OnInit } from '@angular/core';
+import { Component, OnInit, OnDestroy, ElementRef, ViewChild } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { MatIconModule } from '@angular/material/icon';
@@ -27,14 +27,14 @@ interface VideoChannel {
   selector: 'app-admin-realtime-preview',
   imports: [CommonModule, MatIconModule, MatButtonModule, MatTooltipModule, MatProgressSpinnerModule, BmappVideoPlayerComponent, WsVideoPlayerComponent],
   template: `
-    <div class="realtime-preview">
+    <div class="realtime-preview" #previewContainer>
       <!-- Toolbar -->
       <div class="preview-toolbar">
         <div class="toolbar-left">
           <div class="tab-group">
             <button class="tab-btn" [class.active]="sourceMode === 'direct'" (click)="sourceMode = 'direct'; loadVideoSources()">
               <mat-icon>cast_connected</mat-icon>
-              <span>BM-APP Direct</span>
+              <span>Direct AI</span>
             </button>
             <button class="tab-btn" [class.active]="sourceMode === 'bmapp'" (click)="sourceMode = 'bmapp'; loadVideoSources()">
               <mat-icon>smart_display</mat-icon>
@@ -76,8 +76,8 @@ interface VideoChannel {
             </button>
           </div>
 
-          <button class="action-btn" matTooltip="Fullscreen">
-            <mat-icon>fullscreen</mat-icon>
+          <button class="action-btn" (click)="toggleFullscreen()" matTooltip="Fullscreen">
+            <mat-icon>{{ isFullscreen ? 'fullscreen_exit' : 'fullscreen' }}</mat-icon>
           </button>
         </div>
       </div>
@@ -88,7 +88,7 @@ interface VideoChannel {
         <div class="device-sidebar">
           <div class="sidebar-header">
             <mat-icon>{{ sourceMode === 'direct' ? 'cast_connected' : sourceMode === 'bmapp' ? 'smart_display' : 'videocam' }}</mat-icon>
-            <span>{{ sourceMode === 'direct' ? 'BM-APP Streams' : sourceMode === 'bmapp' ? 'Backend Tasks' : 'Local Devices' }}</span>
+            <span>{{ sourceMode === 'direct' ? 'AI Streams' : sourceMode === 'bmapp' ? 'Backend Tasks' : 'Local Devices' }}</span>
           </div>
           <div class="device-list">
             @if (loading) {
@@ -166,6 +166,17 @@ interface VideoChannel {
       flex-direction: column;
       height: calc(100vh - 120px);
       gap: 16px;
+    }
+
+    /* Fullscreen mode */
+    .realtime-preview:fullscreen {
+      height: 100vh;
+      padding: 16px;
+      background: var(--bg-primary, #0a0a14);
+    }
+
+    .realtime-preview:fullscreen .preview-content {
+      height: calc(100vh - 80px);
     }
 
     .preview-toolbar {
@@ -608,11 +619,16 @@ interface VideoChannel {
     }
   `]
 })
-export class AdminRealtimePreviewComponent implements OnInit {
+export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
+  @ViewChild('previewContainer') previewContainer!: ElementRef<HTMLElement>;
+
   gridLayout: '1x1' | '2x2' | '3x3' | '4x4' = '2x2';
   loading = false;
   sourceMode: 'direct' | 'bmapp' | 'local' = 'direct';
   playerMode: 'ws' | 'webrtc' = 'ws'; // WebSocket JPEG is more reliable
+  isFullscreen = false;
+
+  private fullscreenChangeHandler = () => this.onFullscreenChange();
 
   videoChannels: VideoChannel[] = [];
   gridSlots: (VideoChannel | null)[] = [];
@@ -629,6 +645,11 @@ export class AdminRealtimePreviewComponent implements OnInit {
 
   ngOnInit() {
     this.loadVideoSources();
+    document.addEventListener('fullscreenchange', this.fullscreenChangeHandler);
+  }
+
+  ngOnDestroy() {
+    document.removeEventListener('fullscreenchange', this.fullscreenChangeHandler);
   }
 
   loadVideoSources() {
@@ -872,5 +893,21 @@ export class AdminRealtimePreviewComponent implements OnInit {
     }
     // Fallback: use task session name (also works)
     return channel.id;
+  }
+
+  toggleFullscreen() {
+    if (!this.previewContainer?.nativeElement) return;
+
+    if (!document.fullscreenElement) {
+      this.previewContainer.nativeElement.requestFullscreen().catch(err => {
+        console.error('Error attempting to enable fullscreen:', err);
+      });
+    } else {
+      document.exitFullscreen();
+    }
+  }
+
+  private onFullscreenChange() {
+    this.isFullscreen = !!document.fullscreenElement;
   }
 }

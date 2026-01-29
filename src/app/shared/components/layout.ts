@@ -800,7 +800,7 @@ export class LayoutComponent implements OnInit, OnDestroy {
       adminOnly: true,
       children: [
         { label: 'Dashboard', icon: 'dashboard', route: '/admin/dashboard' },
-        { label: 'AI Stream', icon: 'live_tv', route: '/admin/realtime-preview' },
+        { label: 'Real-time Preview', icon: 'live_tv', route: '/admin/realtime-preview' },
         { label: 'Users', icon: 'people', route: '/admin/users' },
         { label: 'Roles', icon: 'security', route: '/admin/roles' },
         { label: 'Permissions', icon: 'key', route: '/admin/permissions' },
@@ -887,7 +887,7 @@ export class LayoutComponent implements OnInit, OnDestroy {
       '/profile': 'Profile Settings',
       // Admin routes
       '/admin/dashboard': 'Admin Dashboard',
-      '/admin/realtime-preview': 'AI Stream',
+      '/admin/realtime-preview': 'Real-time Preview',
       '/admin/users': 'User Management',
       '/admin/roles': 'Role Management',
       '/admin/permissions': 'Permissions',

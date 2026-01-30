@@ -12,6 +12,9 @@ export interface VideoSource {
   description?: string;
   location?: string;
   is_active: boolean;
+  sound_alert: boolean;
+  is_synced_bmapp: boolean;
+  bmapp_sync_error?: string | null;
   created_at: string;
   updated_at: string;
   created_by_id?: string;
@@ -64,5 +67,10 @@ export class VideoSourceService {
       url += `?is_active=${isActive}`;
     }
     return this.http.get<VideoSource[]>(url);
+  }
+
+  // Alias for getAll() - used by AI Tasks component
+  getVideoSources(): Observable<VideoSource[]> {
+    return this.getAll();
   }
 }

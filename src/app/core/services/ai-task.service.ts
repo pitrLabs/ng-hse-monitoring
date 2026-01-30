@@ -3,6 +3,7 @@ import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import { map } from 'rxjs/operators';
 import { environment } from '../../../environments/environment';
+import { VideoSource } from './video-source.service';
 
 export interface AIAbility {
   id: number;
@@ -12,11 +13,30 @@ export interface AIAbility {
   parameters: any[];
 }
 
+// New format from backend (database-backed)
 export interface AITask {
+  id: string; // UUID
+  task_name: string;
+  video_source_id: string; // UUID
+  algorithms: number[] | null;
+  description: string | null;
+  status: 'pending' | 'running' | 'stopped' | 'failed';
+  is_synced_bmapp: boolean;
+  bmapp_sync_error: string | null;
+  created_at: string;
+  updated_at: string;
+  started_at: string | null;
+  stopped_at: string | null;
+  created_by_id: string | null;
+  video_source?: VideoSource;
+}
+
+// Legacy format from BM-APP (for comparison/debugging)
+export interface BmappTask {
   AlgTaskSession: string;
   MediaName: string;
   TaskDesc: string;
-  TaskIdx: number;  // Task index for WebSocket video streaming (individual camera)
+  TaskIdx: number;
   AlgInfo: number[];
   BaseAlgItem: {
     majorId: number;
@@ -45,10 +65,21 @@ export interface BmappMedia {
 }
 
 export interface AITaskCreate {
-  task_name: string;
-  media_name: string;
+  video_source_id: string; // UUID
+  task_name?: string; // Optional - auto-generated if not provided
   algorithms: number[];
   description?: string;
+  auto_start?: boolean; // Default true
+}
+
+export interface AITaskUpdate {
+  algorithms?: number[];
+  description?: string;
+  status?: 'pending' | 'running' | 'stopped' | 'failed';
+}
+
+export interface AITaskControl {
+  action: 'start' | 'stop' | 'restart';
 }
 
 export interface ZLMStream {
@@ -66,44 +97,72 @@ export class AITaskService {
 
   constructor(private http: HttpClient) {}
 
+  // Get all tasks from database (new format)
   getTasks(): Observable<AITask[]> {
-    return this.http.get<{ tasks: AITask[] }>(`${this.api}/ai-tasks`).pipe(
+    return this.http.get<AITask[]>(`${this.api}/ai-tasks`);
+  }
+
+  // Get a specific task by ID
+  getTask(taskId: string): Observable<AITask> {
+    return this.http.get<AITask>(`${this.api}/ai-tasks/${taskId}`);
+  }
+
+  // Get tasks directly from BM-APP (for comparison/debugging)
+  getBmappTasks(): Observable<BmappTask[]> {
+    return this.http.get<{ tasks: BmappTask[] }>(`${this.api}/ai-tasks/bmapp`).pipe(
       map(res => res.tasks)
     );
   }
 
+  // Create a new task
+  createTask(task: AITaskCreate): Observable<AITask> {
+    return this.http.post<AITask>(`${this.api}/ai-tasks`, task);
+  }
+
+  // Update a task
+  updateTask(taskId: string, update: AITaskUpdate): Observable<AITask> {
+    return this.http.put<AITask>(`${this.api}/ai-tasks/${taskId}`, update);
+  }
+
+  // Delete a task
+  deleteTask(taskId: string): Observable<void> {
+    return this.http.delete<void>(`${this.api}/ai-tasks/${taskId}`);
+  }
+
+  // Start, stop, or restart a task
+  controlTask(taskId: string, action: 'start' | 'stop' | 'restart'): Observable<AITask> {
+    return this.http.post<AITask>(`${this.api}/ai-tasks/${taskId}/control`, { action });
+  }
+
+  // Sync all tasks to BM-APP
+  syncToBmapp(): Observable<{ message: string }> {
+    return this.http.post<{ message: string }>(`${this.api}/ai-tasks/sync-bmapp`, {});
+  }
+
+  // Get available AI abilities/algorithms
   getAbilities(): Observable<AIAbility[]> {
-    return this.http.get<{ abilities: AIAbility[] }>(`${this.api}/ai-tasks/abilities`).pipe(
+    return this.http.get<{ abilities: AIAbility[] }>(`${this.api}/ai-tasks/abilities/list`).pipe(
       map(res => res.abilities)
     );
   }
 
+  // Get media from BM-APP
   getMedia(): Observable<BmappMedia[]> {
-    return this.http.get<{ media: BmappMedia[] }>(`${this.api}/ai-tasks/media`).pipe(
+    return this.http.get<{ media: BmappMedia[] }>(`${this.api}/ai-tasks/media/list`).pipe(
       map(res => res.media)
     );
   }
 
-  createTask(task: AITaskCreate): Observable<any> {
-    return this.http.post(`${this.api}/ai-tasks`, task);
-  }
-
-  deleteTask(taskName: string): Observable<any> {
-    return this.http.delete(`${this.api}/ai-tasks/${encodeURIComponent(taskName)}`);
-  }
-
-  controlTask(taskName: string, action: 'start' | 'stop'): Observable<any> {
-    return this.http.post(`${this.api}/ai-tasks/${encodeURIComponent(taskName)}/control`, { action });
-  }
-
+  // Get available ZLMediaKit streams
   getAvailableStreams(): Observable<ZLMStream[]> {
-    return this.http.get<{ streams: ZLMStream[] }>(`${this.api}/ai-tasks/streams`).pipe(
+    return this.http.get<{ streams: ZLMStream[] }>(`${this.api}/ai-tasks/streams/list`).pipe(
       map(res => res.streams)
     );
   }
 
+  // Get preview channels from BM-APP
   getPreviewChannels(): Observable<any> {
-    return this.http.get<{ channels: any }>(`${this.api}/ai-tasks/preview-channels`).pipe(
+    return this.http.get<{ channels: any }>(`${this.api}/ai-tasks/preview/channels`).pipe(
       map(res => res.channels)
     );
   }

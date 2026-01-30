@@ -5,30 +5,15 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatButtonModule } from '@angular/material/button';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatTooltipModule } from '@angular/material/tooltip';
-import { MatDialogModule, MatDialog } from '@angular/material/dialog';
+import { MatDialogModule } from '@angular/material/dialog';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
 import { MatSelectModule } from '@angular/material/select';
 import { MatCheckboxModule } from '@angular/material/checkbox';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
-import { HttpClient } from '@angular/common/http';
-import { environment } from '../../../../environments/environment';
 import { forkJoin } from 'rxjs';
-
-interface AIAbility {
-  id: number;
-  code: number;
-  name: string;
-  description: string;
-}
-
-interface BmappMedia {
-  name: string;
-  url: string;
-  description: string;
-  status: string;
-  status_type: number;
-}
+import { AITaskService, AITask, AIAbility } from '../../../core/services/ai-task.service';
+import { VideoSourceService, VideoSource } from '../../../core/services/video-source.service';
 
 @Component({
   standalone: true,
@@ -47,6 +32,14 @@ interface BmappMedia {
           <span class="count">{{ aiTasks().length }} tasks</span>
         </div>
         <div class="header-right">
+          <button mat-stroked-button (click)="syncToBmapp()" [disabled]="syncing()">
+            @if (syncing()) {
+              <mat-spinner diameter="18"></mat-spinner>
+            } @else {
+              <mat-icon>sync</mat-icon>
+            }
+            Sync to BM-APP
+          </button>
           <button mat-stroked-button (click)="refreshData()">
             <mat-icon>refresh</mat-icon>
             Refresh
@@ -64,15 +57,15 @@ interface BmappMedia {
         </div>
       } @else {
         <div class="tasks-grid">
-          @for (task of aiTasks(); track task.AlgTaskSession) {
-            <div class="task-card" [class.running]="isTaskRunning(task)">
+          @for (task of aiTasks(); track task.id) {
+            <div class="task-card" [class.running]="isTaskRunning(task)" [class.failed]="task.status === 'failed'">
               <div class="task-header">
-                <div class="task-status" [class.active]="isTaskRunning(task)">
-                  <mat-icon>{{ isTaskRunning(task) ? 'play_circle' : 'pause_circle' }}</mat-icon>
+                <div class="task-status" [class.active]="isTaskRunning(task)" [class.error]="task.status === 'failed'">
+                  <mat-icon>{{ getStatusIcon(task) }}</mat-icon>
                 </div>
                 <div class="task-info">
-                  <h3>{{ task.AlgTaskSession }}</h3>
-                  <span class="task-media">{{ task.MediaName }}</span>
+                  <h3>{{ task.task_name }}</h3>
+                  <span class="task-media">{{ task.video_source?.name || task.video_source?.stream_name || 'Unknown Source' }}</span>
                 </div>
                 <div class="task-actions">
                   <button mat-icon-button [matTooltip]="isTaskRunning(task) ? 'Stop' : 'Start'" (click)="toggleTask(task)">
@@ -86,15 +79,27 @@ interface BmappMedia {
               <div class="task-body">
                 <div class="task-detail">
                   <span class="label">Status</span>
-                  <span class="value" [style.color]="task.AlgTaskStatus?.style">{{ task.AlgTaskStatus?.label || 'Unknown' }}</span>
+                  <span class="value status-badge" [class]="'status-' + task.status">{{ task.status }}</span>
                 </div>
                 <div class="task-detail">
                   <span class="label">Algorithms</span>
-                  <span class="value">{{ getAlgorithmNames(task) }}</span>
+                  <span class="value">{{ getAlgorithmDisplay(task) }}</span>
                 </div>
                 <div class="task-detail">
+                  <span class="label">BM-APP Sync</span>
+                  <span class="value" [class.sync-ok]="task.is_synced_bmapp" [class.sync-error]="!task.is_synced_bmapp">
+                    {{ task.is_synced_bmapp ? 'Synced' : 'Not synced' }}
+                  </span>
+                </div>
+                @if (task.bmapp_sync_error) {
+                  <div class="task-detail error-detail">
+                    <span class="label">Sync Error</span>
+                    <span class="value error-text">{{ task.bmapp_sync_error }}</span>
+                  </div>
+                }
+                <div class="task-detail">
                   <span class="label">Description</span>
-                  <span class="value">{{ task.TaskDesc || '-' }}</span>
+                  <span class="value">{{ task.description || '-' }}</span>
                 </div>
               </div>
             </div>
@@ -122,22 +127,26 @@ interface BmappMedia {
               @if (dialogLoading()) {
                 <div class="dialog-loading">
                   <mat-spinner diameter="32"></mat-spinner>
-                  <span>Loading media and abilities...</span>
+                  <span>Loading video sources and abilities...</span>
                 </div>
               } @else {
                 <div class="form-group">
-                  <label>Task Name *</label>
-                  <input type="text" [(ngModel)]="newTask.task_name" placeholder="Enter task name">
+                  <label>Task Name (optional)</label>
+                  <input type="text" [(ngModel)]="newTask.task_name" placeholder="Auto-generated if empty">
+                  <span class="hint">Leave empty to auto-generate from video source name</span>
                 </div>
 
                 <div class="form-group">
-                  <label>Select Camera/Media *</label>
-                  <select [(ngModel)]="newTask.media_name">
-                    <option value="">-- Select Media --</option>
-                    @for (media of mediaList(); track media.name) {
-                      <option [value]="media.name">{{ media.name }} ({{ media.status }})</option>
+                  <label>Select Video Source *</label>
+                  <select [(ngModel)]="newTask.video_source_id">
+                    <option value="">-- Select Video Source --</option>
+                    @for (source of videoSources(); track source.id) {
+                      <option [value]="source.id">{{ source.name }} ({{ source.stream_name }})</option>
                     }
                   </select>
+                  @if (videoSources().length === 0) {
+                    <span class="hint warning">No video sources available. Create one first in Video Sources.</span>
+                  }
                 </div>
 
                 <div class="form-group">
@@ -153,7 +162,7 @@ interface BmappMedia {
                       </label>
                     }
                     @if (abilities().length === 0) {
-                      <div class="no-abilities">No algorithms available</div>
+                      <div class="no-abilities">No algorithms available from BM-APP</div>
                     }
                   </div>
                 </div>
@@ -161,6 +170,13 @@ interface BmappMedia {
                 <div class="form-group">
                   <label>Description</label>
                   <textarea [(ngModel)]="newTask.description" placeholder="Optional description" rows="2"></textarea>
+                </div>
+
+                <div class="form-group checkbox-group">
+                  <label class="checkbox-label">
+                    <input type="checkbox" [(ngModel)]="newTask.auto_start">
+                    <span>Auto-start task after creation</span>
+                  </label>
                 </div>
               }
             </div>
@@ -214,6 +230,7 @@ interface BmappMedia {
       transition: all 0.2s ease;
 
       &.running { border-color: rgba(34, 197, 94, 0.5); }
+      &.failed { border-color: rgba(239, 68, 68, 0.5); }
       &:hover { transform: translateY(-2px); }
     }
 
@@ -226,13 +243,18 @@ interface BmappMedia {
     .task-status {
       width: 40px; height: 40px;
       border-radius: 8px;
-      background: rgba(239, 68, 68, 0.2);
+      background: rgba(107, 114, 128, 0.2);
       display: flex; align-items: center; justify-content: center;
-      mat-icon { color: #ef4444; }
+      mat-icon { color: #6b7280; }
 
       &.active {
         background: rgba(34, 197, 94, 0.2);
         mat-icon { color: #22c55e; }
+      }
+
+      &.error {
+        background: rgba(239, 68, 68, 0.2);
+        mat-icon { color: #ef4444; }
       }
     }
 
@@ -257,7 +279,29 @@ interface BmappMedia {
 
       .label { font-size: 13px; color: var(--text-tertiary); }
       .value { font-size: 13px; color: var(--text-primary); max-width: 200px; text-align: right; }
+
+      &.error-detail {
+        flex-direction: column;
+        gap: 4px;
+        .error-text { color: #ef4444; font-size: 12px; text-align: left; max-width: 100%; }
+      }
     }
+
+    .status-badge {
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 500;
+      text-transform: uppercase;
+
+      &.status-running { background: rgba(34, 197, 94, 0.2); color: #22c55e; }
+      &.status-stopped { background: rgba(107, 114, 128, 0.2); color: #6b7280; }
+      &.status-pending { background: rgba(59, 130, 246, 0.2); color: #3b82f6; }
+      &.status-failed { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
+    }
+
+    .sync-ok { color: #22c55e; }
+    .sync-error { color: #ef4444; }
 
     .empty-state {
       grid-column: 1 / -1;
@@ -350,6 +394,34 @@ interface BmappMedia {
         cursor: pointer;
         option { background: #1a1a2e; color: var(--text-primary); }
       }
+
+      .hint {
+        display: block;
+        margin-top: 6px;
+        font-size: 11px;
+        color: var(--text-muted);
+
+        &.warning { color: #f59e0b; }
+      }
+    }
+
+    .checkbox-group {
+      .checkbox-label {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        cursor: pointer;
+
+        input[type="checkbox"] {
+          width: 18px;
+          height: 18px;
+        }
+
+        span {
+          font-size: 14px;
+          color: var(--text-primary);
+        }
+      }
     }
 
     .algorithm-list {
@@ -414,32 +486,37 @@ interface BmappMedia {
   `]
 })
 export class AdminAiTasksComponent implements OnInit {
-  private http = inject(HttpClient);
+  private aiTaskService = inject(AITaskService);
+  private videoSourceService = inject(VideoSourceService);
   private snackBar = inject(MatSnackBar);
-  private apiUrl = environment.apiUrl;
 
   loading = signal(true);
-  aiTasks = signal<any[]>([]);
+  syncing = signal(false);
+  aiTasks = signal<AITask[]>([]);
   showCreateDialog = signal(false);
   dialogLoading = signal(false);
   creating = signal(false);
 
-  mediaList = signal<BmappMedia[]>([]);
+  videoSources = signal<VideoSource[]>([]);
   abilities = signal<AIAbility[]>([]);
 
   newTask = {
     task_name: '',
-    media_name: '',
+    video_source_id: '',
     algorithms: [] as number[],
-    description: ''
+    description: '',
+    auto_start: true
   };
 
   ngOnInit() { this.loadTasks(); }
 
   loadTasks() {
     this.loading.set(true);
-    this.http.get<any>(`${this.apiUrl}/ai-tasks`).subscribe({
-      next: (res) => { this.aiTasks.set(res.tasks || []); this.loading.set(false); },
+    this.aiTaskService.getTasks().subscribe({
+      next: (tasks) => {
+        this.aiTasks.set(tasks);
+        this.loading.set(false);
+      },
       error: (err) => {
         console.error('Load tasks error:', err);
         this.loading.set(false);
@@ -452,9 +529,26 @@ export class AdminAiTasksComponent implements OnInit {
     this.loadTasks();
   }
 
-  toggleTask(task: any) {
-    const action = task.AlgTaskStatus?.type === 2 ? 'stop' : 'start';
-    this.http.post(`${this.apiUrl}/ai-tasks/${encodeURIComponent(task.AlgTaskSession)}/control`, { action }).subscribe({
+  syncToBmapp() {
+    this.syncing.set(true);
+    this.aiTaskService.syncToBmapp().subscribe({
+      next: (res) => {
+        this.syncing.set(false);
+        this.showSuccess(res.message);
+        // Refresh to see updated sync status
+        setTimeout(() => this.loadTasks(), 2000);
+      },
+      error: (err) => {
+        console.error('Sync error:', err);
+        this.syncing.set(false);
+        this.showError('Failed to sync to BM-APP');
+      }
+    });
+  }
+
+  toggleTask(task: AITask) {
+    const action = task.status === 'running' ? 'stop' : 'start';
+    this.aiTaskService.controlTask(task.id, action).subscribe({
       next: () => {
         this.loadTasks();
         this.showSuccess(`Task ${action}ed successfully`);
@@ -466,15 +560,30 @@ export class AdminAiTasksComponent implements OnInit {
     });
   }
 
-  isTaskRunning(task: any): boolean {
-    return task.AlgTaskStatus?.type === 2;
+  isTaskRunning(task: AITask): boolean {
+    return task.status === 'running';
   }
 
-  getAlgorithmNames(task: any): string {
-    if (task.BaseAlgItem?.length) {
-      return task.BaseAlgItem.map((a: any) => a.name).join(', ');
+  getStatusIcon(task: AITask): string {
+    switch (task.status) {
+      case 'running': return 'play_circle';
+      case 'stopped': return 'pause_circle';
+      case 'pending': return 'hourglass_empty';
+      case 'failed': return 'error';
+      default: return 'help_outline';
     }
-    return `${task.AlgInfo?.length || 0} enabled`;
+  }
+
+  getAlgorithmDisplay(task: AITask): string {
+    if (!task.algorithms || task.algorithms.length === 0) {
+      return 'None configured';
+    }
+    // Try to find algorithm names from abilities
+    const abilityNames = task.algorithms.map(id => {
+      const ability = this.abilities().find(a => a.id === id);
+      return ability?.name || `ID: ${id}`;
+    });
+    return abilityNames.join(', ');
   }
 
   openCreateDialog() {
@@ -490,27 +599,28 @@ export class AdminAiTasksComponent implements OnInit {
   resetNewTask() {
     this.newTask = {
       task_name: '',
-      media_name: '',
+      video_source_id: '',
       algorithms: [],
-      description: ''
+      description: '',
+      auto_start: true
     };
   }
 
   loadDialogData() {
     this.dialogLoading.set(true);
     forkJoin({
-      media: this.http.get<any>(`${this.apiUrl}/ai-tasks/media`),
-      abilities: this.http.get<any>(`${this.apiUrl}/ai-tasks/abilities`)
+      sources: this.videoSourceService.getVideoSources(),
+      abilities: this.aiTaskService.getAbilities()
     }).subscribe({
-      next: ({ media, abilities }) => {
-        this.mediaList.set(media.media || []);
-        this.abilities.set(abilities.abilities || []);
+      next: ({ sources, abilities }) => {
+        this.videoSources.set(sources);
+        this.abilities.set(abilities);
         this.dialogLoading.set(false);
       },
       error: (err) => {
         console.error('Load dialog data error:', err);
         this.dialogLoading.set(false);
-        this.showError('Failed to load media and abilities');
+        this.showError('Failed to load video sources and abilities');
       }
     });
   }
@@ -530,8 +640,7 @@ export class AdminAiTasksComponent implements OnInit {
 
   canCreateTask(): boolean {
     return !!(
-      this.newTask.task_name.trim() &&
-      this.newTask.media_name &&
+      this.newTask.video_source_id &&
       this.newTask.algorithms.length > 0
     );
   }
@@ -540,7 +649,13 @@ export class AdminAiTasksComponent implements OnInit {
     if (!this.canCreateTask()) return;
 
     this.creating.set(true);
-    this.http.post(`${this.apiUrl}/ai-tasks`, this.newTask).subscribe({
+    this.aiTaskService.createTask({
+      video_source_id: this.newTask.video_source_id,
+      task_name: this.newTask.task_name || undefined,
+      algorithms: this.newTask.algorithms,
+      description: this.newTask.description || undefined,
+      auto_start: this.newTask.auto_start
+    }).subscribe({
       next: () => {
         this.creating.set(false);
         this.closeCreateDialog();
@@ -555,9 +670,9 @@ export class AdminAiTasksComponent implements OnInit {
     });
   }
 
-  deleteTask(task: any) {
-    if (confirm(`Delete task "${task.AlgTaskSession}"?`)) {
-      this.http.delete(`${this.apiUrl}/ai-tasks/${encodeURIComponent(task.AlgTaskSession)}`).subscribe({
+  deleteTask(task: AITask) {
+    if (confirm(`Delete task "${task.task_name}"?`)) {
+      this.aiTaskService.deleteTask(task.id).subscribe({
         next: () => {
           this.loadTasks();
           this.showSuccess('Task deleted successfully');

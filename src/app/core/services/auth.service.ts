@@ -20,18 +20,25 @@ export class AuthService {
   readonly isAuthenticated = computed(() => !!this.currentUserSignal() && !!this.getToken());
 
   // Role-based access: superadmin, manager, operator, p3
+  // Users without roles are treated as having minimum access (same as p3)
   readonly primaryRole = computed(() => {
     const user = this.currentUserSignal();
     if (!user) return null;
     if (user.is_superuser) return 'superadmin';
-    // Return the first role name or null
-    return user.roles.length > 0 ? user.roles[0].name : null;
+    // Return the first role name, or 'p3' as default for users without roles
+    return user.roles.length > 0 ? user.roles[0].name : 'p3';
   });
 
   readonly isSuperadmin = computed(() => this.currentUserSignal()?.is_superuser === true);
   readonly isManager = computed(() => this.primaryRole() === 'manager' || this.isSuperadmin());
   readonly isOperator = computed(() => this.primaryRole() === 'operator' || this.isManager());
-  readonly isP3 = computed(() => this.primaryRole() === 'p3' || this.isOperator());
+  // P3 is the minimum access level - any authenticated user should have at least this level
+  readonly isP3 = computed(() => {
+    const user = this.currentUserSignal();
+    if (!user) return false;
+    // All authenticated users have at least P3 access
+    return true;
+  });
 
   constructor(
     private http: HttpClient,

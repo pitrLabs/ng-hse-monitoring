@@ -155,6 +155,27 @@ import { VideoPlayerComponent } from '../../shared/components/video-player';
               </div>
             }
           </div>
+
+          <!-- Pagination for 4x4 grid -->
+          @if (showPagination) {
+            <div class="pagination-bar">
+              <button mat-icon-button [disabled]="currentPage() === 1" (click)="previousPage()" matTooltip="Previous Page">
+                <mat-icon>chevron_left</mat-icon>
+              </button>
+              @for (page of pageNumbers; track page) {
+                <button mat-button
+                  class="page-btn"
+                  [class.active]="page === currentPage()"
+                  (click)="goToPage(page)">
+                  {{ page }}
+                </button>
+              }
+              <button mat-icon-button [disabled]="currentPage() === totalPages" (click)="nextPage()" matTooltip="Next Page">
+                <mat-icon>chevron_right</mat-icon>
+              </button>
+              <span class="page-info">Page {{ currentPage() }} of {{ totalPages }}</span>
+            </div>
+          }
         </div>
       </div>
     </div>
@@ -583,6 +604,41 @@ import { VideoPlayerComponent } from '../../shared/components/video-player';
       }
     }
 
+    // Pagination Bar
+    .pagination-bar {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      padding: 12px 16px;
+      border-top: 1px solid var(--glass-border);
+      background: var(--glass-bg);
+    }
+
+    .page-btn {
+      min-width: 36px;
+      height: 36px;
+      padding: 0;
+      border-radius: var(--radius-sm);
+      color: var(--text-secondary);
+      font-weight: 500;
+
+      &.active {
+        background: var(--accent-gradient);
+        color: white;
+      }
+
+      &:hover:not(.active) {
+        background: var(--glass-bg-hover);
+      }
+    }
+
+    .page-info {
+      margin-left: 16px;
+      font-size: 13px;
+      color: var(--text-tertiary);
+    }
+
     @media (max-width: 900px) {
       .main-content {
         grid-template-columns: 1fr;
@@ -602,6 +658,10 @@ export class MonitorComponent implements OnInit {
   selectedSource = signal<VideoSource | null>(null);
   loading = signal(false);
   videoSources = signal<VideoSource[]>([]);
+
+  // Pagination for 4x4 grid
+  currentPage = signal(1);
+  itemsPerPage = 16;
 
   // Grid cells with optional video source
   gridCells = signal<{ index: number; source: VideoSource | null }[]>([
@@ -741,5 +801,68 @@ export class MonitorComponent implements OnInit {
     if (selected) {
       this.assignSourceToCell(cellIndex, selected);
     }
+  }
+
+  // Pagination methods
+  get totalPages(): number {
+    const sources = this.filteredVideoSources();
+    return Math.ceil(sources.length / this.itemsPerPage);
+  }
+
+  get showPagination(): boolean {
+    return this.gridLayout() === '4x4' && this.totalPages > 1;
+  }
+
+  goToPage(page: number) {
+    if (page >= 1 && page <= this.totalPages) {
+      this.currentPage.set(page);
+      this.loadPageSources();
+    }
+  }
+
+  previousPage() {
+    if (this.currentPage() > 1) {
+      this.currentPage.update(p => p - 1);
+      this.loadPageSources();
+    }
+  }
+
+  nextPage() {
+    if (this.currentPage() < this.totalPages) {
+      this.currentPage.update(p => p + 1);
+      this.loadPageSources();
+    }
+  }
+
+  loadPageSources() {
+    const sources = this.filteredVideoSources();
+    const startIndex = (this.currentPage() - 1) * this.itemsPerPage;
+    const pageSources = sources.slice(startIndex, startIndex + this.itemsPerPage);
+
+    // Fill grid cells with sources from current page
+    const cells: { index: number; source: VideoSource | null }[] = [];
+    for (let i = 0; i < 16; i++) {
+      cells.push({
+        index: i,
+        source: pageSources[i] || null
+      });
+    }
+    this.gridCells.set(cells);
+  }
+
+  get pageNumbers(): number[] {
+    const pages: number[] = [];
+    const total = this.totalPages;
+    const current = this.currentPage();
+
+    // Show max 5 page numbers
+    let start = Math.max(1, current - 2);
+    let end = Math.min(total, start + 4);
+    start = Math.max(1, end - 4);
+
+    for (let i = start; i <= end; i++) {
+      pages.push(i);
+    }
+    return pages;
   }
 }

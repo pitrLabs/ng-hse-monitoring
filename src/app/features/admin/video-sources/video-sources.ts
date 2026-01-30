@@ -18,6 +18,7 @@ interface VideoSource {
   description?: string;
   location?: string;
   is_active: boolean;
+  sound_alert: boolean;
   created_at: string;
 }
 
@@ -158,11 +159,22 @@ interface VideoSource {
                 <textarea [(ngModel)]="formData.description" placeholder="Optional description" rows="2"></textarea>
               </div>
 
-              <div class="form-group checkbox-group">
-                <label class="checkbox-label">
-                  <input type="checkbox" [(ngModel)]="formData.is_active">
-                  <span>Active</span>
-                </label>
+              <div class="form-row checkbox-row">
+                <div class="form-group checkbox-group">
+                  <label class="checkbox-label">
+                    <input type="checkbox" [(ngModel)]="formData.is_active">
+                    <span>Active</span>
+                  </label>
+                </div>
+                <div class="form-group checkbox-group">
+                  <label class="checkbox-label">
+                    <input type="checkbox" [(ngModel)]="formData.sound_alert">
+                    <div class="checkbox-content">
+                      <span>Sound Alert</span>
+                      <span class="checkbox-hint">Play sound when alarm detected</span>
+                    </div>
+                  </label>
+                </div>
               </div>
             </div>
             <div class="dialog-actions">
@@ -369,10 +381,14 @@ interface VideoSource {
       gap: 16px;
     }
 
+    .form-row.checkbox-row {
+      margin-top: 8px;
+    }
+
     .checkbox-group {
       .checkbox-label {
         display: flex;
-        align-items: center;
+        align-items: flex-start;
         gap: 10px;
         cursor: pointer;
 
@@ -380,11 +396,23 @@ interface VideoSource {
           width: 18px;
           height: 18px;
           cursor: pointer;
+          margin-top: 2px;
         }
 
         span {
           font-size: 14px;
           color: var(--text-primary);
+        }
+
+        .checkbox-content {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+        }
+
+        .checkbox-hint {
+          font-size: 11px;
+          color: var(--text-muted);
         }
       }
     }
@@ -424,7 +452,8 @@ export class AdminVideoSourcesComponent implements OnInit {
     source_type: 'rtsp' as 'rtsp' | 'http' | 'file',
     description: '',
     location: '',
-    is_active: true
+    is_active: true,
+    sound_alert: false
   };
 
   ngOnInit() { this.loadSources(); }
@@ -485,7 +514,8 @@ export class AdminVideoSourcesComponent implements OnInit {
       source_type: source.source_type || 'rtsp',
       description: source.description || '',
       location: source.location || '',
-      is_active: source.is_active
+      is_active: source.is_active,
+      sound_alert: source.sound_alert || false
     };
     this.showDialog.set(true);
   }
@@ -503,7 +533,8 @@ export class AdminVideoSourcesComponent implements OnInit {
       source_type: 'rtsp',
       description: '',
       location: '',
-      is_active: true
+      is_active: true,
+      sound_alert: false
     };
   }
 
@@ -529,7 +560,8 @@ export class AdminVideoSourcesComponent implements OnInit {
       source_type: this.formData.source_type,
       description: this.formData.description.trim() || null,
       location: this.formData.location.trim() || null,
-      is_active: this.formData.is_active
+      is_active: this.formData.is_active,
+      sound_alert: this.formData.sound_alert
     };
 
     const request = editing

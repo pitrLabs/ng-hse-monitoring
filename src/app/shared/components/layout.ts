@@ -71,7 +71,7 @@ interface NavItem {
             </a>
           }
 
-          <!-- Admin Menu (only for superusers) -->
+          <!-- Admin Menu (for superusers - full access) -->
           @if (isAdmin()) {
             <div class="nav-divider"></div>
             @for (adminItem of adminNavItems; track adminItem.label) {
@@ -107,6 +107,47 @@ interface NavItem {
                 }
               </div>
             }
+          } @else if (isP3OrAbove()) {
+            <!-- Limited admin menu for P3, Operator, Manager -->
+            <div class="nav-divider"></div>
+            <div class="nav-group">
+              <button
+                class="nav-item nav-parent"
+                [class.expanded]="adminExpanded()"
+                (click)="toggleAdminMenu()"
+                [matTooltip]="sidebarCollapsed() ? 'Views' : ''"
+                matTooltipPosition="right"
+              >
+                <mat-icon>visibility</mat-icon>
+                @if (!sidebarCollapsed()) {
+                  <span class="nav-label">Views</span>
+                  <mat-icon class="expand-icon">{{ adminExpanded() ? 'expand_less' : 'expand_more' }}</mat-icon>
+                }
+              </button>
+
+              @if (adminExpanded() && !sidebarCollapsed()) {
+                <div class="nav-children">
+                  <a
+                    class="nav-item nav-child"
+                    routerLink="/admin/statistics"
+                    routerLinkActive="active"
+                  >
+                    <mat-icon>bar_chart</mat-icon>
+                    <span class="nav-label">Statistics</span>
+                    <div class="nav-indicator"></div>
+                  </a>
+                  <a
+                    class="nav-item nav-child"
+                    routerLink="/admin/realtime-preview"
+                    routerLinkActive="active"
+                  >
+                    <mat-icon>live_tv</mat-icon>
+                    <span class="nav-label">Real-time Preview</span>
+                    <div class="nav-indicator"></div>
+                  </a>
+                </div>
+              }
+            </div>
           }
         </nav>
 
@@ -138,31 +179,29 @@ interface NavItem {
           </div>
 
           <div class="header-right">
-            <!-- Zoom Icon -->
-            <button mat-icon-button class="header-icon-btn" matTooltip="Zoom">
-              <mat-icon>zoom_in</mat-icon>
-            </button>
-
             <!-- Date Time -->
             <div class="datetime-display">
               <mat-icon>schedule</mat-icon>
               <span>{{ currentDateTime() }}</span>
             </div>
 
-            <!-- Grid Menu -->
-            <button mat-icon-button class="header-icon-btn" [matMenuTriggerFor]="gridMenu" matTooltip="Applications">
-              <mat-icon>apps</mat-icon>
-            </button>
-            <mat-menu #gridMenu="matMenu" class="grid-dropdown">
-              <button mat-menu-item>
-                <mat-icon>dns</mat-icon>
-                <span>Backend Management</span>
-              </button>
-              <button mat-menu-item>
-                <mat-icon>smart_toy</mat-icon>
-                <span>BVAlgUI</span>
-              </button>
-            </mat-menu>
+            <!-- Notification Toggle -->
+            <div class="toggle-item" (click)="notificationEnabled.set(!notificationEnabled())" matTooltip="Toggle Notifications">
+              <mat-icon class="toggle-icon">{{ notificationEnabled() ? 'notifications_active' : 'notifications_off' }}</mat-icon>
+              <span class="toggle-label">Notification</span>
+              <div class="toggle-switch" [class.active]="notificationEnabled()">
+                <div class="toggle-slider"></div>
+              </div>
+            </div>
+
+            <!-- Alarm Voice Toggle -->
+            <div class="toggle-item" (click)="alarmVoiceEnabled.set(!alarmVoiceEnabled())" matTooltip="Toggle Alarm Voice">
+              <mat-icon class="toggle-icon">{{ alarmVoiceEnabled() ? 'volume_up' : 'volume_off' }}</mat-icon>
+              <span class="toggle-label">Alarm Voice</span>
+              <div class="toggle-switch" [class.active]="alarmVoiceEnabled()">
+                <div class="toggle-slider"></div>
+              </div>
+            </div>
 
             <!-- Notifications -->
             <button mat-icon-button class="header-icon-btn" [matMenuTriggerFor]="notifMenu" matTooltip="Notifications">
@@ -198,7 +237,7 @@ interface NavItem {
               </div>
               <div class="user-info">
                 <span class="user-name">{{ currentUser()?.full_name || currentUser()?.username }}</span>
-                <span class="user-role">{{ currentUser()?.is_superuser ? 'Administrator' : 'User' }}</span>
+                <span class="user-role">{{ getUserRoleLabel() }}</span>
               </div>
               <mat-icon class="dropdown-icon">expand_more</mat-icon>
             </button>
@@ -585,6 +624,76 @@ interface NavItem {
       }
     }
 
+    // Toggle items (Notification & Alarm Voice)
+    .toggle-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      height: 40px;
+      padding: 0 12px;
+      background: var(--glass-bg);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      user-select: none;
+      transition: all 0.2s ease;
+
+      &:hover {
+        background: var(--glass-bg-hover);
+        border-color: var(--glass-border-hover);
+      }
+
+      .toggle-icon {
+        font-size: 18px;
+        width: 18px;
+        height: 18px;
+        color: var(--text-secondary);
+        transition: color 0.2s ease;
+      }
+
+      &:has(.toggle-switch.active) .toggle-icon {
+        color: var(--accent-primary);
+      }
+    }
+
+    .toggle-label {
+      font-size: 12px;
+      color: var(--text-secondary);
+      white-space: nowrap;
+      font-weight: 500;
+    }
+
+    .toggle-switch {
+      width: 36px;
+      height: 20px;
+      background: rgba(0, 0, 0, 0.3);
+      border-radius: 10px;
+      position: relative;
+      transition: all 0.3s ease;
+      flex-shrink: 0;
+
+      .toggle-slider {
+        position: absolute;
+        top: 3px;
+        left: 3px;
+        width: 14px;
+        height: 14px;
+        background: var(--text-muted);
+        border-radius: 50%;
+        transition: all 0.3s ease;
+      }
+
+      &.active {
+        background: rgba(0, 212, 255, 0.2);
+
+        .toggle-slider {
+          left: 19px;
+          background: var(--accent-primary);
+          box-shadow: 0 0 8px rgba(0, 212, 255, 0.5);
+        }
+      }
+    }
+
     .user-menu-btn {
       display: flex !important;
       flex-direction: row !important;
@@ -730,6 +839,18 @@ interface NavItem {
     }
 
     // Responsive
+    @media (max-width: 1100px) {
+      .toggle-label {
+        display: none;
+      }
+    }
+
+    @media (max-width: 900px) {
+      .toggle-item {
+        display: none;
+      }
+    }
+
     @media (max-width: 768px) {
       .sidebar {
         transform: translateX(-100%);
@@ -768,9 +889,13 @@ export class LayoutComponent implements OnInit, OnDestroy {
   currentDateTime = signal('');
   alarmCount = signal(3);
   adminExpanded = signal(false);
+  notificationEnabled = signal(true);
+  alarmVoiceEnabled = signal(true);
 
   currentUser = this.authService.currentUser;
   isAdmin = computed(() => this.currentUser()?.is_superuser === true);
+  // P3 and above can see limited admin menu
+  isP3OrAbove = computed(() => this.authService.isP3());
 
   alarms = signal([
     { id: 1, title: 'Motion detected - Camera 01', time: '2 min ago', type: 'warning', icon: 'warning' },
@@ -783,14 +908,10 @@ export class LayoutComponent implements OnInit, OnDestroy {
     { label: 'E-Map', icon: 'map', route: '/e-map' },
     { label: 'Monitor', icon: 'videocam', route: '/monitor' },
     { label: 'PTT', icon: 'mic', route: '/ptt' },
-    { label: 'GeoFence', icon: 'fence', route: '/geofence' },
     { label: 'Track', icon: 'route', route: '/track' },
     { label: 'Picture', icon: 'photo_library', route: '/picture' },
     { label: 'Playback', icon: 'play_circle', route: '/playback' },
     { label: 'Event', icon: 'event', route: '/event' },
-    { label: 'Attend', icon: 'how_to_reg', route: '/attend' },
-    { label: 'Smart AI', icon: 'psychology', route: '/smart-ai' },
-    { label: 'Task List', icon: 'assignment', route: '/task-list' },
   ];
 
   adminNavItems: NavItem[] = [
@@ -876,14 +997,10 @@ export class LayoutComponent implements OnInit, OnDestroy {
       '/e-map': 'E-Map',
       '/monitor': 'Monitor',
       '/ptt': 'PTT',
-      '/geofence': 'GeoFence',
       '/track': 'Track',
       '/picture': 'Picture',
       '/playback': 'Playback',
       '/event': 'Event',
-      '/attend': 'Attend',
-      '/smart-ai': 'Smart AI',
-      '/task-list': 'Task List',
       '/profile': 'Profile Settings',
       // Admin routes
       '/admin/dashboard': 'Admin Dashboard',
@@ -938,5 +1055,16 @@ export class LayoutComponent implements OnInit, OnDestroy {
 
   logout(): void {
     this.authService.logout();
+  }
+
+  getUserRoleLabel(): string {
+    const role = this.authService.primaryRole();
+    const roleLabels: Record<string, string> = {
+      'superadmin': 'Super Admin',
+      'manager': 'Manager',
+      'operator': 'Operator',
+      'p3': 'P3'
+    };
+    return roleLabels[role || ''] || 'User';
   }
 }

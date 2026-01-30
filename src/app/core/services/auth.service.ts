@@ -19,6 +19,20 @@ export class AuthService {
   readonly isLoading = this.isLoadingSignal.asReadonly();
   readonly isAuthenticated = computed(() => !!this.currentUserSignal() && !!this.getToken());
 
+  // Role-based access: superadmin, manager, operator, p3
+  readonly primaryRole = computed(() => {
+    const user = this.currentUserSignal();
+    if (!user) return null;
+    if (user.is_superuser) return 'superadmin';
+    // Return the first role name or null
+    return user.roles.length > 0 ? user.roles[0].name : null;
+  });
+
+  readonly isSuperadmin = computed(() => this.currentUserSignal()?.is_superuser === true);
+  readonly isManager = computed(() => this.primaryRole() === 'manager' || this.isSuperadmin());
+  readonly isOperator = computed(() => this.primaryRole() === 'operator' || this.isManager());
+  readonly isP3 = computed(() => this.primaryRole() === 'p3' || this.isOperator());
+
   constructor(
     private http: HttpClient,
     private router: Router

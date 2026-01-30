@@ -120,40 +120,64 @@ interface VideoChannel {
         </div>
 
         <!-- Video Grid -->
-        <div class="video-grid" [class]="'grid-' + gridLayout">
-          @for (slot of getGridSlots(); track slot; let i = $index) {
-            <div class="video-slot">
-              @if (getChannelForSlot(i); as channel) {
-                <div class="video-container">
-                  @if (playerMode === 'ws') {
-                    <app-ws-video-player
-                      [stream]="getWsStreamId(channel)"
-                      [showControls]="true"
-                      [showFps]="true">
-                    </app-ws-video-player>
-                  } @else {
-                    <app-bmapp-video-player
-                      [app]="channel.app"
-                      [stream]="channel.stream"
-                      [showControls]="true">
-                    </app-bmapp-video-player>
-                  }
-                  <div class="video-overlay-controls">
-                    <button mat-icon-button matTooltip="Close" (click)="removeFromSlot(i)">
-                      <mat-icon>close</mat-icon>
-                    </button>
+        <div class="video-grid-wrapper">
+          <div class="video-grid" [class]="'grid-' + gridLayout">
+            @for (slot of getGridSlots(); track slot; let i = $index) {
+              <div class="video-slot">
+                @if (getChannelForSlot(i); as channel) {
+                  <div class="video-container">
+                    @if (playerMode === 'ws') {
+                      <app-ws-video-player
+                        [stream]="getWsStreamId(channel)"
+                        [showControls]="true"
+                        [showFps]="true"
+                        [useSharedService]="shouldUseSharedService()">
+                      </app-ws-video-player>
+                    } @else {
+                      <app-bmapp-video-player
+                        [app]="channel.app"
+                        [stream]="channel.stream"
+                        [showControls]="true">
+                      </app-bmapp-video-player>
+                    }
+                    <div class="video-overlay-controls">
+                      <button mat-icon-button matTooltip="Close" (click)="removeFromSlot(i)">
+                        <mat-icon>close</mat-icon>
+                      </button>
+                    </div>
+                    <div class="video-info">
+                      <span class="status-indicator online"></span>
+                      <span class="channel-name">{{ channel.name }}</span>
+                    </div>
                   </div>
-                  <div class="video-info">
-                    <span class="status-indicator online"></span>
-                    <span class="channel-name">{{ channel.name }}</span>
+                } @else {
+                  <div class="empty-slot">
+                    <mat-icon>add_to_queue</mat-icon>
+                    <span>Click a camera to add</span>
                   </div>
-                </div>
-              } @else {
-                <div class="empty-slot">
-                  <mat-icon>add_to_queue</mat-icon>
-                  <span>Click a camera to add</span>
-                </div>
+                }
+              </div>
+            }
+          </div>
+
+          <!-- Pagination for 4x4 grid -->
+          @if (showPagination) {
+            <div class="pagination-bar">
+              <button mat-icon-button [disabled]="currentPage === 1" (click)="previousPage()" matTooltip="Previous Page">
+                <mat-icon>chevron_left</mat-icon>
+              </button>
+              @for (page of pageNumbers; track page) {
+                <button mat-button
+                  class="page-btn"
+                  [class.active]="page === currentPage"
+                  (click)="goToPage(page)">
+                  {{ page }}
+                </button>
               }
+              <button mat-icon-button [disabled]="currentPage === totalPages" (click)="nextPage()" matTooltip="Next Page">
+                <mat-icon>chevron_right</mat-icon>
+              </button>
+              <span class="page-info">Page {{ currentPage }} of {{ totalPages }}</span>
             </div>
           }
         </div>
@@ -617,6 +641,50 @@ interface VideoChannel {
         color: var(--text-muted);
       }
     }
+
+    .video-grid-wrapper {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+
+    .pagination-bar {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      padding: 12px 16px;
+      background: var(--glass-bg);
+      border-radius: 0 0 12px 12px;
+      border: 1px solid var(--glass-border);
+      border-top: none;
+      margin-top: -1px;
+    }
+
+    .page-btn {
+      min-width: 36px;
+      height: 36px;
+      padding: 0;
+      border-radius: var(--radius-sm);
+      color: var(--text-secondary);
+      font-weight: 500;
+
+      &.active {
+        background: var(--accent-gradient);
+        color: white;
+      }
+
+      &:hover:not(.active) {
+        background: var(--glass-bg-hover);
+      }
+    }
+
+    .page-info {
+      margin-left: 16px;
+      font-size: 13px;
+      color: var(--text-tertiary);
+    }
   `]
 })
 export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
@@ -627,6 +695,10 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
   sourceMode: 'direct' | 'bmapp' | 'local' = 'direct';
   playerMode: 'ws' | 'webrtc' = 'ws'; // WebSocket JPEG is more reliable
   isFullscreen = false;
+
+  // Pagination for 4x4 grid
+  currentPage = 1;
+  itemsPerPage = 16;
 
   private fullscreenChangeHandler = () => this.onFullscreenChange();
 
@@ -894,6 +966,7 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
 
   setGridLayout(layout: '1x1' | '2x2' | '3x3' | '4x4') {
     this.gridLayout = layout;
+    this.currentPage = 1; // Reset to first page when changing layout
     this.initializeGrid();
   }
 
@@ -920,8 +993,16 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
   getWsStreamId(channel: VideoChannel): string {
     // Use task/<task_name> format for individual camera view
     const streamUrl = `task/${channel.stream}`;
-    console.log(`[WsStream] Channel: ${channel.name}, URL: ${streamUrl}`);
     return streamUrl;
+  }
+
+  // Determine if shared service mode should be used
+  // BM-APP WebSocket doesn't properly support multiple concurrent streams,
+  // so we use a shared service that cycles through streams when more than 1 is active
+  shouldUseSharedService(): boolean {
+    const activeStreams = this.gridSlots.filter(s => s !== null).length;
+    // Use shared service when more than 1 stream is displayed simultaneously
+    return activeStreams > 1;
   }
 
   toggleFullscreen() {
@@ -938,5 +1019,65 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
 
   private onFullscreenChange() {
     this.isFullscreen = !!document.fullscreenElement;
+  }
+
+  // Pagination methods
+  get totalPages(): number {
+    const onlineChannels = this.videoChannels.filter(c => c.status === 'online');
+    return Math.ceil(onlineChannels.length / this.itemsPerPage);
+  }
+
+  get showPagination(): boolean {
+    return this.gridLayout === '4x4' && this.totalPages > 1;
+  }
+
+  get pageNumbers(): number[] {
+    const pages: number[] = [];
+    const total = this.totalPages;
+    const current = this.currentPage;
+
+    // Show max 5 page numbers
+    let start = Math.max(1, current - 2);
+    let end = Math.min(total, start + 4);
+    start = Math.max(1, end - 4);
+
+    for (let i = start; i <= end; i++) {
+      pages.push(i);
+    }
+    return pages;
+  }
+
+  goToPage(page: number) {
+    if (page >= 1 && page <= this.totalPages) {
+      this.currentPage = page;
+      this.updateGridForPage();
+    }
+  }
+
+  previousPage() {
+    if (this.currentPage > 1) {
+      this.currentPage--;
+      this.updateGridForPage();
+    }
+  }
+
+  nextPage() {
+    if (this.currentPage < this.totalPages) {
+      this.currentPage++;
+      this.updateGridForPage();
+    }
+  }
+
+  updateGridForPage() {
+    const totalSlots = this.getGridSlotCount();
+    this.gridSlots = Array(totalSlots).fill(null);
+
+    const onlineChannels = this.videoChannels.filter(c => c.status === 'online');
+    const startIndex = (this.currentPage - 1) * this.itemsPerPage;
+    const pageChannels = onlineChannels.slice(startIndex, startIndex + this.itemsPerPage);
+
+    for (let i = 0; i < Math.min(pageChannels.length, totalSlots); i++) {
+      this.gridSlots[i] = pageChannels[i];
+    }
   }
 }

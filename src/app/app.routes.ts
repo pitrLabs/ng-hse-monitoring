@@ -1,5 +1,5 @@
 import { Routes } from '@angular/router';
-import { authGuard, guestGuard, superuserGuard } from './core/guards/auth.guard';
+import { authGuard, guestGuard, superuserGuard, p3Guard, operatorGuard, managerGuard } from './core/guards/auth.guard';
 
 export const routes: Routes = [
   {
@@ -29,10 +29,6 @@ export const routes: Routes = [
         loadComponent: () => import('./features/ptt/ptt').then(m => m.PTTComponent)
       },
       {
-        path: 'geofence',
-        loadComponent: () => import('./features/geofence/geofence').then(m => m.GeoFenceComponent)
-      },
-      {
         path: 'track',
         loadComponent: () => import('./features/track/track').then(m => m.TrackComponent)
       },
@@ -47,18 +43,6 @@ export const routes: Routes = [
       {
         path: 'event',
         loadComponent: () => import('./features/event/event').then(m => m.EventComponent)
-      },
-      {
-        path: 'attend',
-        loadComponent: () => import('./features/attend/attend').then(m => m.AttendComponent)
-      },
-      {
-        path: 'smart-ai',
-        loadComponent: () => import('./features/smart-ai/smart-ai').then(m => m.SmartAIComponent)
-      },
-      {
-        path: 'task-list',
-        loadComponent: () => import('./features/task-list/task-list').then(m => m.TaskListComponent)
       },
       {
         path: 'profile',
@@ -108,12 +92,12 @@ export const routes: Routes = [
       {
         path: 'admin/statistics',
         loadComponent: () => import('./features/admin/statistics/statistics').then(m => m.AdminStatisticsComponent),
-        canActivate: [superuserGuard]
+        canActivate: [p3Guard]
       },
       {
         path: 'admin/realtime-preview',
         loadComponent: () => import('./features/admin/realtime-preview/realtime-preview').then(m => m.AdminRealtimePreviewComponent),
-        canActivate: [superuserGuard]
+        canActivate: [p3Guard]
       },
       {
         path: 'admin/alarm-type',

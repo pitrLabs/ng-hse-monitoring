@@ -3,6 +3,7 @@
     "target": "http://103.75.84.183:2323",
     "secure": false,
     "changeOrigin": true,
+    "ws": true,
     "pathRewrite": {
       "^/bmapp-api": ""
     },
@@ -12,6 +13,7 @@
     "target": "http://103.75.84.183:58000",
     "secure": false,
     "changeOrigin": true,
+    "ws": true,
     "pathRewrite": {
       "^/bmapp-zlm": ""
     },

@@ -5,11 +5,13 @@ import {
   OnDestroy,
   signal,
   OnChanges,
-  SimpleChanges
+  SimpleChanges,
+  inject
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
+import { VideoStreamService } from '../../../core/services/video-stream.service';
 
 @Component({
   selector: 'app-ws-video-player',
@@ -237,6 +239,9 @@ export class WsVideoPlayerComponent implements OnInit, OnDestroy, OnChanges {
   @Input() showControls = true;
   @Input() showFps = false;
   @Input() autoConnect = true;
+  @Input() useSharedService = false; // Use shared VideoStreamService (for multiple streams)
+
+  private videoStreamService = inject(VideoStreamService);
 
   status = signal<'idle' | 'connecting' | 'reconnecting' | 'playing' | 'error'>('idle');
   statusMessage = signal('Connecting...');
@@ -255,28 +260,67 @@ export class WsVideoPlayerComponent implements OnInit, OnDestroy, OnChanges {
   private frameCount = 0;
   private fpsTimer: any = null;
   private lastFrameTime = 0;
-  private containerElement: HTMLElement | null = null;
+  private lastChannelResend = 0;
+  private channelResendCooldown = 5000; // 5 seconds between resend attempts
+
+  // Unique session ID for this component instance to differentiate WebSocket connections
+  private readonly sessionId = this.generateSessionId();
+
+  private generateSessionId(): string {
+    return `ws_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  }
 
   private getWsUrl(): string {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    // Base video WebSocket URL - channel selection sent via message after connection
     return `${protocol}//${window.location.host}/bmapp-api/video/`;
   }
 
   ngOnInit() {
     if (this.autoConnect && this.stream) {
-      this.connect();
+      if (this.useSharedService) {
+        // Use shared service mode - cycles through streams for multiple concurrent views
+        this.subscribeToService();
+      } else {
+        // Use dedicated WebSocket mode
+        this.connect();
+      }
     }
     this.startFpsCounter();
   }
 
   ngOnChanges(changes: SimpleChanges) {
     if (changes['stream'] && !changes['stream'].firstChange) {
-      // Stream changed - send new channel selection if connected
-      if (this.websocket?.readyState === WebSocket.OPEN) {
-        this.sendChannelSelection();
-      } else if (this.stream) {
-        this.resetRetry();
-        this.connect();
+      this.resetRetry();
+
+      if (this.useSharedService) {
+        // Re-subscribe with new stream
+        this.unsubscribeFromService();
+        if (this.stream) {
+          this.subscribeToService();
+        }
+      } else {
+        // Stream changed - send new channel selection if connected
+        if (this.websocket?.readyState === WebSocket.OPEN) {
+          this.sendChannelSelection();
+        } else if (this.stream) {
+          this.connect();
+        }
+      }
+    }
+
+    if (changes['useSharedService'] && !changes['useSharedService'].firstChange) {
+      // Mode changed - switch between dedicated WebSocket and shared service
+      this.disconnect();
+      this.unsubscribeFromService();
+      this.resetRetry();
+
+      if (this.stream) {
+        if (this.useSharedService) {
+          this.subscribeToService();
+        } else {
+          this.connect();
+        }
       }
     }
   }
@@ -284,8 +328,35 @@ export class WsVideoPlayerComponent implements OnInit, OnDestroy, OnChanges {
   ngOnDestroy() {
     this.isDestroyed = true;
     this.disconnect();
+    this.unsubscribeFromService();
     this.clearTimers();
     this.stopFpsCounter();
+  }
+
+  // Shared service mode - uses VideoStreamService for multiple concurrent streams
+  private subscribeToService() {
+    if (this.isDestroyed || !this.stream) return;
+
+    this.status.set('connecting');
+    this.statusMessage.set('Connecting via shared service...');
+
+    const streamUrl = this.stream.startsWith('task/') ? this.stream : `task/${this.stream}`;
+    console.log(`[${this.sessionId}] Subscribing to shared service for: ${streamUrl}`);
+
+    this.videoStreamService.subscribe(this.sessionId, streamUrl, (frame: string) => {
+      this.frameUrl.set(frame);
+      this.frameCount++;
+      this.lastFrameTime = Date.now();
+
+      if (this.status() !== 'playing') {
+        this.status.set('playing');
+        this.resetRetry();
+      }
+    });
+  }
+
+  private unsubscribeFromService() {
+    this.videoStreamService.unsubscribe(this.sessionId);
   }
 
   private startFpsCounter() {
@@ -316,7 +387,12 @@ export class WsVideoPlayerComponent implements OnInit, OnDestroy, OnChanges {
 
   manualRetry() {
     this.resetRetry();
-    this.connect();
+    if (this.useSharedService) {
+      this.unsubscribeFromService();
+      this.subscribeToService();
+    } else {
+      this.connect();
+    }
   }
 
   connect() {
@@ -335,12 +411,12 @@ export class WsVideoPlayerComponent implements OnInit, OnDestroy, OnChanges {
 
     try {
       const wsUrl = this.getWsUrl();
-      console.log('Connecting to WebSocket:', wsUrl);
+      console.log(`[${this.sessionId}] Connecting to WebSocket for stream: ${this.stream}`);
 
       this.websocket = new WebSocket(wsUrl);
 
       this.websocket.onopen = () => {
-        console.log('WebSocket connected');
+        console.log(`[${this.sessionId}] WebSocket connected, selecting channel: ${this.stream}`);
         this.statusMessage.set('Selecting channel...');
         this.sendChannelSelection();
       };
@@ -350,14 +426,14 @@ export class WsVideoPlayerComponent implements OnInit, OnDestroy, OnChanges {
       };
 
       this.websocket.onclose = (event) => {
-        console.log('WebSocket closed:', event.code, event.reason);
+        console.log(`[${this.sessionId}] WebSocket closed:`, event.code, event.reason);
         if (!this.isDestroyed) {
           this.handleConnectionError('Connection closed');
         }
       };
 
       this.websocket.onerror = (error) => {
-        console.error('WebSocket error:', error);
+        console.error(`[${this.sessionId}] WebSocket error:`, error);
         this.handleConnectionError('Connection error');
       };
 
@@ -369,8 +445,9 @@ export class WsVideoPlayerComponent implements OnInit, OnDestroy, OnChanges {
 
   private sendChannelSelection() {
     if (this.websocket?.readyState === WebSocket.OPEN && this.stream) {
+      // Try sending just the channel string - BM-APP might expect simple format
       const message = JSON.stringify({ chn: this.stream });
-      console.log('Sending channel selection:', message);
+      console.log(`[${this.sessionId}] Sending channel selection for stream "${this.stream}":`, message);
       this.websocket.send(message);
     }
   }
@@ -393,8 +470,17 @@ export class WsVideoPlayerComponent implements OnInit, OnDestroy, OnChanges {
       }
 
       if (data.task) {
-        // Task identifier from server
-        console.log('Receiving stream for task:', data.task);
+        // Task identifier from server - verify it matches our requested stream
+        const expectedTask = this.stream.replace('task/', '');
+        if (data.task !== expectedTask) {
+          const now = Date.now();
+          if (now - this.lastChannelResend > this.channelResendCooldown) {
+            console.warn(`[${this.sessionId}] Stream mismatch! Expected: ${expectedTask}, Received: ${data.task}. Resending channel selection.`);
+            this.lastChannelResend = now;
+            // Re-send channel selection to try to get correct stream
+            this.sendChannelSelection();
+          }
+        }
       }
 
       if (data.error) {

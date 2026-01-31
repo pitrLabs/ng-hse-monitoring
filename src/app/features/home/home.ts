@@ -1,18 +1,13 @@
-import { Component, signal, OnInit } from '@angular/core';
+import { Component, signal, OnInit, inject, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { RouterLink } from '@angular/router';
 import { MatIconModule } from '@angular/material/icon';
 import { MatButtonModule } from '@angular/material/button';
 import { MatMenuModule } from '@angular/material/menu';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatDividerModule } from '@angular/material/divider';
-
-interface Notification {
-  id: number;
-  message: string;
-  location: string;
-  time: string;
-  type: 'warning' | 'error' | 'info';
-}
+import { AlarmService } from '../../core/services/alarm.service';
+import { AlarmNotification } from '../../core/models/alarm.model';
 
 interface DeviceStatus {
   online: number;
@@ -35,6 +30,7 @@ interface DeviceClass {
   standalone: true,
   imports: [
     CommonModule,
+    RouterLink,
     MatIconModule,
     MatButtonModule,
     MatMenuModule,
@@ -84,6 +80,9 @@ interface DeviceClass {
           <h3 class="widget-title">
             <mat-icon>show_chart</mat-icon>
             Alarm
+            @if (alarmService.stats(); as stats) {
+              <span class="widget-badge">{{ stats.new }} new</span>
+            }
           </h3>
           <div class="line-chart-container">
             <svg viewBox="0 0 300 150" class="line-chart" preserveAspectRatio="none">
@@ -252,13 +251,19 @@ interface DeviceClass {
       <div class="right-column">
         <!-- Notify List -->
         <div class="widget notify-widget glass-card-static">
-          <h3 class="widget-title">
-            <mat-icon>notifications_active</mat-icon>
-            Notify List
-          </h3>
+          <div class="widget-title-row">
+            <h3 class="widget-title">
+              <mat-icon>notifications_active</mat-icon>
+              Notify List
+              @if (alarmService.connectionStatus() === 'connected') {
+                <span class="live-indicator"></span>
+              }
+            </h3>
+            <a routerLink="/admin/alarms" class="view-all-link">View All</a>
+          </div>
           <div class="notify-list">
-            @for (notif of notifications(); track notif.id) {
-              <div class="notify-item" [class]="notif.type">
+            @for (notif of alarmService.notifications(); track notif.id) {
+              <div class="notify-item" [class]="notif.type" (click)="viewAlarmDetail(notif)">
                 <div class="notify-icon">
                   <mat-icon>{{ getNotifyIcon(notif.type) }}</mat-icon>
                 </div>
@@ -268,11 +273,74 @@ interface DeviceClass {
                   <span class="notify-time">{{ notif.time }}</span>
                 </div>
               </div>
+            } @empty {
+              <div class="notify-empty">
+                <mat-icon>notifications_none</mat-icon>
+                <span>No recent alarms</span>
+                @if (alarmService.connectionStatus() !== 'connected') {
+                  <span class="notify-hint">Connecting to alarm service...</span>
+                }
+              </div>
             }
           </div>
         </div>
       </div>
     </div>
+
+    <!-- Alarm Detail Popup -->
+    @if (selectedNotification()) {
+      <div class="popup-overlay" (click)="closePopup()">
+        <div class="alarm-popup" (click)="$event.stopPropagation()">
+          <div class="popup-header" [class]="selectedNotification()?.type">
+            <mat-icon>{{ getNotifyIcon(selectedNotification()?.type || 'info') }}</mat-icon>
+            <span>{{ selectedNotification()?.message }}</span>
+            <button mat-icon-button (click)="closePopup()">
+              <mat-icon>close</mat-icon>
+            </button>
+          </div>
+          <div class="popup-content">
+            @if (selectedNotification()?.alarm?.image_url) {
+              <div class="popup-image">
+                <img [src]="selectedNotification()?.alarm?.image_url" alt="Alarm capture">
+              </div>
+            }
+            <div class="popup-details">
+              <div class="popup-row">
+                <span class="popup-label">Location</span>
+                <span class="popup-value">{{ selectedNotification()?.location }}</span>
+              </div>
+              <div class="popup-row">
+                <span class="popup-label">Time</span>
+                <span class="popup-value">{{ selectedNotification()?.alarm?.alarm_time | date:'medium' }}</span>
+              </div>
+              @if (selectedNotification()?.alarm?.confidence) {
+                <div class="popup-row">
+                  <span class="popup-label">Confidence</span>
+                  <span class="popup-value">{{ (selectedNotification()?.alarm?.confidence || 0) * 100 | number:'1.0-0' }}%</span>
+                </div>
+              }
+              <div class="popup-row">
+                <span class="popup-label">Status</span>
+                <span class="status-badge" [class]="selectedNotification()?.alarm?.status">
+                  {{ selectedNotification()?.alarm?.status }}
+                </span>
+              </div>
+            </div>
+          </div>
+          <div class="popup-actions">
+            @if (selectedNotification()?.alarm?.status === 'new') {
+              <button mat-stroked-button (click)="acknowledgeAlarm()">
+                <mat-icon>check</mat-icon>
+                Acknowledge
+              </button>
+            }
+            <a mat-flat-button color="primary" routerLink="/admin/alarms" (click)="closePopup()">
+              View All Alarms
+            </a>
+          </div>
+        </div>
+      </div>
+    }
   `,
   styles: [`
     .home-container {
@@ -319,6 +387,52 @@ interface DeviceClass {
         height: 18px;
         color: var(--accent-primary);
       }
+    }
+
+    .widget-title-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--glass-border);
+
+      .widget-title {
+        margin: 0;
+        padding: 0;
+        border: none;
+      }
+    }
+
+    .view-all-link {
+      font-size: 12px;
+      color: var(--accent-primary);
+      text-decoration: none;
+      &:hover { text-decoration: underline; }
+    }
+
+    .widget-badge {
+      margin-left: auto;
+      padding: 2px 8px;
+      font-size: 11px;
+      font-weight: 500;
+      background: rgba(239, 68, 68, 0.2);
+      color: #ef4444;
+      border-radius: 10px;
+    }
+
+    .live-indicator {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #22c55e;
+      margin-left: 8px;
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.6; transform: scale(0.9); }
     }
 
     // Pie Chart
@@ -689,6 +803,13 @@ interface DeviceClass {
       background: var(--glass-bg);
       border-radius: var(--radius-sm);
       border-left: 3px solid;
+      cursor: pointer;
+      transition: transform 0.15s, background 0.15s;
+
+      &:hover {
+        background: var(--glass-bg-hover);
+        transform: translateX(4px);
+      }
 
       &.warning {
         border-color: var(--warning);
@@ -719,22 +840,151 @@ interface DeviceClass {
       display: flex;
       flex-direction: column;
       gap: 2px;
+      min-width: 0;
     }
 
     .notify-message {
       font-size: 12px;
       color: var(--text-primary);
       line-height: 1.4;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     .notify-location {
       font-size: 11px;
       color: var(--text-secondary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     .notify-time {
       font-size: 10px;
       color: var(--text-tertiary);
+    }
+
+    .notify-empty {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 40px 20px;
+      color: var(--text-tertiary);
+
+      mat-icon {
+        font-size: 40px;
+        width: 40px;
+        height: 40px;
+        opacity: 0.5;
+      }
+
+      span {
+        font-size: 13px;
+      }
+
+      .notify-hint {
+        font-size: 11px;
+        opacity: 0.7;
+      }
+    }
+
+    // Alarm Popup
+    .popup-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      background: rgba(0, 0, 0, 0.6);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    .alarm-popup {
+      width: 100%;
+      max-width: 480px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius-md);
+      overflow: hidden;
+    }
+
+    .popup-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 16px 20px;
+      color: #fff;
+
+      &.error { background: linear-gradient(135deg, #ef4444, #dc2626); }
+      &.warning { background: linear-gradient(135deg, #f59e0b, #d97706); }
+      &.info { background: linear-gradient(135deg, #3b82f6, #2563eb); }
+
+      mat-icon { font-size: 24px; width: 24px; height: 24px; }
+      span { flex: 1; font-size: 14px; font-weight: 600; }
+      button { color: rgba(255,255,255,0.8); &:hover { color: #fff; } }
+    }
+
+    .popup-content {
+      padding: 20px;
+    }
+
+    .popup-image {
+      margin-bottom: 16px;
+      border-radius: var(--radius-sm);
+      overflow: hidden;
+
+      img {
+        width: 100%;
+        display: block;
+      }
+    }
+
+    .popup-details {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .popup-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .popup-label {
+      width: 80px;
+      font-size: 12px;
+      color: var(--text-tertiary);
+    }
+
+    .popup-value {
+      flex: 1;
+      font-size: 13px;
+      color: var(--text-primary);
+    }
+
+    .status-badge {
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 500;
+      text-transform: capitalize;
+
+      &.new { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
+      &.acknowledged { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
+      &.resolved { background: rgba(34, 197, 94, 0.2); color: #22c55e; }
+    }
+
+    .popup-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 12px;
+      padding: 16px 20px;
+      border-top: 1px solid var(--glass-border);
     }
 
     // Responsive
@@ -761,7 +1011,9 @@ interface DeviceClass {
     }
   `]
 })
-export class HomeComponent implements OnInit {
+export class HomeComponent implements OnInit, OnDestroy {
+  alarmService = inject(AlarmService);
+
   deviceStatus = signal<DeviceStatus>({ online: 45, offline: 12 });
 
   alarmData = signal<AlarmData[]>([
@@ -780,15 +1032,17 @@ export class HomeComponent implements OnInit {
     { name: 'Radio', online: 12, offline: 1 }
   ]);
 
-  notifications = signal<Notification[]>([
-    { id: 1, message: 'Motion detected in restricted area', location: 'Zone A - Camera 01', time: '2 min ago', type: 'warning' },
-    { id: 2, message: 'Device connection lost', location: 'Sensor 05 - Building B', time: '5 min ago', type: 'error' },
-    { id: 3, message: 'New device registered', location: 'Camera 12 - Gate C', time: '10 min ago', type: 'info' },
-    { id: 4, message: 'Temperature threshold exceeded', location: 'Sensor 08 - Warehouse', time: '15 min ago', type: 'warning' },
-    { id: 5, message: 'Battery low warning', location: 'Radio Unit 03', time: '20 min ago', type: 'warning' }
-  ]);
+  selectedNotification = signal<AlarmNotification | null>(null);
 
-  ngOnInit(): void {}
+  ngOnInit(): void {
+    // Load initial alarms and stats
+    this.alarmService.loadAlarms({ limit: 20 });
+    this.alarmService.loadStats();
+  }
+
+  ngOnDestroy(): void {
+    // AlarmService is singleton, no cleanup needed
+  }
 
   getOnlineArc(): number {
     const status = this.deviceStatus();
@@ -837,6 +1091,26 @@ export class HomeComponent implements OnInit {
       case 'error': return 'error';
       case 'info': return 'info';
       default: return 'notifications';
+    }
+  }
+
+  viewAlarmDetail(notification: AlarmNotification): void {
+    this.selectedNotification.set(notification);
+  }
+
+  closePopup(): void {
+    this.selectedNotification.set(null);
+  }
+
+  async acknowledgeAlarm(): Promise<void> {
+    const notification = this.selectedNotification();
+    if (notification?.alarm?.id) {
+      try {
+        await this.alarmService.acknowledgeAlarm(notification.alarm.id);
+        this.closePopup();
+      } catch (err) {
+        console.error('Failed to acknowledge alarm:', err);
+      }
     }
   }
 }

@@ -4,6 +4,8 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { environment } from '../../../environments/environment';
 
+export type StreamingMode = 'bmapp' | 'mediamtx';
+
 @Component({
   selector: 'app-video-player',
   standalone: true,
@@ -106,11 +108,16 @@ export class VideoPlayerComponent implements OnInit, OnDestroy {
 
   @Input() streamName = '';
   @Input() muted = true;
+  @Input() mode: StreamingMode = 'bmapp'; // Default to BM-APP WebRTC
 
   status = signal<'idle' | 'connecting' | 'playing' | 'error'>('idle');
   errorMessage = signal('');
 
   private peerConnection: RTCPeerConnection | null = null;
+
+  private getBmAppWebRtcUrl(): string {
+    return (window as any).__env?.BMAPP_WEBRTC_URL || environment.bmappWebrtcUrl || environment.bmappUrl + '/webrtc';
+  }
 
   private getMediaServerUrl(): string {
     return (window as any).__env?.MEDIA_SERVER_URL || environment.mediaServerUrl;
@@ -137,55 +144,147 @@ export class VideoPlayerComponent implements OnInit, OnDestroy {
     this.disconnect();
 
     try {
-      // Create WebRTC peer connection
-      this.peerConnection = new RTCPeerConnection({
-        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-      });
-
-      // Handle incoming tracks
-      this.peerConnection.ontrack = (event) => {
-        if (this.videoElement?.nativeElement) {
-          this.videoElement.nativeElement.srcObject = event.streams[0];
-        }
-      };
-
-      // Add transceiver for receiving video and audio
-      this.peerConnection.addTransceiver('video', { direction: 'recvonly' });
-      this.peerConnection.addTransceiver('audio', { direction: 'recvonly' });
-
-      // Create offer
-      const offer = await this.peerConnection.createOffer();
-      await this.peerConnection.setLocalDescription(offer);
-
-      // Wait for ICE gathering
-      await this.waitForIceGathering();
-
-      // Send offer to MediaMTX WHEP endpoint
-      const whepUrl = `${this.getMediaServerUrl()}/${this.streamName}/whep`;
-      const response = await fetch(whepUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/sdp'
-        },
-        body: this.peerConnection.localDescription?.sdp
-      });
-
-      if (!response.ok) {
-        throw new Error(`WHEP request failed: ${response.status}`);
+      if (this.mode === 'bmapp') {
+        await this.connectBmApp();
+      } else {
+        await this.connectMediaMtx();
       }
-
-      // Set remote description
-      const answerSdp = await response.text();
-      await this.peerConnection.setRemoteDescription({
-        type: 'answer',
-        sdp: answerSdp
-      });
-
     } catch (error: any) {
       console.error('WebRTC connection error:', error);
       this.status.set('error');
       this.errorMessage.set(error.message || 'Connection failed');
     }
+  }
+
+  /**
+   * Connect via BM-APP's ZLMediaKit WebRTC
+   * Format: POST to /webrtc?app=task&stream=<name>&type=play
+   * Request: SDP offer as text/plain
+   * Response: JSON { code: 0, sdp: "..." }
+   */
+  private async connectBmApp() {
+    // ZLMediaKit uses null config (no STUN) for direct connection
+    this.peerConnection = new RTCPeerConnection();
+
+    this.peerConnection.ontrack = (event) => {
+      console.log(`[BM-APP WebRTC] Track received:`, event.track.kind);
+      if (this.videoElement?.nativeElement) {
+        this.videoElement.nativeElement.srcObject = event.streams[0];
+      }
+    };
+
+    this.peerConnection.onicecandidate = (event) => {
+      if (event.candidate) {
+        console.log(`[BM-APP WebRTC] Local ICE candidate:`, event.candidate.candidate);
+      }
+    };
+
+    this.peerConnection.oniceconnectionstatechange = () => {
+      console.log(`[BM-APP WebRTC] ICE connection state: ${this.peerConnection?.iceConnectionState}`);
+    };
+
+    this.peerConnection.onconnectionstatechange = () => {
+      const state = this.peerConnection?.connectionState;
+      console.log(`[BM-APP WebRTC] Connection state: ${state}`);
+      if (state === 'failed' || state === 'disconnected') {
+        this.status.set('error');
+        this.errorMessage.set('Connection lost');
+      }
+    };
+
+    // Add transceivers for receive-only
+    this.peerConnection.addTransceiver('video', { direction: 'recvonly' });
+    this.peerConnection.addTransceiver('audio', { direction: 'recvonly' });
+
+    // Create offer
+    const offer = await this.peerConnection.createOffer();
+    await this.peerConnection.setLocalDescription(offer);
+
+    // Wait for ICE gathering
+    await this.waitForIceGathering();
+
+    // ZLMediaKit WebRTC endpoint format
+    // BM-APP uses "task" as the app name for camera streams
+    const webrtcUrl = `${this.getBmAppWebRtcUrl()}?app=task&stream=${this.streamName}&type=play`;
+    console.log(`[BM-APP WebRTC] Connecting to: ${webrtcUrl}`);
+
+    const response = await fetch(webrtcUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/plain;charset=utf-8'
+      },
+      body: this.peerConnection.localDescription?.sdp
+    });
+
+    if (!response.ok) {
+      throw new Error(`WebRTC request failed: ${response.status}`);
+    }
+
+    const result = await response.json();
+
+    if (result.code !== 0) {
+      throw new Error(result.msg || `ZLMediaKit error: ${result.code}`);
+    }
+
+    // Log SDP answer to see ICE candidates from server
+    console.log(`[BM-APP WebRTC] SDP Answer received, ICE candidates in SDP:`);
+    const iceCandidates = result.sdp.match(/a=candidate:.*/g) || [];
+    iceCandidates.forEach((c: string) => console.log(`  ${c}`));
+
+    // Set remote description from ZLMediaKit response
+    await this.peerConnection.setRemoteDescription({
+      type: 'answer',
+      sdp: result.sdp
+    });
+
+    console.log(`[BM-APP WebRTC] Connected to stream: ${this.streamName}`);
+  }
+
+  /**
+   * Connect via MediaMTX WHEP
+   * Format: POST to /<stream>/whep
+   * Request: SDP offer as application/sdp
+   * Response: SDP answer as text
+   */
+  private async connectMediaMtx() {
+    this.peerConnection = new RTCPeerConnection({
+      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+    });
+
+    this.peerConnection.ontrack = (event) => {
+      if (this.videoElement?.nativeElement) {
+        this.videoElement.nativeElement.srcObject = event.streams[0];
+      }
+    };
+
+    this.peerConnection.addTransceiver('video', { direction: 'recvonly' });
+    this.peerConnection.addTransceiver('audio', { direction: 'recvonly' });
+
+    const offer = await this.peerConnection.createOffer();
+    await this.peerConnection.setLocalDescription(offer);
+
+    await this.waitForIceGathering();
+
+    const whepUrl = `${this.getMediaServerUrl()}/${this.streamName}/whep`;
+    console.log(`[MediaMTX WHEP] Connecting to: ${whepUrl}`);
+
+    const response = await fetch(whepUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/sdp'
+      },
+      body: this.peerConnection.localDescription?.sdp
+    });
+
+    if (!response.ok) {
+      throw new Error(`WHEP request failed: ${response.status}`);
+    }
+
+    const answerSdp = await response.text();
+    await this.peerConnection.setRemoteDescription({
+      type: 'answer',
+      sdp: answerSdp
+    });
   }
 
   private waitForIceGathering(): Promise<void> {

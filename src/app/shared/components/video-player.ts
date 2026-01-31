@@ -205,7 +205,9 @@ export class VideoPlayerComponent implements OnInit, OnDestroy {
 
     // ZLMediaKit WebRTC endpoint format
     // BM-APP uses "task" as the app name for camera streams
-    const webrtcUrl = `${this.getBmAppWebRtcUrl()}?app=task&stream=${this.streamName}&type=play`;
+    // URL encode stream name to handle spaces and special characters
+    const encodedStreamName = encodeURIComponent(this.streamName);
+    const webrtcUrl = `${this.getBmAppWebRtcUrl()}?app=task&stream=${encodedStreamName}&type=play`;
     console.log(`[BM-APP WebRTC] Connecting to: ${webrtcUrl}`);
 
     const response = await fetch(webrtcUrl, {

@@ -1,4 +1,4 @@
-import { Component, signal, OnInit } from '@angular/core';
+import { Component, signal, OnInit, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MatIconModule } from '@angular/material/icon';
@@ -11,6 +11,13 @@ import { MatTabsModule } from '@angular/material/tabs';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { VideoSourceService, VideoSource } from '../../core/services/video-source.service';
 import { VideoPlayerComponent } from '../../shared/components/video-player';
+
+interface CameraGroup {
+  id: string;
+  name: string;
+  expanded: boolean;
+  cameras: VideoSource[];
+}
 
 @Component({
   selector: 'app-monitor',
@@ -68,27 +75,41 @@ import { VideoPlayerComponent } from '../../shared/components/video-player';
               <mat-spinner diameter="32"></mat-spinner>
               <span>Loading sources...</span>
             </div>
-          } @else if (filteredVideoSources().length === 0) {
+          } @else if (filteredGroups().length === 0) {
             <div class="empty-state">
               <mat-icon>videocam_off</mat-icon>
               <span>No video sources found</span>
             </div>
           } @else {
             <div class="source-list">
-              @for (source of filteredVideoSources(); track source.id) {
-                <div
-                  class="source-item"
-                  [class.selected]="isSourceSelected(source)"
-                  [class.active]="source.is_active"
-                  (click)="selectSource(source)"
-                  (dblclick)="addToGrid(source)"
-                >
-                  <mat-icon class="source-icon">videocam</mat-icon>
-                  <div class="source-info">
-                    <span class="source-name">{{ source.name }}</span>
-                    <span class="source-location">{{ source.location || 'No location' }}</span>
+              @for (group of filteredGroups(); track group.id) {
+                <div class="tree-node">
+                  <div class="node-header" (click)="toggleGroup(group)">
+                    <mat-icon class="expand-icon" [class.expanded]="group.expanded">chevron_right</mat-icon>
+                    <mat-icon class="folder-icon">folder</mat-icon>
+                    <span class="node-name">{{ group.name }}</span>
+                    <span class="node-count">({{ group.cameras.length }})</span>
                   </div>
-                  <span class="status-indicator" [class.online]="source.is_active"></span>
+                  @if (group.expanded) {
+                    <div class="node-children">
+                      @for (source of getFilteredCameras(group); track source.id) {
+                        <div
+                          class="source-item"
+                          [class.selected]="isSourceSelected(source)"
+                          [class.active]="source.is_active"
+                          (click)="selectSource(source)"
+                          (dblclick)="addToGrid(source)"
+                        >
+                          <mat-icon class="source-icon">videocam</mat-icon>
+                          <div class="source-info">
+                            <span class="source-name">{{ source.name }}</span>
+                            <span class="source-location">{{ source.location || 'No location' }}</span>
+                          </div>
+                          <span class="status-indicator" [class.online]="source.is_active"></span>
+                        </div>
+                      }
+                    </div>
+                  }
                 </div>
               }
             </div>
@@ -316,6 +337,58 @@ import { VideoPlayerComponent } from '../../shared/components/video-player';
       flex: 1;
       overflow-y: auto;
       padding: 8px;
+    }
+
+    .tree-node {
+      margin-bottom: 2px;
+    }
+
+    .node-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 10px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+
+      &:hover {
+        background: var(--glass-bg-hover);
+      }
+    }
+
+    .expand-icon {
+      font-size: 16px;
+      width: 16px;
+      height: 16px;
+      color: var(--text-tertiary);
+      transition: transform 0.2s;
+
+      &.expanded {
+        transform: rotate(90deg);
+      }
+    }
+
+    .folder-icon {
+      font-size: 16px;
+      width: 16px;
+      height: 16px;
+      color: var(--warning);
+    }
+
+    .node-name {
+      flex: 1;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-primary);
+    }
+
+    .node-count {
+      font-size: 11px;
+      color: var(--text-tertiary);
+    }
+
+    .node-children {
+      padding-left: 16px;
     }
 
     .source-item {
@@ -658,6 +731,7 @@ export class MonitorComponent implements OnInit {
   selectedSource = signal<VideoSource | null>(null);
   loading = signal(false);
   videoSources = signal<VideoSource[]>([]);
+  cameraGroups = signal<CameraGroup[]>([]);
 
   // Pagination for 4x4 grid
   currentPage = signal(1);
@@ -683,12 +757,85 @@ export class MonitorComponent implements OnInit {
     this.videoSourceService.loadVideoSources(activeOnly).subscribe({
       next: (sources) => {
         this.videoSources.set(sources);
+        this.buildCameraGroups(sources);
         this.loading.set(false);
       },
       error: () => {
         this.loading.set(false);
       }
     });
+  }
+
+  /**
+   * Build camera groups from video sources
+   * Simple grouping by first word: "H8C-1" → "H8C", "BWC SALATIGA 1" → "BWC"
+   */
+  buildCameraGroups(sources: VideoSource[]) {
+    const groupMap = new Map<string, VideoSource[]>();
+
+    for (const source of sources) {
+      // Simple: take first word (split by space or dash)
+      const firstWord = source.name.split(/[\s-]/)[0] || 'Other';
+      const groupName = firstWord.toUpperCase();
+
+      if (!groupMap.has(groupName)) {
+        groupMap.set(groupName, []);
+      }
+      groupMap.get(groupName)!.push(source);
+    }
+
+    // Convert to array and sort
+    const groups: CameraGroup[] = [];
+    groupMap.forEach((cameras, name) => {
+      groups.push({
+        id: name.toLowerCase(),
+        name: name,
+        expanded: true,
+        cameras: cameras.sort((a, b) => a.name.localeCompare(b.name))
+      });
+    });
+
+    // Sort groups alphabetically, but put "Other" at the end
+    groups.sort((a, b) => {
+      if (a.name === 'Other') return 1;
+      if (b.name === 'Other') return -1;
+      return a.name.localeCompare(b.name);
+    });
+
+    this.cameraGroups.set(groups);
+  }
+
+  toggleGroup(group: CameraGroup) {
+    group.expanded = !group.expanded;
+  }
+
+  filteredGroups(): CameraGroup[] {
+    const groups = this.cameraGroups();
+    if (!this.searchQuery) {
+      return groups;
+    }
+
+    const query = this.searchQuery.toLowerCase();
+    return groups
+      .map(group => ({
+        ...group,
+        cameras: group.cameras.filter(c =>
+          c.name.toLowerCase().includes(query) ||
+          c.location?.toLowerCase().includes(query)
+        )
+      }))
+      .filter(group => group.cameras.length > 0);
+  }
+
+  getFilteredCameras(group: CameraGroup): VideoSource[] {
+    if (!this.searchQuery) {
+      return group.cameras;
+    }
+    const query = this.searchQuery.toLowerCase();
+    return group.cameras.filter(c =>
+      c.name.toLowerCase().includes(query) ||
+      c.location?.toLowerCase().includes(query)
+    );
   }
 
   filteredVideoSources(): VideoSource[] {

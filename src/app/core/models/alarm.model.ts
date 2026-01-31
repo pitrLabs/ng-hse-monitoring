@@ -68,3 +68,28 @@ export function getAlarmNotificationType(alarmType: string): 'warning' | 'error'
       return 'info';
   }
 }
+
+/**
+ * Get the full image URL for alarm images
+ * BM-APP returns relative paths like "Images/DAY_20260131/IMAGE_xxx.jpg"
+ * We need to prepend the BM-APP base URL
+ */
+export function getAlarmImageUrl(imageUrl: string | undefined | null): string | null {
+  if (!imageUrl) return null;
+
+  // If already a full URL, return as-is
+  if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
+    return imageUrl;
+  }
+
+  // Get BM-APP URL from environment
+  const bmappUrl = (window as any).__env?.BMAPP_URL || 'http://103.75.84.183:2323';
+
+  // Handle relative paths
+  if (imageUrl.startsWith('/')) {
+    return `${bmappUrl}${imageUrl}`;
+  }
+
+  // Handle paths without leading slash (e.g., "Images/...")
+  return `${bmappUrl}/${imageUrl}`;
+}

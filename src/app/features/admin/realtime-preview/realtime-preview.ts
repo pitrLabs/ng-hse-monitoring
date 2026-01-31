@@ -22,6 +22,13 @@ interface VideoChannel {
   taskIdx?: number; // BM-APP TaskIdx for individual camera view (e.g., 0, 1, 7)
 }
 
+interface ChannelGroup {
+  id: string;
+  name: string;
+  expanded: boolean;
+  channels: VideoChannel[];
+}
+
 @Component({
   standalone: true,
   selector: 'app-admin-realtime-preview',
@@ -96,23 +103,37 @@ interface VideoChannel {
                 <mat-spinner diameter="24"></mat-spinner>
                 <span>Loading...</span>
               </div>
-            } @else if (videoChannels.length === 0) {
+            } @else if (channelGroups.length === 0) {
               <div class="no-devices">
                 <mat-icon>videocam_off</mat-icon>
                 <span>No video sources found</span>
               </div>
             } @else {
-              @for (channel of videoChannels; track channel.id) {
-                <div class="device-item"
-                     [class.online]="channel.status === 'online'"
-                     [class.connecting]="channel.isConnecting"
-                     (click)="selectChannel(channel)"
-                     [matTooltip]="channel.statusLabel || ''">
-                  <mat-icon>{{ channel.status === 'online' ? 'videocam' : channel.isConnecting ? 'sync' : 'videocam_off' }}</mat-icon>
-                  <span class="device-name">{{ channel.name }}</span>
-                  <span class="status-dot"
-                        [class.online]="channel.status === 'online'"
-                        [class.connecting]="channel.isConnecting"></span>
+              @for (group of channelGroups; track group.id) {
+                <div class="tree-node">
+                  <div class="node-header" (click)="toggleGroup(group)">
+                    <mat-icon class="expand-icon" [class.expanded]="group.expanded">chevron_right</mat-icon>
+                    <mat-icon class="folder-icon">folder</mat-icon>
+                    <span class="node-name">{{ group.name }}</span>
+                    <span class="node-count">({{ group.channels.length }})</span>
+                  </div>
+                  @if (group.expanded) {
+                    <div class="node-children">
+                      @for (channel of group.channels; track channel.id) {
+                        <div class="device-item"
+                             [class.online]="channel.status === 'online'"
+                             [class.connecting]="channel.isConnecting"
+                             (click)="selectChannel(channel)"
+                             [matTooltip]="channel.statusLabel || ''">
+                          <mat-icon>{{ channel.status === 'online' ? 'videocam' : channel.isConnecting ? 'sync' : 'videocam_off' }}</mat-icon>
+                          <span class="device-name">{{ channel.name }}</span>
+                          <span class="status-dot"
+                                [class.online]="channel.status === 'online'"
+                                [class.connecting]="channel.isConnecting"></span>
+                        </div>
+                      }
+                    </div>
+                  }
                 </div>
               }
             }
@@ -428,6 +449,58 @@ interface VideoChannel {
       padding: 12px;
     }
 
+    .tree-node {
+      margin-bottom: 2px;
+    }
+
+    .node-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      cursor: pointer;
+
+      &:hover {
+        background: rgba(0, 212, 255, 0.1);
+      }
+    }
+
+    .expand-icon {
+      font-size: 16px;
+      width: 16px;
+      height: 16px;
+      color: var(--text-tertiary);
+      transition: transform 0.2s;
+
+      &.expanded {
+        transform: rotate(90deg);
+      }
+    }
+
+    .folder-icon {
+      font-size: 16px;
+      width: 16px;
+      height: 16px;
+      color: #f59e0b;
+    }
+
+    .node-name {
+      flex: 1;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-primary);
+    }
+
+    .node-count {
+      font-size: 11px;
+      color: var(--text-tertiary);
+    }
+
+    .node-children {
+      padding-left: 16px;
+    }
+
     .loading-devices, .no-devices {
       display: flex;
       flex-direction: column;
@@ -703,6 +776,7 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
   private fullscreenChangeHandler = () => this.onFullscreenChange();
 
   videoChannels: VideoChannel[] = [];
+  channelGroups: ChannelGroup[] = [];
   gridSlots: (VideoChannel | null)[] = [];
 
   private bmappUrl = environment.bmappUrl;
@@ -948,6 +1022,52 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
     for (let i = 0; i < Math.min(onlineChannels.length, totalSlots); i++) {
       this.gridSlots[i] = onlineChannels[i];
     }
+
+    // Build channel groups for folder structure
+    this.buildChannelGroups();
+  }
+
+  /**
+   * Build channel groups from video channels
+   * Simple grouping by first word: "H8C-1" → "H8C", "BWC SALATIGA 1" → "BWC"
+   */
+  buildChannelGroups() {
+    const groupMap = new Map<string, VideoChannel[]>();
+
+    for (const channel of this.videoChannels) {
+      // Simple: take first word (split by space or dash)
+      const firstWord = channel.name.split(/[\s-]/)[0] || 'Other';
+      const groupName = firstWord.toUpperCase();
+
+      if (!groupMap.has(groupName)) {
+        groupMap.set(groupName, []);
+      }
+      groupMap.get(groupName)!.push(channel);
+    }
+
+    // Convert to array and sort
+    const groups: ChannelGroup[] = [];
+    groupMap.forEach((channels, name) => {
+      groups.push({
+        id: name.toLowerCase(),
+        name: name,
+        expanded: true,
+        channels: channels.sort((a, b) => a.name.localeCompare(b.name))
+      });
+    });
+
+    // Sort groups alphabetically, but put "Other" at the end
+    groups.sort((a, b) => {
+      if (a.name === 'Other') return 1;
+      if (b.name === 'Other') return -1;
+      return a.name.localeCompare(b.name);
+    });
+
+    this.channelGroups = groups;
+  }
+
+  toggleGroup(group: ChannelGroup) {
+    group.expanded = !group.expanded;
   }
 
   getGridSlotCount(): number {

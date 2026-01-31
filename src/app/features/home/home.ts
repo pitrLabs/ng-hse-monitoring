@@ -7,7 +7,7 @@ import { MatMenuModule } from '@angular/material/menu';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatDividerModule } from '@angular/material/divider';
 import { AlarmService } from '../../core/services/alarm.service';
-import { AlarmNotification } from '../../core/models/alarm.model';
+import { AlarmNotification, getAlarmImageUrl } from '../../core/models/alarm.model';
 
 interface DeviceStatus {
   online: number;
@@ -301,7 +301,7 @@ interface DeviceClass {
           <div class="popup-content">
             @if (selectedNotification()?.alarm?.image_url) {
               <div class="popup-image">
-                <img [src]="selectedNotification()?.alarm?.image_url" alt="Alarm capture">
+                <img [src]="getImageUrl(selectedNotification()?.alarm?.image_url)" alt="Alarm capture">
               </div>
             }
             <div class="popup-details">
@@ -1092,6 +1092,10 @@ export class HomeComponent implements OnInit, OnDestroy {
       case 'info': return 'info';
       default: return 'notifications';
     }
+  }
+
+  getImageUrl(imageUrl: string | undefined | null): string | null {
+    return getAlarmImageUrl(imageUrl);
   }
 
   viewAlarmDetail(notification: AlarmNotification): void {

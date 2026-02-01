@@ -26,8 +26,15 @@ export class AlarmService implements OnDestroy {
 
   // Audio for notifications
   private audioContext: AudioContext | null = null;
+  private audioBuffers = new Map<string, AudioBuffer>();
   private _soundEnabled = signal<boolean>(true);
   readonly soundEnabled = this._soundEnabled.asReadonly();
+
+  // Sound file mapping by alarm type
+  private readonly ALARM_SOUNDS: Record<string, string> = {
+    'NoHelmet': 'assets/NoHelmet.wav',
+    'NoVest': 'assets/NoVest.wav'
+  };
 
   // Signals
   private _connectionStatus = signal<ConnectionStatus>('disconnected');
@@ -163,8 +170,8 @@ export class AlarmService implements OnDestroy {
   }
 
   private addNewAlarm(alarm: Alarm): void {
-    // Play notification sound
-    this.playNotificationSound();
+    // Play notification sound based on alarm type
+    this.playNotificationSound(alarm.alarm_type);
 
     // Show toast notification popup
     this.toastService.showAlarmToast(alarm);
@@ -203,7 +210,7 @@ export class AlarmService implements OnDestroy {
     this._soundEnabled.set(enabled);
   }
 
-  private playNotificationSound(): void {
+  private async playNotificationSound(alarmType?: string): Promise<void> {
     if (!this._soundEnabled()) return;
 
     try {
@@ -214,27 +221,84 @@ export class AlarmService implements OnDestroy {
 
       const ctx = this.audioContext;
 
-      // Create oscillator for alarm beep
-      const oscillator = ctx.createOscillator();
-      const gainNode = ctx.createGain();
+      // Resume context if suspended (browser autoplay policy)
+      if (ctx.state === 'suspended') {
+        await ctx.resume();
+      }
 
-      oscillator.connect(gainNode);
-      gainNode.connect(ctx.destination);
+      // Check if we have a specific sound file for this alarm type
+      const soundFile = alarmType ? this.ALARM_SOUNDS[alarmType] : null;
 
-      // Alarm sound: two-tone beep (like emergency alert)
-      oscillator.frequency.setValueAtTime(880, ctx.currentTime); // A5
-      oscillator.frequency.setValueAtTime(660, ctx.currentTime + 0.15); // E5
-      oscillator.frequency.setValueAtTime(880, ctx.currentTime + 0.3); // A5
-
-      // Envelope
-      gainNode.gain.setValueAtTime(0.3, ctx.currentTime);
-      gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.45);
-
-      oscillator.start(ctx.currentTime);
-      oscillator.stop(ctx.currentTime + 0.45);
+      if (soundFile) {
+        // Play WAV file for specific alarm types
+        await this.playWavSound(ctx, soundFile);
+      } else {
+        // Fallback to generated beep for other types
+        this.playGeneratedBeep(ctx);
+      }
 
     } catch (error) {
       console.warn('[AlarmService] Could not play notification sound:', error);
+      // Try fallback beep on error
+      this.tryFallbackBeep();
+    }
+  }
+
+  private async playWavSound(ctx: AudioContext, soundFile: string): Promise<void> {
+    // Check cache first
+    let buffer = this.audioBuffers.get(soundFile);
+
+    if (!buffer) {
+      // Load the WAV file
+      const response = await fetch(soundFile);
+      const arrayBuffer = await response.arrayBuffer();
+      buffer = await ctx.decodeAudioData(arrayBuffer);
+      // Cache for future use
+      this.audioBuffers.set(soundFile, buffer);
+    }
+
+    // Create and play the buffer source
+    const source = ctx.createBufferSource();
+    const gainNode = ctx.createGain();
+
+    source.buffer = buffer;
+    source.connect(gainNode);
+    gainNode.connect(ctx.destination);
+
+    // Set volume
+    gainNode.gain.setValueAtTime(0.5, ctx.currentTime);
+
+    source.start(0);
+  }
+
+  private playGeneratedBeep(ctx: AudioContext): void {
+    // Create oscillator for alarm beep
+    const oscillator = ctx.createOscillator();
+    const gainNode = ctx.createGain();
+
+    oscillator.connect(gainNode);
+    gainNode.connect(ctx.destination);
+
+    // Alarm sound: two-tone beep (like emergency alert)
+    oscillator.frequency.setValueAtTime(880, ctx.currentTime); // A5
+    oscillator.frequency.setValueAtTime(660, ctx.currentTime + 0.15); // E5
+    oscillator.frequency.setValueAtTime(880, ctx.currentTime + 0.3); // A5
+
+    // Envelope
+    gainNode.gain.setValueAtTime(0.3, ctx.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.45);
+
+    oscillator.start(ctx.currentTime);
+    oscillator.stop(ctx.currentTime + 0.45);
+  }
+
+  private tryFallbackBeep(): void {
+    try {
+      if (this.audioContext) {
+        this.playGeneratedBeep(this.audioContext);
+      }
+    } catch {
+      // Silent fail
     }
   }
 

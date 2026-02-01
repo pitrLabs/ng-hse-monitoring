@@ -149,7 +149,7 @@ interface CameraGroup {
               >
                 @if (cell.source) {
                   <div class="video-content">
-                    <app-video-player [streamName]="cell.source.stream_name" [muted]="true"></app-video-player>
+                    <app-video-player [streamName]="cell.source.stream_name" [muted]="true" mode="mediamtx"></app-video-player>
                     <div class="video-info">
                       <span class="video-name">{{ cell.source.name }}</span>
                       <span class="video-type">{{ cell.source.source_type | uppercase }}</span>

@@ -267,7 +267,8 @@ export class VideoPlayerComponent implements OnInit, OnDestroy {
 
     await this.waitForIceGathering();
 
-    const whepUrl = `${this.getMediaServerUrl()}/${this.streamName}/whep`;
+    const encodedStreamName = encodeURIComponent(this.streamName);
+    const whepUrl = `${this.getMediaServerUrl()}/${encodedStreamName}/whep`;
     console.log(`[MediaMTX WHEP] Connecting to: ${whepUrl}`);
 
     const response = await fetch(whepUrl, {

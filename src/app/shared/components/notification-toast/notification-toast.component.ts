@@ -12,7 +12,7 @@ import { getAlarmImageUrl } from '../../../core/models/alarm.model';
   template: `
     <div class="toast-container">
       @for (toast of toastService.toasts(); track toast.id) {
-        <div class="toast-item" [class]="'severity-' + toast.severity" [@slideIn]>
+        <div class="toast-item" [class]="'severity-' + toast.severity">
           <div class="toast-header">
             <mat-icon class="toast-icon">{{ getSeverityIcon(toast.severity) }}</mat-icon>
             <span class="toast-title">{{ toast.title }}</span>

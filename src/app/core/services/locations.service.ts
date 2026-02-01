@@ -1,6 +1,7 @@
 import { Injectable, signal, inject } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
+import { environment } from '../../../environments/environment';
 
 export interface CameraLocation {
   id: string;
@@ -37,7 +38,7 @@ export interface SyncResult {
 })
 export class LocationsService {
   private http = inject(HttpClient);
-  private baseUrl = '/api/locations';
+  private baseUrl = `${environment.apiUrl}/locations`;
 
   locations = signal<CameraLocation[]>([]);
   stats = signal<LocationStats | null>(null);

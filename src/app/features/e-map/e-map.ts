@@ -1,4 +1,4 @@
-import { Component, signal, OnInit, inject, ViewChild, computed } from '@angular/core';
+import { Component, signal, OnInit, inject, ViewChild, computed, effect } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MatIconModule } from '@angular/material/icon';
@@ -12,11 +12,19 @@ import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { LocationsService, CameraLocation } from '../../core/services/locations.service';
 import { LeafletMapComponent, MapMarker } from '../../shared/components/leaflet-map/leaflet-map';
 
-interface DeviceGroup {
+interface DeviceItem {
+  id: string;
+  name: string;
+  online: boolean;
+  location: CameraLocation;
+}
+
+interface RegionGroup {
   id: string;
   name: string;
   expanded: boolean;
-  devices: { id: string; name: string; online: boolean; location: CameraLocation }[];
+  visible: boolean;
+  devices: DeviceItem[];
 }
 
 @Component({
@@ -51,14 +59,14 @@ interface DeviceGroup {
           <mat-checkbox [(ngModel)]="onlineInGroup" color="primary">Online in Group</mat-checkbox>
         </div>
 
-        <!-- Device Groups -->
+        <!-- Device Groups - Region > Device -->
         <div class="device-tree">
           @if (loading()) {
             <div class="tree-loading">
               <mat-spinner diameter="24"></mat-spinner>
               <span>Loading locations...</span>
             </div>
-          } @else if (filteredGroups().length === 0) {
+          } @else if (filteredRegionGroups().length === 0) {
             <div class="tree-empty">
               <mat-icon>location_off</mat-icon>
               <span>No locations found</span>
@@ -68,19 +76,25 @@ interface DeviceGroup {
               </button>
             </div>
           } @else {
-            @for (group of filteredGroups(); track group.id) {
-              <div class="tree-node">
-                <div class="node-header" (click)="toggleGroup(group)">
-                  <mat-icon class="expand-icon" [class.expanded]="group.expanded">
+            @for (region of filteredRegionGroups(); track region.id) {
+              <div class="tree-node region-node">
+                <div class="node-header region-header">
+                  <mat-icon class="expand-icon" [class.expanded]="region.expanded" (click)="toggleRegionGroup(region)">
                     chevron_right
                   </mat-icon>
-                  <mat-icon class="folder-icon">folder</mat-icon>
-                  <span class="node-name">{{ group.name }}</span>
-                  <span class="node-count">({{ group.devices.length }})</span>
+                  <mat-checkbox
+                    [checked]="region.visible"
+                    (change)="toggleRegionVisibility(region)"
+                    color="primary"
+                    class="visibility-check"
+                  ></mat-checkbox>
+                  <mat-icon class="folder-icon region-folder">folder</mat-icon>
+                  <span class="node-name" (click)="toggleRegionGroup(region)">{{ region.name }}</span>
+                  <span class="node-count">({{ region.devices.length }})</span>
                 </div>
-                @if (group.expanded) {
+                @if (region.expanded) {
                   <div class="node-children">
-                    @for (device of getFilteredDevices(group); track device.id) {
+                    @for (device of getFilteredDevices(region); track device.id) {
                       <div class="device-item" (click)="focusOnDevice(device)">
                         <mat-icon class="device-icon" [class.online]="device.online">
                           {{ device.online ? 'location_on' : 'location_off' }}
@@ -301,7 +315,31 @@ interface DeviceGroup {
     }
 
     .node-children {
-      padding-left: 32px;
+      padding-left: 24px;
+    }
+
+    .region-header {
+      background: rgba(0, 212, 255, 0.05);
+      border-radius: var(--radius-sm);
+    }
+
+    .region-folder {
+      color: var(--accent-primary) !important;
+    }
+
+    .visibility-check {
+      margin-right: 4px;
+
+      ::ng-deep .mdc-checkbox {
+        width: 18px;
+        height: 18px;
+        padding: 0;
+      }
+
+      ::ng-deep .mdc-checkbox__background {
+        width: 16px;
+        height: 16px;
+      }
     }
 
     .device-item {
@@ -487,12 +525,73 @@ export class EMapComponent implements OnInit {
   mapCenter: [number, number] = [-6.2088, 106.8456]; // Jakarta default
   locations = signal<CameraLocation[]>([]);
 
-  // Computed markers from locations
+  // Track visibility state per region
+  private visibleRegions = signal<Set<string>>(new Set());
+  private visibilityInitialized = false;
+
+  // Effect to initialize visibility when locations change
+  private visibilityEffect = effect(() => {
+    const locs = this.locations();
+    if (locs.length > 0 && !this.visibilityInitialized) {
+      const allRegionIds = new Set<string>();
+      for (const loc of locs) {
+        const regionName = this.extractRegion(loc);
+        allRegionIds.add(regionName);
+      }
+      this.visibleRegions.set(allRegionIds);
+      this.visibilityInitialized = true;
+    }
+  }, { allowSignalWrites: true });
+
+  // Flat region groups: Region > Devices
+  regionGroups = computed(() => {
+    const locs = this.locations();
+    const visibleSet = this.visibleRegions();
+    const regionMap = new Map<string, RegionGroup>();
+
+    for (const loc of locs) {
+      const regionName = this.extractRegion(loc);
+
+      // Get or create region group
+      if (!regionMap.has(regionName)) {
+        regionMap.set(regionName, {
+          id: regionName,
+          name: regionName,
+          expanded: false,
+          visible: visibleSet.has(regionName),
+          devices: []
+        });
+      }
+
+      const region = regionMap.get(regionName)!;
+      region.devices.push({
+        id: loc.id,
+        name: loc.name,
+        online: loc.is_active,
+        location: loc
+      });
+    }
+
+    return Array.from(regionMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+  });
+
+  // Computed markers from locations (filtered by visibility)
   mapMarkers = computed(() => {
+    const visibleSet = this.visibleRegions();
     let locs = this.locations();
+
+    // If visibility is initialized, filter by visible regions
+    if (visibleSet.size > 0) {
+      locs = locs.filter(loc => {
+        const regionName = this.extractRegion(loc);
+        return visibleSet.has(regionName);
+      });
+    }
+
     if (this.onlineOnly) {
       locs = locs.filter(l => l.is_active);
     }
+
     return locs
       .filter(loc => loc.latitude && loc.longitude)
       .map(loc => ({
@@ -504,32 +603,6 @@ export class EMapComponent implements OnInit {
         isOnline: loc.is_active,
         data: loc
       }));
-  });
-
-  // Device groups from locations
-  deviceGroups = computed(() => {
-    const locs = this.locations();
-    const groupMap = new Map<string, DeviceGroup>();
-
-    for (const loc of locs) {
-      const groupName = loc.source || 'Other';
-      if (!groupMap.has(groupName)) {
-        groupMap.set(groupName, {
-          id: groupName,
-          name: this.formatGroupName(groupName),
-          expanded: groupName === 'keypoint',
-          devices: []
-        });
-      }
-      groupMap.get(groupName)!.devices.push({
-        id: loc.id,
-        name: loc.name,
-        online: loc.is_active,
-        location: loc
-      });
-    }
-
-    return Array.from(groupMap.values()).sort((a, b) => a.name.localeCompare(b.name));
   });
 
   ngOnInit(): void {
@@ -556,28 +629,77 @@ export class EMapComponent implements OnInit {
     }
   }
 
-  private formatGroupName(source: string): string {
-    switch (source) {
-      case 'keypoint': return 'Keypoint Cameras';
-      case 'gps_tim_har': return 'GPS TIM HAR';
-      case 'manual': return 'Manual Locations';
-      default: return source.charAt(0).toUpperCase() + source.slice(1);
+  private extractRegion(loc: CameraLocation): string {
+    // Try to extract region from extra_data fields
+    const extraData = loc.extra_data as Record<string, unknown> | null;
+
+    if (extraData) {
+      // Try FEEDER_01 first (common in keypoint data)
+      if (extraData['FEEDER_01']) {
+        return String(extraData['FEEDER_01']).trim();
+      }
+      // Try TYPE_KP
+      if (extraData['TYPE_KP']) {
+        return String(extraData['TYPE_KP']).trim();
+      }
+      // Try KEYPOINT_SCADA and extract region part
+      if (extraData['KEYPOINT_SCADA']) {
+        const scada = String(extraData['KEYPOINT_SCADA']);
+        // Extract first part before underscore or dash
+        const match = scada.match(/^([A-Za-z]+)/);
+        if (match) {
+          return match[1].toUpperCase();
+        }
+      }
     }
+
+    // Try location_type
+    if (loc.location_type) {
+      return loc.location_type;
+    }
+
+    // Fallback: try to extract from address
+    if (loc.address) {
+      // Common Indonesian city/region patterns
+      const addressLower = loc.address.toLowerCase();
+      const regions = ['jakarta', 'bogor', 'depok', 'tangerang', 'bekasi', 'bandung', 'surabaya', 'semarang', 'yogyakarta', 'malang'];
+      for (const region of regions) {
+        if (addressLower.includes(region)) {
+          return region.charAt(0).toUpperCase() + region.slice(1);
+        }
+      }
+      // Return first word of address
+      const firstWord = loc.address.split(/[\s,]+/)[0];
+      if (firstWord && firstWord.length > 2) {
+        return firstWord;
+      }
+    }
+
+    // Fallback: extract from name
+    if (loc.name) {
+      const parts = loc.name.split(/[-_\s]/);
+      if (parts.length > 0 && parts[0].length > 2) {
+        return parts[0].toUpperCase();
+      }
+    }
+
+    return 'Other';
   }
 
-  filteredGroups() {
-    let groups = this.deviceGroups();
+  filteredRegionGroups(): RegionGroup[] {
+    let regions = this.regionGroups();
     if (this.searchQuery) {
-      groups = groups.filter(g =>
-        g.name.toLowerCase().includes(this.searchQuery.toLowerCase()) ||
-        g.devices.some(d => d.name.toLowerCase().includes(this.searchQuery.toLowerCase()))
+      const query = this.searchQuery.toLowerCase();
+      regions = regions.filter(region =>
+        region.name.toLowerCase().includes(query) ||
+        region.devices.some(d => d.name.toLowerCase().includes(query))
       );
     }
-    return groups;
+    return regions;
   }
 
-  getFilteredDevices(group: DeviceGroup) {
-    let devices = group.devices;
+  getFilteredDevices(region: RegionGroup): DeviceItem[] {
+    let devices = region.devices;
     if (this.onlineOnly) {
       devices = devices.filter(d => d.online);
     }
@@ -589,16 +711,22 @@ export class EMapComponent implements OnInit {
     return devices;
   }
 
-  toggleGroup(group: DeviceGroup): void {
-    group.expanded = !group.expanded;
+  toggleRegionGroup(region: RegionGroup): void {
+    region.expanded = !region.expanded;
   }
 
-  isGroupChecked(group: DeviceGroup): boolean {
-    return group.devices.every(d => d.online);
-  }
-
-  toggleGroupCheck(group: DeviceGroup, event: any): void {
-    // This would require API update - just visual for now
+  toggleRegionVisibility(region: RegionGroup): void {
+    this.visibleRegions.update(s => {
+      const newSet = new Set(s);
+      if (newSet.has(region.id)) {
+        newSet.delete(region.id);
+        region.visible = false;
+      } else {
+        newSet.add(region.id);
+        region.visible = true;
+      }
+      return newSet;
+    });
   }
 
   // Map controls
@@ -630,7 +758,7 @@ export class EMapComponent implements OnInit {
     // Could open a detail popup or highlight in the list
   }
 
-  focusOnDevice(device: { id: string; name: string; location: CameraLocation }): void {
+  focusOnDevice(device: DeviceItem): void {
     if (device.location.latitude && device.location.longitude) {
       this.mapComponent?.setView(device.location.latitude, device.location.longitude, 15);
     }

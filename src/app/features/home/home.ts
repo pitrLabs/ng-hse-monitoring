@@ -1023,9 +1023,13 @@ export class HomeComponent implements OnInit, OnDestroy {
     this.updateMapMarkers(locations);
   }
 
+  // Allowed regions for home page map
+  private allowedRegions = ['AMP01', 'AMP02', 'AMP03', 'AMP04'];
+
   private updateMapMarkers(locations: CameraLocation[]): void {
     const markers: MapMarker[] = locations
       .filter(loc => loc.latitude && loc.longitude)
+      .filter(loc => this.isInAllowedRegion(loc))
       .map(loc => ({
         id: loc.id,
         name: loc.name,
@@ -1036,6 +1040,24 @@ export class HomeComponent implements OnInit, OnDestroy {
         data: loc
       }));
     this.mapMarkers.set(markers);
+  }
+
+  private isInAllowedRegion(loc: CameraLocation): boolean {
+    const extraData = loc.extra_data as Record<string, unknown> | null;
+
+    // Check FEEDER_01 field
+    if (extraData?.['FEEDER_01']) {
+      const feeder = String(extraData['FEEDER_01']).trim().toUpperCase();
+      return this.allowedRegions.some(r => feeder.includes(r));
+    }
+
+    // Check location name for region pattern
+    if (loc.name) {
+      const nameUpper = loc.name.toUpperCase();
+      return this.allowedRegions.some(r => nameUpper.includes(r));
+    }
+
+    return false;
   }
 
   mapZoomIn(): void {

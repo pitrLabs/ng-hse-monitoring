@@ -1,5 +1,6 @@
 import { Injectable, signal, computed, inject, OnDestroy } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
+import { Subscription } from 'rxjs';
 import { environment } from '../../../environments/environment';
 import {
   Alarm,
@@ -8,6 +9,7 @@ import {
   getAlarmNotificationType
 } from '../models/alarm.model';
 import { NotificationToastService } from './notification-toast.service';
+import { AuthService } from './auth.service';
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected';
 
@@ -17,12 +19,14 @@ export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected';
 export class AlarmService implements OnDestroy {
   private http = inject(HttpClient);
   private toastService = inject(NotificationToastService);
+  private authService = inject(AuthService);
   private apiUrl = environment.apiUrl;
 
   // WebSocket
   private ws: WebSocket | null = null;
   private reconnectTimeout: any = null;
   private pingInterval: any = null;
+  private logoutSubscription?: Subscription;
 
   // Audio for notifications
   private audioContext: AudioContext | null = null;
@@ -60,10 +64,16 @@ export class AlarmService implements OnDestroy {
 
   constructor() {
     this.connect();
+
+    // Subscribe to logout event to disconnect WebSocket
+    this.logoutSubscription = this.authService.onLogout$.subscribe(() => {
+      this.disconnect();
+    });
   }
 
   ngOnDestroy(): void {
     this.disconnect();
+    this.logoutSubscription?.unsubscribe();
   }
 
   // ============ WebSocket Methods ============

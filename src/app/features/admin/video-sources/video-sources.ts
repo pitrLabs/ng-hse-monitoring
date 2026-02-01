@@ -17,9 +17,25 @@ interface VideoSource {
   source_type: 'rtsp' | 'http' | 'file';
   description?: string;
   location?: string;
+  group_id?: string | null;
   is_active: boolean;
   sound_alert: boolean;
+  is_synced_bmapp: boolean;
+  bmapp_sync_error?: string | null;
   created_at: string;
+}
+
+interface CameraGroup {
+  id: string;
+  name: string;
+  display_name: string;
+}
+
+interface BmAppMedia {
+  id: number;
+  mediaUrl: string;
+  mediaType: string;
+  mediaName?: string;
 }
 
 @Component({
@@ -37,13 +53,21 @@ interface VideoSource {
           <span class="count">{{ videoSources().length }} sources</span>
         </div>
         <div class="header-right">
+          <button mat-stroked-button (click)="importFromBmApp()" [disabled]="importing()">
+            @if (importing()) {
+              <mat-spinner diameter="18"></mat-spinner>
+            } @else {
+              <mat-icon>download</mat-icon>
+            }
+            Import from BM-APP
+          </button>
           <button mat-stroked-button (click)="syncBmApp()" [disabled]="syncing()">
             @if (syncing()) {
               <mat-spinner diameter="18"></mat-spinner>
             } @else {
-              <mat-icon>sync</mat-icon>
+              <mat-icon>cloud_upload</mat-icon>
             }
-            Sync BM-APP
+            Sync to BM-APP
           </button>
           <button mat-raised-button class="btn-primary" (click)="openCreateDialog()">
             <mat-icon>add</mat-icon>
@@ -63,6 +87,7 @@ interface VideoSource {
             <div class="col-url">Stream URL</div>
             <div class="col-type">Type</div>
             <div class="col-status">Status</div>
+            <div class="col-sync">BM-APP</div>
             <div class="col-actions">Actions</div>
           </div>
           @for (source of videoSources(); track source.id) {
@@ -84,6 +109,21 @@ interface VideoSource {
                 <span class="status-badge" [class.active]="source.is_active">
                   {{ source.is_active ? 'Active' : 'Inactive' }}
                 </span>
+              </div>
+              <div class="col-sync">
+                @if (source.is_synced_bmapp) {
+                  <span class="sync-badge synced" matTooltip="Synced to BM-APP">
+                    <mat-icon>cloud_done</mat-icon>
+                  </span>
+                } @else if (source.bmapp_sync_error) {
+                  <span class="sync-badge error" [matTooltip]="source.bmapp_sync_error || 'Sync failed'">
+                    <mat-icon>cloud_off</mat-icon>
+                  </span>
+                } @else {
+                  <span class="sync-badge pending" matTooltip="Not synced">
+                    <mat-icon>cloud_queue</mat-icon>
+                  </span>
+                }
               </div>
               <div class="col-actions">
                 <button mat-icon-button [matTooltip]="source.is_active ? 'Deactivate' : 'Activate'" (click)="toggleSource(source)">
@@ -149,14 +189,31 @@ interface VideoSource {
                 </div>
 
                 <div class="form-group">
-                  <label>Location</label>
-                  <input type="text" [(ngModel)]="formData.location" placeholder="e.g., Building A, Floor 1">
+                  <label>Folder</label>
+                  <div class="folder-select-row">
+                    <select [(ngModel)]="formData.group_id" class="folder-select">
+                      <option [ngValue]="null">-- No Folder --</option>
+                      @for (group of groups(); track group.id) {
+                        <option [ngValue]="group.id">{{ group.display_name || group.name }}</option>
+                      }
+                    </select>
+                    <button type="button" mat-icon-button class="new-folder-btn" matTooltip="Create New Folder" (click)="openNewFolderDialog()">
+                      <mat-icon>create_new_folder</mat-icon>
+                    </button>
+                  </div>
                 </div>
               </div>
 
-              <div class="form-group">
-                <label>Description</label>
-                <textarea [(ngModel)]="formData.description" placeholder="Optional description" rows="2"></textarea>
+              <div class="form-row">
+                <div class="form-group">
+                  <label>Location</label>
+                  <input type="text" [(ngModel)]="formData.location" placeholder="e.g., Building A, Floor 1">
+                </div>
+
+                <div class="form-group">
+                  <label>Description</label>
+                  <input type="text" [(ngModel)]="formData.description" placeholder="Optional description">
+                </div>
               </div>
 
               <div class="form-row checkbox-row">
@@ -178,8 +235,9 @@ interface VideoSource {
               </div>
             </div>
             <div class="dialog-actions">
-              <button mat-stroked-button (click)="closeDialog()">Cancel</button>
-              <button mat-raised-button class="btn-primary"
+              <button mat-stroked-button type="button" (click)="closeDialog()">Cancel</button>
+              <button mat-raised-button class="btn-primary save-btn"
+                type="button"
                 (click)="saveSource()"
                 [disabled]="!canSave() || saving()">
                 @if (saving()) {
@@ -187,7 +245,43 @@ interface VideoSource {
                 } @else {
                   <ng-container>
                     <mat-icon>{{ editingSource() ? 'save' : 'add' }}</mat-icon>
-                    {{ editingSource() ? 'Update' : 'Create' }}
+                    <span>{{ editingSource() ? 'Update' : 'Create' }}</span>
+                  </ng-container>
+                }
+              </button>
+            </div>
+          </div>
+        </div>
+      }
+
+      <!-- New Folder Dialog -->
+      @if (showNewFolderDialog()) {
+        <div class="dialog-backdrop folder-dialog-backdrop" (click)="closeNewFolderDialog()">
+          <div class="dialog-container folder-dialog" (click)="$event.stopPropagation()">
+            <div class="dialog-header">
+              <h3>Create New Folder</h3>
+              <button mat-icon-button (click)="closeNewFolderDialog()">
+                <mat-icon>close</mat-icon>
+              </button>
+            </div>
+            <div class="dialog-content">
+              <div class="form-group">
+                <label>Folder Name *</label>
+                <input type="text" [(ngModel)]="newFolderName" placeholder="e.g., Building A Cameras">
+              </div>
+            </div>
+            <div class="dialog-actions">
+              <button mat-stroked-button type="button" (click)="closeNewFolderDialog()">Cancel</button>
+              <button mat-raised-button class="btn-primary save-btn"
+                type="button"
+                (click)="createNewFolder()"
+                [disabled]="!newFolderName.trim() || creatingFolder()">
+                @if (creatingFolder()) {
+                  <mat-spinner diameter="18"></mat-spinner>
+                } @else {
+                  <ng-container>
+                    <mat-icon>create_new_folder</mat-icon>
+                    <span>Create</span>
                   </ng-container>
                 }
               </button>
@@ -225,7 +319,7 @@ interface VideoSource {
 
     .table-header, .table-row {
       display: grid;
-      grid-template-columns: 2fr 3fr 100px 100px 120px;
+      grid-template-columns: 2fr 2.5fr 80px 90px 70px 120px;
       gap: 16px; padding: 16px 20px; align-items: center;
     }
 
@@ -273,6 +367,25 @@ interface VideoSource {
       font-size: 12px; font-weight: 500;
       background: rgba(239, 68, 68, 0.2); color: #ef4444;
       &.active { background: rgba(34, 197, 94, 0.2); color: #22c55e; }
+    }
+
+    .col-sync { display: flex; justify-content: center; }
+
+    .sync-badge {
+      display: flex; align-items: center; justify-content: center;
+      width: 32px; height: 32px; border-radius: 8px;
+
+      mat-icon { font-size: 18px; width: 18px; height: 18px; }
+
+      &.synced {
+        background: rgba(34, 197, 94, 0.15); color: #22c55e;
+      }
+      &.pending {
+        background: rgba(156, 163, 175, 0.15); color: #9ca3af;
+      }
+      &.error {
+        background: rgba(239, 68, 68, 0.15); color: #ef4444;
+      }
     }
 
     .col-actions {
@@ -385,6 +498,54 @@ interface VideoSource {
       margin-top: 8px;
     }
 
+    .folder-select-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+
+      .folder-select {
+        flex: 1;
+      }
+
+      .new-folder-btn {
+        width: 40px;
+        height: 40px;
+        color: var(--accent-primary);
+        background: var(--glass-bg);
+        border: 1px solid var(--glass-border);
+
+        &:hover {
+          background: var(--glass-bg-hover);
+        }
+      }
+    }
+
+    .save-btn {
+      display: flex !important;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      min-width: 120px;
+
+      mat-icon {
+        font-size: 18px;
+        width: 18px;
+        height: 18px;
+      }
+
+      mat-spinner {
+        margin: 0;
+      }
+    }
+
+    .folder-dialog-backdrop {
+      z-index: 1100;
+    }
+
+    .folder-dialog {
+      max-width: 400px;
+    }
+
     .checkbox-group {
       .checkbox-label {
         display: flex;
@@ -439,8 +600,15 @@ export class AdminVideoSourcesComponent implements OnInit {
 
   loading = signal(true);
   syncing = signal(false);
+  importing = signal(false);
   saving = signal(false);
+  creatingFolder = signal(false);
   videoSources = signal<VideoSource[]>([]);
+  bmappMedia = signal<BmAppMedia[]>([]);
+  groups = signal<CameraGroup[]>([]);
+
+  showNewFolderDialog = signal(false);
+  newFolderName = '';
 
   showDialog = signal(false);
   editingSource = signal<VideoSource | null>(null);
@@ -452,11 +620,15 @@ export class AdminVideoSourcesComponent implements OnInit {
     source_type: 'rtsp' as 'rtsp' | 'http' | 'file',
     description: '',
     location: '',
+    group_id: null as string | null,
     is_active: true,
     sound_alert: false
   };
 
-  ngOnInit() { this.loadSources(); }
+  ngOnInit() {
+    this.loadSources();
+    this.loadGroups();
+  }
 
   loadSources() {
     this.loading.set(true);
@@ -467,6 +639,13 @@ export class AdminVideoSourcesComponent implements OnInit {
         this.loading.set(false);
         this.showError('Failed to load video sources');
       }
+    });
+  }
+
+  loadGroups() {
+    this.http.get<CameraGroup[]>(`${this.apiUrl}/locations/groups`).subscribe({
+      next: (res) => { this.groups.set(res); },
+      error: (err) => { console.error('Load groups error:', err); }
     });
   }
 
@@ -482,6 +661,31 @@ export class AdminVideoSourcesComponent implements OnInit {
         console.error('Sync error:', err);
         this.syncing.set(false);
         this.showError(err.error?.detail || 'Failed to sync with BM-APP');
+      }
+    });
+  }
+
+  importFromBmApp() {
+    this.importing.set(true);
+    this.http.post<{ imported: number; skipped: number; errors: string[] }>(
+      `${this.apiUrl}/video-sources/import-from-bmapp`,
+      {}
+    ).subscribe({
+      next: (res) => {
+        this.importing.set(false);
+        this.loadSources();
+        if (res.imported > 0) {
+          this.showSuccess(`Imported ${res.imported} camera(s) from BM-APP${res.skipped > 0 ? `, ${res.skipped} skipped (already exist)` : ''}`);
+        } else if (res.skipped > 0) {
+          this.showSuccess(`All ${res.skipped} camera(s) already exist locally`);
+        } else {
+          this.showSuccess('No cameras found in BM-APP to import');
+        }
+      },
+      error: (err) => {
+        console.error('Import error:', err);
+        this.importing.set(false);
+        this.showError(err.error?.detail || 'Failed to import from BM-APP');
       }
     });
   }
@@ -514,6 +718,7 @@ export class AdminVideoSourcesComponent implements OnInit {
       source_type: source.source_type || 'rtsp',
       description: source.description || '',
       location: source.location || '',
+      group_id: source.group_id || null,
       is_active: source.is_active,
       sound_alert: source.sound_alert || false
     };
@@ -533,9 +738,42 @@ export class AdminVideoSourcesComponent implements OnInit {
       source_type: 'rtsp',
       description: '',
       location: '',
+      group_id: null,
       is_active: true,
       sound_alert: false
     };
+  }
+
+  openNewFolderDialog() {
+    this.newFolderName = '';
+    this.showNewFolderDialog.set(true);
+  }
+
+  closeNewFolderDialog() {
+    this.showNewFolderDialog.set(false);
+    this.newFolderName = '';
+  }
+
+  createNewFolder() {
+    if (!this.newFolderName.trim()) return;
+
+    this.creatingFolder.set(true);
+    this.http.post<CameraGroup>(`${this.apiUrl}/locations/groups`, {
+      name: this.newFolderName.trim(),
+      display_name: this.newFolderName.trim()
+    }).subscribe({
+      next: (newGroup) => {
+        this.creatingFolder.set(false);
+        this.loadGroups();
+        this.formData.group_id = newGroup.id;
+        this.closeNewFolderDialog();
+        this.showSuccess('Folder created successfully');
+      },
+      error: (err) => {
+        this.creatingFolder.set(false);
+        this.showError(err.error?.detail || 'Failed to create folder');
+      }
+    });
   }
 
   canSave(): boolean {
@@ -560,6 +798,7 @@ export class AdminVideoSourcesComponent implements OnInit {
       source_type: this.formData.source_type,
       description: this.formData.description.trim() || null,
       location: this.formData.location.trim() || null,
+      group_id: this.formData.group_id,
       is_active: this.formData.is_active,
       sound_alert: this.formData.sound_alert
     };

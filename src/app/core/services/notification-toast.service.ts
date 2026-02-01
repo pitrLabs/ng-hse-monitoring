@@ -16,16 +16,36 @@ export interface ToastNotification {
 })
 export class NotificationToastService {
   private _toasts = signal<ToastNotification[]>([]);
+  private _enabled = signal<boolean>(true);
   private _maxToasts = 5;
   private _autoHideDelay = 8000; // 8 seconds
 
   readonly toasts = this._toasts.asReadonly();
   readonly hasToasts = computed(() => this._toasts().length > 0);
+  readonly enabled = this._enabled.asReadonly();
+
+  /**
+   * Toggle notifications on/off
+   */
+  toggleEnabled(): void {
+    this._enabled.update(v => !v);
+  }
+
+  /**
+   * Set notifications enabled state
+   */
+  setEnabled(enabled: boolean): void {
+    this._enabled.set(enabled);
+  }
 
   /**
    * Show a toast notification for an alarm
    */
   showAlarmToast(alarm: Alarm): void {
+    // Don't show if notifications are disabled
+    if (!this._enabled()) {
+      return;
+    }
     const toast: ToastNotification = {
       id: alarm.id || `toast_${Date.now()}`,
       title: alarm.alarm_type || 'Alert',

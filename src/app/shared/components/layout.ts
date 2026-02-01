@@ -12,6 +12,7 @@ import { MatBadgeModule } from '@angular/material/badge';
 import { filter, interval, Subscription } from 'rxjs';
 import { AuthService } from '../../core/services/auth.service';
 import { AlarmService } from '../../core/services/alarm.service';
+import { NotificationToastService } from '../../core/services/notification-toast.service';
 import { NotificationToastComponent } from './notification-toast/notification-toast.component';
 
 interface NavItem {
@@ -189,7 +190,7 @@ interface NavItem {
             </div>
 
             <!-- Notification Toggle -->
-            <div class="toggle-item" (click)="notificationEnabled.set(!notificationEnabled())" matTooltip="Toggle Notifications">
+            <div class="toggle-item" (click)="toggleNotifications()" matTooltip="Toggle Notifications">
               <mat-icon class="toggle-icon">{{ notificationEnabled() ? 'notifications_active' : 'notifications_off' }}</mat-icon>
               <span class="toggle-label">Notification</span>
               <div class="toggle-switch" [class.active]="notificationEnabled()">
@@ -207,8 +208,9 @@ interface NavItem {
             </div>
 
             <!-- Notifications -->
-            <button mat-icon-button class="header-icon-btn" [matMenuTriggerFor]="notifMenu" matTooltip="Notifications">
-              <mat-icon [matBadge]="alarmCount()" matBadgeColor="warn" [matBadgeHidden]="alarmCount() === 0">notifications</mat-icon>
+            <button mat-icon-button class="header-icon-btn" [matMenuTriggerFor]="notifMenu" matTooltip="Notifications"
+              [matBadge]="alarmCount()" matBadgeColor="warn" [matBadgeHidden]="alarmCount() === 0">
+              <mat-icon>notifications</mat-icon>
             </button>
             <mat-menu #notifMenu="matMenu" class="notification-dropdown">
               <div class="notif-header">
@@ -216,7 +218,7 @@ interface NavItem {
                 <span class="notif-count">{{ alarmCount() }} new</span>
               </div>
               <mat-divider></mat-divider>
-              @for (alarm of alarms(); track alarm.id) {
+              @for (alarm of alarms(); track $index) {
                 <button mat-menu-item class="notif-item">
                   <mat-icon [class]="'notif-icon ' + alarm.type">{{ alarm.icon }}</mat-icon>
                   <div class="notif-content">
@@ -888,6 +890,7 @@ interface NavItem {
 export class LayoutComponent implements OnInit, OnDestroy {
   private authService = inject(AuthService);
   private alarmService = inject(AlarmService);
+  private toastService = inject(NotificationToastService);
   private router = inject(Router);
   private timeSubscription?: Subscription;
 
@@ -895,7 +898,9 @@ export class LayoutComponent implements OnInit, OnDestroy {
   pageTitle = signal('Home');
   currentDateTime = signal('');
   adminExpanded = signal(false);
-  notificationEnabled = signal(true);
+
+  // Connect notification toggle to NotificationToastService
+  notificationEnabled = this.toastService.enabled;
 
   // Connect alarm voice toggle to AlarmService
   alarmVoiceEnabled = this.alarmService.soundEnabled;
@@ -1065,6 +1070,10 @@ export class LayoutComponent implements OnInit, OnDestroy {
 
   toggleAdminMenu(): void {
     this.adminExpanded.update(v => !v);
+  }
+
+  toggleNotifications(): void {
+    this.toastService.toggleEnabled();
   }
 
   toggleAlarmSound(): void {

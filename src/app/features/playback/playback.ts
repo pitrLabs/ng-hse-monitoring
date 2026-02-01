@@ -1,20 +1,34 @@
-import { Component, signal } from '@angular/core';
+import { Component, signal, computed, inject, OnInit, OnDestroy, ViewChild, ElementRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import { Router, ActivatedRoute } from '@angular/router';
 import { MatIconModule } from '@angular/material/icon';
 import { MatButtonModule } from '@angular/material/button';
 import { MatCheckboxModule } from '@angular/material/checkbox';
 import { MatTabsModule } from '@angular/material/tabs';
 import { MatTooltipModule } from '@angular/material/tooltip';
+import { MatSelectModule } from '@angular/material/select';
+import { MatFormFieldModule } from '@angular/material/form-field';
+import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
+import { MatMenuModule } from '@angular/material/menu';
+import { RecordingService } from '../../core/services/recording.service';
+import { VideoSourceService, VideoSource } from '../../core/services/video-source.service';
+import {
+  Recording,
+  CalendarDay,
+  formatDuration,
+  formatFileSize,
+  getTriggerTypeLabel,
+  getTriggerTypeColor
+} from '../../core/models/recording.model';
 
-interface PlaybackFile {
-  id: number;
-  user: string;
-  device: string;
-  reason: string;
-  startTime: string;
-  duration: string;
-  fileName: string;
+interface CalendarDayDisplay {
+  day: number;
+  date: string;
+  currentMonth: boolean;
+  hasData: boolean;
+  count: number;
+  selected: boolean;
 }
 
 @Component({
@@ -27,17 +41,16 @@ interface PlaybackFile {
     MatButtonModule,
     MatCheckboxModule,
     MatTabsModule,
-    MatTooltipModule
+    MatTooltipModule,
+    MatSelectModule,
+    MatFormFieldModule,
+    MatProgressSpinnerModule,
+    MatMenuModule
   ],
   template: `
     <div class="playback-container">
       <!-- Left Panel -->
       <div class="left-panel glass-card-static">
-        <div class="search-box">
-          <mat-icon>search</mat-icon>
-          <input type="text" placeholder="Device number, User ID, File name..." [(ngModel)]="searchQuery" class="search-input">
-        </div>
-
         <!-- View Mode Tabs -->
         <div class="view-tabs">
           <button [class.active]="viewMode() === 'calendar'" (click)="setViewMode('calendar')">
@@ -49,46 +62,81 @@ interface PlaybackFile {
             List
           </button>
           <button [class.active]="viewMode() === 'window'" (click)="setViewMode('window')">
-            <mat-icon>grid_view</mat-icon>
-            Window
+            <mat-icon>play_circle</mat-icon>
+            Player
           </button>
         </div>
 
-        <!-- Device/User Tabs -->
-        <mat-tab-group class="list-tabs">
-          <mat-tab label="Device List">
-            <div class="tab-content">
-              <mat-checkbox [(ngModel)]="deviceOnlineOnly" color="primary" class="filter-checkbox">
-                Online Only
-              </mat-checkbox>
-              <div class="device-list">
-                @for (device of devices(); track device.id) {
-                  <div class="device-item" [class.selected]="selectedDevice()?.id === device.id" (click)="selectDevice(device)">
-                    <mat-icon class="device-icon" [class.online]="device.online">videocam</mat-icon>
-                    <span class="device-name">{{ device.name }}</span>
-                    <span class="status-dot" [class.online]="device.online"></span>
-                  </div>
-                }
-              </div>
+        <!-- Camera Filter -->
+        <div class="filter-section">
+          <label class="filter-label">Camera</label>
+          <mat-form-field appearance="outline" class="filter-field">
+            <mat-select [(ngModel)]="filterCameraId" (ngModelChange)="onCameraChange()" placeholder="All Cameras">
+              <mat-option [value]="null">All Cameras</mat-option>
+              @for (camera of cameras(); track camera.id) {
+                <mat-option [value]="camera.stream_name">{{ camera.name }}</mat-option>
+              }
+            </mat-select>
+          </mat-form-field>
+        </div>
+
+        <!-- Trigger Type Filter -->
+        <div class="filter-section">
+          <label class="filter-label">Recording Type</label>
+          <mat-form-field appearance="outline" class="filter-field">
+            <mat-select [(ngModel)]="filterTriggerType" (ngModelChange)="loadRecordingsForDate()" placeholder="All Types">
+              <mat-option [value]="null">All Types</mat-option>
+              <mat-option value="alarm">Alarm</mat-option>
+              <mat-option value="manual">Manual</mat-option>
+              <mat-option value="schedule">Scheduled</mat-option>
+            </mat-select>
+          </mat-form-field>
+        </div>
+
+        <!-- Selected Date -->
+        @if (selectedDate()) {
+          <div class="selected-date-info">
+            <mat-icon>event</mat-icon>
+            <span>{{ formatSelectedDate() }}</span>
+          </div>
+        }
+
+        <!-- Recording List (Left Panel) -->
+        @if (viewMode() !== 'calendar') {
+          <div class="recording-list">
+            <div class="list-header">
+              <span>Recordings</span>
+              <span class="count-badge">{{ recordings().length }}</span>
             </div>
-          </mat-tab>
-          <mat-tab label="User List">
-            <div class="tab-content">
-              <mat-checkbox [(ngModel)]="userOnlineOnly" color="primary" class="filter-checkbox">
-                Online Only
-              </mat-checkbox>
-              <div class="user-list">
-                @for (user of users(); track user.id) {
-                  <div class="user-item">
-                    <mat-icon class="user-icon" [class.online]="user.online">person</mat-icon>
-                    <span class="user-name">{{ user.name }}</span>
-                    <span class="status-dot" [class.online]="user.online"></span>
+            <div class="list-items">
+              @for (rec of recordings(); track rec.id) {
+                <div class="recording-item" [class.selected]="selectedRecording()?.id === rec.id" (click)="selectRecording(rec)">
+                  <mat-icon class="rec-icon">videocam</mat-icon>
+                  <div class="rec-info">
+                    <span class="rec-name">{{ rec.camera_name || 'Unknown Camera' }}</span>
+                    <span class="rec-time">{{ formatRecordingTime(rec.start_time) }}</span>
                   </div>
-                }
-              </div>
+                  <span class="trigger-badge" [class]="getTriggerColor(rec.trigger_type)">{{ getTriggerLabel(rec.trigger_type) }}</span>
+                </div>
+              } @empty {
+                <div class="empty-list">
+                  <mat-icon>folder_off</mat-icon>
+                  <span>No recordings</span>
+                </div>
+              }
             </div>
-          </mat-tab>
-        </mat-tab-group>
+          </div>
+        }
+
+        <!-- Sync Button -->
+        <button mat-stroked-button class="sync-btn" (click)="syncRecordings()" [disabled]="isSyncing()">
+          @if (isSyncing()) {
+            <mat-spinner diameter="16"></mat-spinner>
+          } @else {
+            <mat-icon>sync</mat-icon>
+          }
+          Sync from Alarms
+        </button>
       </div>
 
       <!-- Center Panel -->
@@ -112,97 +160,163 @@ interface PlaybackFile {
                   }
                 </div>
                 <div class="days-grid">
-                  @for (day of calendarDays(); track $index) {
+                  @for (day of calendarDays(); track day.date) {
                     <div class="day-cell" [class.other-month]="!day.currentMonth" [class.has-data]="day.hasData" [class.selected]="day.selected" (click)="selectDate(day)">
                       <span class="day-number">{{ day.day }}</span>
                       @if (day.hasData) {
-                        <span class="data-indicator"></span>
+                        <span class="data-indicator">{{ day.count }}</span>
                       }
                     </div>
                   }
+                </div>
+              </div>
+              <div class="calendar-legend">
+                <div class="legend-item">
+                  <span class="legend-dot has-data"></span>
+                  <span>Has Recordings</span>
                 </div>
               </div>
             </div>
           }
           @case ('list') {
             <div class="list-view glass-card-static">
-              <div class="list-header">
-                <span class="col-user">User</span>
-                <span class="col-device">Device</span>
-                <span class="col-reason">Reason</span>
+              <div class="list-title-row">
+                <h3 class="section-title">Recordings</h3>
+                <span class="table-count">{{ recordings().length }} files</span>
+              </div>
+              <div class="list-header-row">
+                <span class="col-camera">Camera</span>
+                <span class="col-trigger">Type</span>
                 <span class="col-start">Start Time</span>
                 <span class="col-duration">Duration</span>
-                <span class="col-file">File Name</span>
-                <span class="col-action">Operation</span>
+                <span class="col-size">Size</span>
+                <span class="col-action">Actions</span>
               </div>
               <div class="list-body">
-                @for (file of playbackFiles(); track file.id) {
-                  <div class="list-row">
-                    <span class="col-user">{{ file.user }}</span>
-                    <span class="col-device">{{ file.device }}</span>
-                    <span class="col-reason">
-                      <span class="reason-badge">{{ file.reason }}</span>
-                    </span>
-                    <span class="col-start">{{ file.startTime }}</span>
-                    <span class="col-duration">{{ file.duration }}</span>
-                    <span class="col-file">{{ file.fileName }}</span>
-                    <span class="col-action">
-                      <button mat-icon-button matTooltip="Play">
-                        <mat-icon>play_arrow</mat-icon>
-                      </button>
-                      <button mat-icon-button matTooltip="Download">
-                        <mat-icon>download</mat-icon>
-                      </button>
-                    </span>
+                @if (isLoading()) {
+                  <div class="loading-state">
+                    <mat-spinner diameter="32"></mat-spinner>
+                    <span>Loading recordings...</span>
                   </div>
+                } @else {
+                  @for (rec of recordings(); track rec.id) {
+                    <div class="list-row" [class.selected]="selectedRecording()?.id === rec.id" (click)="selectRecording(rec); setViewMode('window')">
+                      <span class="col-camera">{{ rec.camera_name || 'Unknown' }}</span>
+                      <span class="col-trigger">
+                        <span class="trigger-badge" [class]="getTriggerColor(rec.trigger_type)">{{ getTriggerLabel(rec.trigger_type) }}</span>
+                      </span>
+                      <span class="col-start">{{ formatRecordingTime(rec.start_time) }}</span>
+                      <span class="col-duration">{{ formatDuration(rec.duration) }}</span>
+                      <span class="col-size">{{ formatFileSize(rec.file_size) }}</span>
+                      <span class="col-action" (click)="$event.stopPropagation()">
+                        <button mat-icon-button matTooltip="Play" (click)="playRecording(rec)">
+                          <mat-icon>play_arrow</mat-icon>
+                        </button>
+                        @if (rec.alarm_id) {
+                          <button mat-icon-button matTooltip="View Alarm" (click)="viewAlarm(rec)">
+                            <mat-icon>warning</mat-icon>
+                          </button>
+                        }
+                      </span>
+                    </div>
+                  } @empty {
+                    <div class="empty-state">
+                      <mat-icon>folder_off</mat-icon>
+                      <span>No recordings found</span>
+                      <span class="hint">Select a date with recordings from the calendar</span>
+                    </div>
+                  }
                 }
               </div>
             </div>
           }
           @case ('window') {
             <div class="window-view glass-card-static">
-              <div class="video-player">
-                <div class="player-placeholder">
-                  <mat-icon>play_circle</mat-icon>
-                  <span>Select a file to playback</span>
+              @if (selectedRecording()) {
+                <div class="video-player">
+                  <video
+                    #videoPlayer
+                    [src]="videoUrl()"
+                    (loadedmetadata)="onVideoLoaded($event)"
+                    (timeupdate)="onTimeUpdate($event)"
+                    (ended)="onVideoEnded()"
+                    (error)="onVideoError($event)"
+                    playsinline
+                  ></video>
+
+                  @if (videoError()) {
+                    <div class="video-error">
+                      <mat-icon>error_outline</mat-icon>
+                      <span>{{ videoError() }}</span>
+                      <button mat-stroked-button (click)="retryVideo()">
+                        <mat-icon>refresh</mat-icon>
+                        Retry
+                      </button>
+                    </div>
+                  }
+
+                  <div class="player-info">
+                    <span class="camera-name">{{ selectedRecording()!.camera_name || 'Unknown Camera' }}</span>
+                    <span class="recording-time">{{ formatRecordingTime(selectedRecording()!.start_time) }}</span>
+                    @if (selectedRecording()!.alarm_id) {
+                      <span class="alarm-badge">
+                        <mat-icon>warning</mat-icon>
+                        Alarm Recording
+                      </span>
+                    }
+                  </div>
                 </div>
                 <div class="player-controls">
-                  <div class="timeline">
+                  <div class="timeline" (click)="seekTo($event)">
                     <div class="timeline-bar"></div>
                     <div class="timeline-progress" [style.width.%]="playProgress()"></div>
+                    <div class="timeline-handle" [style.left.%]="playProgress()"></div>
                   </div>
                   <div class="controls-row">
                     <div class="left-controls">
-                      <button mat-icon-button>
-                        <mat-icon>skip_previous</mat-icon>
+                      <button mat-icon-button (click)="skipBack()">
+                        <mat-icon>replay_10</mat-icon>
                       </button>
-                      <button mat-icon-button class="play-btn">
+                      <button mat-icon-button class="play-btn" (click)="togglePlay()">
                         <mat-icon>{{ isPlaying() ? 'pause' : 'play_arrow' }}</mat-icon>
                       </button>
-                      <button mat-icon-button>
-                        <mat-icon>skip_next</mat-icon>
+                      <button mat-icon-button (click)="skipForward()">
+                        <mat-icon>forward_10</mat-icon>
                       </button>
-                      <span class="time-display">{{ currentTime() }} / {{ totalTime() }}</span>
+                      <span class="time-display">{{ currentTimeStr() }} / {{ totalTimeStr() }}</span>
                     </div>
                     <div class="right-controls">
-                      <button mat-icon-button matTooltip="Speed">
+                      <button mat-icon-button matTooltip="Speed" [matMenuTriggerFor]="speedMenu">
                         <mat-icon>speed</mat-icon>
                       </button>
-                      <button mat-icon-button matTooltip="Volume">
-                        <mat-icon>volume_up</mat-icon>
+                      <button mat-icon-button matTooltip="Volume" (click)="toggleMute()">
+                        <mat-icon>{{ isMuted() ? 'volume_off' : 'volume_up' }}</mat-icon>
                       </button>
-                      <button mat-icon-button matTooltip="Fullscreen">
+                      <button mat-icon-button matTooltip="Fullscreen" (click)="toggleFullscreen()">
                         <mat-icon>fullscreen</mat-icon>
                       </button>
                     </div>
                   </div>
                 </div>
-              </div>
+              } @else {
+                <div class="video-placeholder">
+                  <mat-icon>play_circle</mat-icon>
+                  <span>Select a recording to play</span>
+                </div>
+              }
             </div>
           }
         }
       </div>
     </div>
+
+    <!-- Speed Menu (hidden, referenced by button) -->
+    <mat-menu #speedMenu="matMenu">
+      <button mat-menu-item (click)="setPlaybackRate(0.5)">0.5x</button>
+      <button mat-menu-item (click)="setPlaybackRate(1)">1x</button>
+      <button mat-menu-item (click)="setPlaybackRate(1.5)">1.5x</button>
+      <button mat-menu-item (click)="setPlaybackRate(2)">2x</button>
+    </mat-menu>
   `,
   styles: [`
     .playback-container {
@@ -217,38 +331,8 @@ interface PlaybackFile {
       display: flex;
       flex-direction: column;
       padding: 16px;
-      gap: 12px;
+      gap: 16px;
       overflow: hidden;
-    }
-
-    .search-box {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 8px 12px;
-      background: var(--glass-bg);
-      border: 1px solid var(--glass-border);
-      border-radius: var(--radius-sm);
-
-      mat-icon {
-        font-size: 20px;
-        width: 20px;
-        height: 20px;
-        color: var(--text-tertiary);
-      }
-
-      .search-input {
-        flex: 1;
-        background: transparent;
-        border: none;
-        outline: none;
-        color: var(--text-primary);
-        font-size: 13px;
-
-        &::placeholder {
-          color: var(--text-muted);
-        }
-      }
     }
 
     .view-tabs {
@@ -290,45 +374,97 @@ interface PlaybackFile {
       }
     }
 
-    .list-tabs {
+    .filter-section {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .filter-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .filter-field {
+      width: 100%;
+
+      ::ng-deep .mat-mdc-form-field-subscript-wrapper {
+        display: none;
+      }
+
+      ::ng-deep .mat-mdc-text-field-wrapper {
+        padding: 0 8px;
+      }
+
+      ::ng-deep .mat-mdc-form-field-infix {
+        padding: 8px 0;
+        min-height: 36px;
+      }
+    }
+
+    .selected-date-info {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 12px;
+      background: rgba(0, 212, 255, 0.1);
+      border: 1px solid rgba(0, 212, 255, 0.3);
+      border-radius: var(--radius-sm);
+      color: var(--accent-primary);
+      font-size: 13px;
+      font-weight: 500;
+
+      mat-icon {
+        font-size: 18px;
+        width: 18px;
+        height: 18px;
+      }
+    }
+
+    .recording-list {
       flex: 1;
       display: flex;
       flex-direction: column;
       overflow: hidden;
-
-      ::ng-deep .mat-mdc-tab-body-wrapper {
-        flex: 1;
-      }
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius-sm);
     }
 
-    .tab-content {
-      height: 100%;
+    .list-header {
       display: flex;
-      flex-direction: column;
-      padding: 12px 0;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 12px;
+      background: var(--glass-bg);
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-secondary);
     }
 
-    .filter-checkbox {
-      margin-bottom: 8px;
-
-      ::ng-deep .mat-mdc-checkbox-label {
-        font-size: 12px;
-        color: var(--text-secondary);
-      }
+    .count-badge {
+      padding: 2px 8px;
+      background: var(--accent-primary);
+      color: white;
+      border-radius: 10px;
+      font-size: 10px;
     }
 
-    .device-list, .user-list {
+    .list-items {
       flex: 1;
       overflow-y: auto;
     }
 
-    .device-item, .user-item {
+    .recording-item {
       display: flex;
       align-items: center;
-      gap: 8px;
-      padding: 8px;
-      border-radius: var(--radius-sm);
+      gap: 10px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--glass-border);
       cursor: pointer;
+      transition: background 0.15s;
 
       &:hover {
         background: var(--glass-bg);
@@ -339,31 +475,76 @@ interface PlaybackFile {
       }
     }
 
-    .device-icon, .user-icon {
-      font-size: 16px;
-      width: 16px;
-      height: 16px;
+    .rec-icon {
+      font-size: 18px;
+      width: 18px;
+      height: 18px;
+      color: var(--text-tertiary);
+    }
+
+    .rec-info {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+    }
+
+    .rec-name {
+      font-size: 12px;
+      color: var(--text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .rec-time {
+      font-size: 10px;
+      color: var(--text-tertiary);
+    }
+
+    .trigger-badge {
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 9px;
+      font-weight: 600;
+      text-transform: uppercase;
+
+      &.error { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
+      &.info { background: rgba(59, 130, 246, 0.2); color: #3b82f6; }
+      &.success { background: rgba(34, 197, 94, 0.2); color: #22c55e; }
+    }
+
+    .empty-list {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      padding: 30px 20px;
       color: var(--text-tertiary);
 
-      &.online {
-        color: var(--success);
+      mat-icon {
+        font-size: 32px;
+        width: 32px;
+        height: 32px;
+        opacity: 0.5;
+      }
+
+      span {
+        font-size: 12px;
       }
     }
 
-    .device-name, .user-name {
-      flex: 1;
-      font-size: 12px;
-      color: var(--text-secondary);
-    }
+    .sync-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
 
-    .status-dot {
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
-      background: var(--text-muted);
-
-      &.online {
-        background: var(--success);
+      mat-icon {
+        font-size: 18px;
+        width: 18px;
+        height: 18px;
       }
     }
 
@@ -386,7 +567,7 @@ interface PlaybackFile {
         font-size: 18px;
         font-weight: 600;
         color: var(--text-primary);
-        min-width: 150px;
+        min-width: 180px;
         text-align: center;
       }
     }
@@ -425,6 +606,7 @@ interface PlaybackFile {
       flex-direction: column;
       align-items: center;
       justify-content: center;
+      gap: 4px;
       background: var(--glass-bg);
       border-radius: var(--radius-sm);
       cursor: pointer;
@@ -441,12 +623,13 @@ interface PlaybackFile {
 
       &.has-data {
         border: 1px solid var(--accent-primary);
+        background: rgba(0, 212, 255, 0.05);
       }
 
       &.selected {
         background: var(--accent-primary);
 
-        .day-number {
+        .day-number, .data-indicator {
           color: white;
         }
       }
@@ -457,12 +640,36 @@ interface PlaybackFile {
       }
 
       .data-indicator {
-        width: 6px;
-        height: 6px;
-        border-radius: 50%;
+        font-size: 10px;
+        color: var(--accent-primary);
+        font-weight: 600;
+      }
+    }
+
+    .calendar-legend {
+      display: flex;
+      justify-content: center;
+      gap: 20px;
+      padding-top: 16px;
+      border-top: 1px solid var(--glass-border);
+      margin-top: 16px;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: var(--text-secondary);
+    }
+
+    .legend-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 3px;
+
+      &.has-data {
         background: var(--accent-primary);
-        position: absolute;
-        bottom: 8px;
       }
     }
 
@@ -473,13 +680,36 @@ interface PlaybackFile {
       flex-direction: column;
     }
 
-    .list-header {
+    .list-title-row {
       display: flex;
+      justify-content: space-between;
+      align-items: center;
       padding: 12px 16px;
-      background: var(--glass-bg);
+      border-bottom: 1px solid var(--glass-border);
+    }
+
+    .section-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin: 0;
+    }
+
+    .table-count {
       font-size: 12px;
+      color: var(--text-tertiary);
+    }
+
+    .list-header-row {
+      display: flex;
+      align-items: center;
+      padding: 10px 16px;
+      background: var(--glass-bg);
+      font-size: 11px;
       font-weight: 600;
       color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
     }
 
     .list-body {
@@ -492,32 +722,45 @@ interface PlaybackFile {
       align-items: center;
       padding: 12px 16px;
       border-bottom: 1px solid var(--glass-border);
+      cursor: pointer;
+      transition: background 0.15s;
 
       &:hover {
         background: var(--glass-bg);
       }
+
+      &.selected {
+        background: rgba(0, 212, 255, 0.1);
+      }
     }
 
-    .col-user { width: 100px; }
-    .col-device { width: 120px; }
-    .col-reason { width: 100px; }
-    .col-start { width: 150px; }
-    .col-duration { width: 80px; }
-    .col-file { flex: 1; }
-    .col-action { width: 80px; }
+    .col-camera { width: 200px; font-size: 12px; color: var(--text-primary); }
+    .col-trigger { width: 100px; }
+    .col-start { width: 160px; font-size: 12px; color: var(--text-primary); }
+    .col-duration { width: 80px; font-size: 12px; color: var(--text-secondary); }
+    .col-size { width: 80px; font-size: 12px; color: var(--text-secondary); }
+    .col-action { flex: 1; display: flex; justify-content: flex-end; gap: 4px; }
 
-    .col-user, .col-device, .col-start, .col-duration, .col-file {
-      font-size: 12px;
-      color: var(--text-primary);
-    }
+    .loading-state, .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      padding: 60px 20px;
+      color: var(--text-tertiary);
 
-    .reason-badge {
-      display: inline-block;
-      padding: 2px 8px;
-      background: rgba(0, 212, 255, 0.15);
-      color: var(--accent-primary);
-      border-radius: 4px;
-      font-size: 11px;
+      mat-icon {
+        font-size: 48px;
+        width: 48px;
+        height: 48px;
+        opacity: 0.5;
+      }
+
+      .hint {
+        font-size: 12px;
+        opacity: 0.7;
+      }
     }
 
     // Window View
@@ -529,11 +772,81 @@ interface PlaybackFile {
 
     .video-player {
       flex: 1;
+      position: relative;
+      background: #0a0b0f;
       display: flex;
-      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+
+      video {
+        max-width: 100%;
+        max-height: 100%;
+      }
     }
 
-    .player-placeholder {
+    .video-error {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      background: rgba(0, 0, 0, 0.85);
+      color: var(--error);
+
+      mat-icon {
+        font-size: 48px;
+        width: 48px;
+        height: 48px;
+      }
+    }
+
+    .player-info {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .camera-name {
+      padding: 4px 10px;
+      background: rgba(0, 0, 0, 0.7);
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 600;
+      color: white;
+    }
+
+    .recording-time {
+      padding: 4px 10px;
+      background: rgba(0, 0, 0, 0.7);
+      border-radius: 4px;
+      font-size: 11px;
+      color: rgba(255, 255, 255, 0.7);
+    }
+
+    .alarm-badge {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 10px;
+      background: rgba(239, 68, 68, 0.9);
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 600;
+      color: white;
+
+      mat-icon {
+        font-size: 12px;
+        width: 12px;
+        height: 12px;
+      }
+    }
+
+    .video-placeholder {
       flex: 1;
       display: flex;
       flex-direction: column;
@@ -556,11 +869,12 @@ interface PlaybackFile {
     }
 
     .timeline {
-      height: 4px;
+      height: 6px;
       background: var(--glass-border);
-      border-radius: 2px;
+      border-radius: 3px;
       position: relative;
       margin-bottom: 12px;
+      cursor: pointer;
     }
 
     .timeline-bar {
@@ -574,7 +888,18 @@ interface PlaybackFile {
       top: 0;
       bottom: 0;
       background: var(--accent-gradient);
-      border-radius: 2px;
+      border-radius: 3px;
+    }
+
+    .timeline-handle {
+      position: absolute;
+      top: 50%;
+      width: 14px;
+      height: 14px;
+      background: var(--accent-primary);
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
     }
 
     .controls-row {
@@ -604,53 +929,63 @@ interface PlaybackFile {
       font-size: 12px;
       color: var(--text-secondary);
       margin-left: 12px;
+      font-variant-numeric: tabular-nums;
     }
 
     @media (max-width: 900px) {
       .playback-container {
         grid-template-columns: 1fr;
-        grid-template-rows: 250px 1fr;
+        grid-template-rows: auto 1fr;
+      }
+
+      .left-panel {
+        max-height: 200px;
+      }
+
+      .recording-list {
+        display: none;
       }
     }
   `]
 })
-export class PlaybackComponent {
-  searchQuery = '';
-  deviceOnlineOnly = false;
-  userOnlineOnly = false;
+export class PlaybackComponent implements OnInit, OnDestroy {
+  @ViewChild('videoPlayer') videoPlayer?: ElementRef<HTMLVideoElement>;
+
+  private router = inject(Router);
+  private route = inject(ActivatedRoute);
+  private recordingService = inject(RecordingService);
+  private videoSourceService = inject(VideoSourceService);
+
   weekDays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
+  // Filter state
+  filterCameraId: string | null = null;
+  filterTriggerType: string | null = null;
+
+  // Signals
   viewMode = signal<'calendar' | 'list' | 'window'>('calendar');
-  selectedDevice = signal<any>(null);
   currentMonth = signal(new Date());
-  playProgress = signal(0);
+  selectedDate = signal<string | null>(null);
+  cameras = signal<VideoSource[]>([]);
+  isSyncing = signal(false);
+
+  // From service
+  recordings = this.recordingService.recordings;
+  calendarData = this.recordingService.calendarData;
+  isLoading = this.recordingService.isLoading;
+  selectedRecording = this.recordingService.selectedRecording;
+
+  // Video player state
+  videoUrl = signal<string>('');
+  videoError = signal<string | null>(null);
   isPlaying = signal(false);
-  currentTime = signal('00:00');
-  totalTime = signal('00:00');
+  isMuted = signal(false);
+  playProgress = signal(0);
+  currentTimeStr = signal('00:00');
+  totalTimeStr = signal('00:00');
 
-  devices = signal([
-    { id: 1, name: 'Camera 01', online: true },
-    { id: 2, name: 'Camera 02', online: true },
-    { id: 3, name: 'Camera 03', online: false },
-    { id: 4, name: 'Camera 04', online: true }
-  ]);
-
-  users = signal([
-    { id: 1, name: 'Admin', online: true },
-    { id: 2, name: 'Operator 1', online: true }
-  ]);
-
-  playbackFiles = signal<PlaybackFile[]>([
-    { id: 1, user: 'Admin', device: 'Camera 01', reason: 'Manual', startTime: '2024-01-21 10:00', duration: '05:30', fileName: 'REC_001.mp4' },
-    { id: 2, user: 'Admin', device: 'Camera 02', reason: 'Motion', startTime: '2024-01-21 11:30', duration: '02:15', fileName: 'REC_002.mp4' },
-    { id: 3, user: 'Operator', device: 'Camera 01', reason: 'Alarm', startTime: '2024-01-21 14:00', duration: '10:00', fileName: 'REC_003.mp4' }
-  ]);
-
-  currentMonthYear(): string {
-    return this.currentMonth().toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-  }
-
-  calendarDays(): { day: number; currentMonth: boolean; hasData: boolean; selected: boolean }[] {
+  // Computed calendar days
+  calendarDays = computed<CalendarDayDisplay[]>(() => {
     const date = this.currentMonth();
     const year = date.getFullYear();
     const month = date.getMonth();
@@ -658,46 +993,314 @@ export class PlaybackComponent {
     const daysInMonth = new Date(year, month + 1, 0).getDate();
     const daysInPrevMonth = new Date(year, month, 0).getDate();
 
-    const days: { day: number; currentMonth: boolean; hasData: boolean; selected: boolean }[] = [];
+    const calData = this.calendarData();
+    const calDataMap = new Map<string, number>();
+    calData.forEach(cd => calDataMap.set(cd.date, cd.count));
+
+    const selectedDateStr = this.selectedDate();
+
+    const days: CalendarDayDisplay[] = [];
 
     // Previous month days
     for (let i = firstDay - 1; i >= 0; i--) {
-      days.push({ day: daysInPrevMonth - i, currentMonth: false, hasData: false, selected: false });
+      const d = daysInPrevMonth - i;
+      const prevMonth = month === 0 ? 11 : month - 1;
+      const prevYear = month === 0 ? year - 1 : year;
+      const dateStr = `${prevYear}-${String(prevMonth + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      days.push({ day: d, date: dateStr, currentMonth: false, hasData: false, count: 0, selected: false });
     }
 
     // Current month days
     for (let i = 1; i <= daysInMonth; i++) {
-      days.push({ day: i, currentMonth: true, hasData: Math.random() > 0.7, selected: false });
+      const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(i).padStart(2, '0')}`;
+      const count = calDataMap.get(dateStr) || 0;
+      days.push({
+        day: i,
+        date: dateStr,
+        currentMonth: true,
+        hasData: count > 0,
+        count,
+        selected: dateStr === selectedDateStr
+      });
     }
 
     // Next month days
     const remaining = 42 - days.length;
     for (let i = 1; i <= remaining; i++) {
-      days.push({ day: i, currentMonth: false, hasData: false, selected: false });
+      const nextMonth = month === 11 ? 0 : month + 1;
+      const nextYear = month === 11 ? year + 1 : year;
+      const dateStr = `${nextYear}-${String(nextMonth + 1).padStart(2, '0')}-${String(i).padStart(2, '0')}`;
+      days.push({ day: i, date: dateStr, currentMonth: false, hasData: false, count: 0, selected: false });
     }
 
     return days;
+  });
+
+  ngOnInit(): void {
+    // Load cameras
+    this.videoSourceService.loadVideoSources().subscribe(cameras => {
+      this.cameras.set(cameras);
+    });
+
+    // Load calendar for current month
+    this.loadCalendar();
+
+    // Check for alarm_id query param
+    this.route.queryParams.subscribe(params => {
+      const alarmId = params['alarm_id'];
+      if (alarmId) {
+        this.loadRecordingsForAlarm(alarmId);
+      }
+    });
+  }
+
+  ngOnDestroy(): void {
+    // Cleanup
+  }
+
+  currentMonthYear(): string {
+    return this.currentMonth().toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
   }
 
   setViewMode(mode: 'calendar' | 'list' | 'window'): void {
     this.viewMode.set(mode);
   }
 
-  selectDevice(device: any): void {
-    this.selectedDevice.set(device);
-  }
-
-  selectDate(day: any): void {
-    // Handle date selection
-  }
-
   prevMonth(): void {
     const date = this.currentMonth();
     this.currentMonth.set(new Date(date.getFullYear(), date.getMonth() - 1, 1));
+    this.loadCalendar();
   }
 
   nextMonth(): void {
     const date = this.currentMonth();
     this.currentMonth.set(new Date(date.getFullYear(), date.getMonth() + 1, 1));
+    this.loadCalendar();
+  }
+
+  loadCalendar(): void {
+    const date = this.currentMonth();
+    this.recordingService.loadCalendar(date.getFullYear(), date.getMonth() + 1, this.filterCameraId || undefined).subscribe();
+  }
+
+  onCameraChange(): void {
+    this.loadCalendar();
+    if (this.selectedDate()) {
+      this.loadRecordingsForDate();
+    }
+  }
+
+  selectDate(day: CalendarDayDisplay): void {
+    if (!day.currentMonth) return;
+
+    this.selectedDate.set(day.date);
+    this.loadRecordingsForDate();
+    this.setViewMode('list');
+  }
+
+  loadRecordingsForDate(): void {
+    const date = this.selectedDate();
+    if (!date) return;
+
+    this.recordingService.loadRecordingsByDate(date, this.filterCameraId || undefined).subscribe();
+  }
+
+  loadRecordingsForAlarm(alarmId: string): void {
+    this.recordingService.getRecordingsByAlarm(alarmId).subscribe(recordings => {
+      if (recordings.length > 0) {
+        this.selectRecording(recordings[0]);
+        this.setViewMode('window');
+      }
+    });
+  }
+
+  selectRecording(recording: Recording): void {
+    this.recordingService.selectRecording(recording);
+    this.loadVideoUrl(recording);
+  }
+
+  loadVideoUrl(recording: Recording): void {
+    this.videoError.set(null);
+    this.recordingService.getVideoUrl(recording.id).subscribe({
+      next: (response) => {
+        this.videoUrl.set(response.video_url);
+      },
+      error: (err) => {
+        console.error('Failed to get video URL:', err);
+        this.videoError.set('Failed to load video');
+      }
+    });
+  }
+
+  playRecording(recording: Recording): void {
+    this.selectRecording(recording);
+    this.setViewMode('window');
+  }
+
+  // Video player methods
+  onVideoLoaded(event: Event): void {
+    const video = this.videoPlayer?.nativeElement;
+    if (video) {
+      this.totalTimeStr.set(this.formatTime(video.duration));
+      video.play().catch(() => {
+        // Autoplay blocked
+      });
+    }
+  }
+
+  onTimeUpdate(event: Event): void {
+    const video = this.videoPlayer?.nativeElement;
+    if (video) {
+      this.playProgress.set((video.currentTime / video.duration) * 100);
+      this.currentTimeStr.set(this.formatTime(video.currentTime));
+      this.isPlaying.set(!video.paused);
+    }
+  }
+
+  onVideoEnded(): void {
+    this.isPlaying.set(false);
+  }
+
+  onVideoError(event: Event): void {
+    this.videoError.set('Failed to play video');
+    this.isPlaying.set(false);
+  }
+
+  togglePlay(): void {
+    const video = this.videoPlayer?.nativeElement;
+    if (video) {
+      if (video.paused) {
+        video.play();
+      } else {
+        video.pause();
+      }
+      this.isPlaying.set(!video.paused);
+    }
+  }
+
+  toggleMute(): void {
+    const video = this.videoPlayer?.nativeElement;
+    if (video) {
+      video.muted = !video.muted;
+      this.isMuted.set(video.muted);
+    }
+  }
+
+  skipBack(): void {
+    const video = this.videoPlayer?.nativeElement;
+    if (video) {
+      video.currentTime = Math.max(0, video.currentTime - 10);
+    }
+  }
+
+  skipForward(): void {
+    const video = this.videoPlayer?.nativeElement;
+    if (video) {
+      video.currentTime = Math.min(video.duration, video.currentTime + 10);
+    }
+  }
+
+  seekTo(event: MouseEvent): void {
+    const video = this.videoPlayer?.nativeElement;
+    const timeline = event.currentTarget as HTMLElement;
+    if (video && timeline) {
+      const rect = timeline.getBoundingClientRect();
+      const percent = (event.clientX - rect.left) / rect.width;
+      video.currentTime = video.duration * percent;
+    }
+  }
+
+  setPlaybackRate(rate: number): void {
+    const video = this.videoPlayer?.nativeElement;
+    if (video) {
+      video.playbackRate = rate;
+    }
+  }
+
+  toggleFullscreen(): void {
+    const container = this.videoPlayer?.nativeElement?.parentElement;
+    if (container) {
+      if (document.fullscreenElement) {
+        document.exitFullscreen();
+      } else {
+        container.requestFullscreen();
+      }
+    }
+  }
+
+  retryVideo(): void {
+    const recording = this.selectedRecording();
+    if (recording) {
+      this.loadVideoUrl(recording);
+    }
+  }
+
+  // Navigation
+  viewAlarm(recording: Recording): void {
+    if (recording.alarm_id) {
+      this.router.navigate(['/event'], { queryParams: { alarm_id: recording.alarm_id } });
+    }
+  }
+
+  // Sync
+  syncRecordings(): void {
+    this.isSyncing.set(true);
+    this.recordingService.syncFromAlarms().subscribe({
+      next: () => {
+        this.isSyncing.set(false);
+        this.loadCalendar();
+        if (this.selectedDate()) {
+          this.loadRecordingsForDate();
+        }
+      },
+      error: () => {
+        this.isSyncing.set(false);
+      }
+    });
+  }
+
+  // Formatters
+  formatSelectedDate(): string {
+    const date = this.selectedDate();
+    if (!date) return '';
+    return new Date(date).toLocaleDateString('en-US', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    });
+  }
+
+  formatRecordingTime(dateStr: string): string {
+    const date = new Date(dateStr);
+    return date.toLocaleString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  }
+
+  formatTime(seconds: number): string {
+    if (!seconds || isNaN(seconds)) return '00:00';
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  }
+
+  formatDuration(seconds: number | undefined): string {
+    return formatDuration(seconds);
+  }
+
+  formatFileSize(bytes: number | undefined): string {
+    return formatFileSize(bytes);
+  }
+
+  getTriggerLabel(type: string): string {
+    return getTriggerTypeLabel(type);
+  }
+
+  getTriggerColor(type: string): string {
+    return getTriggerTypeColor(type);
   }
 }

@@ -1,7 +1,7 @@
 import { Injectable, signal, computed } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Router } from '@angular/router';
-import { Observable, tap, catchError, throwError } from 'rxjs';
+import { Observable, tap, catchError, throwError, Subject } from 'rxjs';
 import { environment } from '../../../environments/environment';
 import { User, LoginResponse, UserUpdate } from '../models/user.model';
 
@@ -11,6 +11,10 @@ import { User, LoginResponse, UserUpdate } from '../models/user.model';
 export class AuthService {
   private readonly apiUrl = environment.apiUrl;
   private readonly TOKEN_KEY = 'hse_access_token';
+
+  // Event emitter for logout - other services can subscribe to this
+  private logoutSubject = new Subject<void>();
+  readonly onLogout$ = this.logoutSubject.asObservable();
 
   private currentUserSignal = signal<User | null>(null);
   private isLoadingSignal = signal(false);
@@ -95,6 +99,9 @@ export class AuthService {
   }
 
   logout(): void {
+    // Emit logout event so other services can cleanup (e.g., disconnect WebSocket)
+    this.logoutSubject.next();
+
     this.removeToken();
     this.currentUserSignal.set(null);
     this.router.navigate(['/login']);

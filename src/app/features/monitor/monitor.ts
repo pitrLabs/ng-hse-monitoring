@@ -1,4 +1,4 @@
-import { Component, signal, OnInit, computed } from '@angular/core';
+import { Component, signal, OnInit, computed, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MatIconModule } from '@angular/material/icon';
@@ -9,12 +9,17 @@ import { MatCheckboxModule } from '@angular/material/checkbox';
 import { MatDialogModule } from '@angular/material/dialog';
 import { MatTabsModule } from '@angular/material/tabs';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
+import { MatInputModule } from '@angular/material/input';
+import { MatFormFieldModule } from '@angular/material/form-field';
 import { VideoSourceService, VideoSource } from '../../core/services/video-source.service';
 import { VideoPlayerComponent } from '../../shared/components/video-player';
+import { CameraGroupsService } from '../../core/services/camera-groups.service';
+import { AuthService } from '../../core/services/auth.service';
 
 interface CameraGroup {
   id: string;
-  name: string;
+  name: string;          // Original name (for grouping)
+  displayName: string;   // Custom display name (can be renamed)
   expanded: boolean;
   cameras: VideoSource[];
 }
@@ -33,6 +38,8 @@ interface CameraGroup {
     MatDialogModule,
     MatTabsModule,
     MatProgressSpinnerModule,
+    MatInputModule,
+    MatFormFieldModule,
     VideoPlayerComponent
   ],
   template: `
@@ -87,8 +94,13 @@ interface CameraGroup {
                   <div class="node-header" (click)="toggleGroup(group)">
                     <mat-icon class="expand-icon" [class.expanded]="group.expanded">chevron_right</mat-icon>
                     <mat-icon class="folder-icon">folder</mat-icon>
-                    <span class="node-name">{{ group.name }}</span>
+                    <span class="node-name">{{ group.displayName }}</span>
                     <span class="node-count">({{ group.cameras.length }})</span>
+                    @if (canRenameGroups()) {
+                      <button mat-icon-button class="rename-btn" matTooltip="Rename folder" (click)="openRenameDialog(group); $event.stopPropagation()">
+                        <mat-icon>edit</mat-icon>
+                      </button>
+                    }
                   </div>
                   @if (group.expanded) {
                     <div class="node-children">
@@ -199,6 +211,40 @@ interface CameraGroup {
           }
         </div>
       </div>
+
+      <!-- Rename Dialog -->
+      @if (renameDialogOpen()) {
+        <div class="dialog-overlay" (click)="closeRenameDialog()">
+          <div class="rename-dialog glass-card-static" (click)="$event.stopPropagation()">
+            <div class="dialog-header">
+              <h3>Rename Folder</h3>
+              <button mat-icon-button (click)="closeRenameDialog()">
+                <mat-icon>close</mat-icon>
+              </button>
+            </div>
+            <div class="dialog-body">
+              <div class="current-name">
+                <label>Original Name</label>
+                <span>{{ renameTarget()?.name }}</span>
+              </div>
+              <mat-form-field appearance="outline" class="full-width">
+                <mat-label>Display Name</mat-label>
+                <input matInput [(ngModel)]="newDisplayName" placeholder="Enter new display name">
+              </mat-form-field>
+            </div>
+            <div class="dialog-actions">
+              <button mat-button (click)="closeRenameDialog()">Cancel</button>
+              <button mat-flat-button color="primary" (click)="saveGroupRename()" [disabled]="!newDisplayName || renaming()">
+                @if (renaming()) {
+                  <mat-spinner diameter="16"></mat-spinner>
+                } @else {
+                  Save
+                }
+              </button>
+            </div>
+          </div>
+        </div>
+      }
     </div>
   `,
   styles: [`
@@ -360,8 +406,10 @@ interface CameraGroup {
       font-size: 16px;
       width: 16px;
       height: 16px;
+      min-width: 16px;
       color: var(--text-tertiary);
       transition: transform 0.2s;
+      flex-shrink: 0;
 
       &.expanded {
         transform: rotate(90deg);
@@ -372,7 +420,9 @@ interface CameraGroup {
       font-size: 16px;
       width: 16px;
       height: 16px;
+      min-width: 16px;
       color: var(--warning);
+      flex-shrink: 0;
     }
 
     .node-name {
@@ -380,11 +430,16 @@ interface CameraGroup {
       font-size: 12px;
       font-weight: 500;
       color: var(--text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     .node-count {
       font-size: 11px;
       color: var(--text-tertiary);
+      flex-shrink: 0;
+      margin-right: 4px;
     }
 
     .node-children {
@@ -712,6 +767,95 @@ interface CameraGroup {
       color: var(--text-tertiary);
     }
 
+    .rename-btn {
+      width: 24px;
+      height: 24px;
+      min-width: 24px;
+      visibility: hidden;
+      opacity: 0;
+      transition: opacity 0.2s, visibility 0.2s;
+      margin-left: auto;
+      flex-shrink: 0;
+
+      mat-icon {
+        font-size: 14px;
+        width: 14px;
+        height: 14px;
+      }
+    }
+
+    .node-header:hover .rename-btn {
+      visibility: visible;
+      opacity: 1;
+    }
+
+    // Rename Dialog
+    .dialog-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.7);
+      z-index: 10000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .rename-dialog {
+      width: 400px;
+      max-width: 90vw;
+      padding: 0;
+      overflow: hidden;
+    }
+
+    .dialog-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--glass-border);
+
+      h3 {
+        margin: 0;
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--text-primary);
+      }
+    }
+
+    .dialog-body {
+      padding: 20px;
+
+      .current-name {
+        margin-bottom: 16px;
+
+        label {
+          display: block;
+          font-size: 12px;
+          color: var(--text-tertiary);
+          margin-bottom: 4px;
+        }
+
+        span {
+          font-size: 14px;
+          font-weight: 500;
+          color: var(--text-secondary);
+        }
+      }
+
+      .full-width {
+        width: 100%;
+      }
+    }
+
+    .dialog-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 12px;
+      padding: 16px 20px;
+      border-top: 1px solid var(--glass-border);
+      background: var(--glass-bg);
+    }
+
     @media (max-width: 900px) {
       .main-content {
         grid-template-columns: 1fr;
@@ -724,6 +868,9 @@ interface CameraGroup {
   `]
 })
 export class MonitorComponent implements OnInit {
+  private cameraGroupsService = inject(CameraGroupsService);
+  private authService = inject(AuthService);
+
   searchQuery = '';
   showActiveOnly = true;
   isFullscreen = false;
@@ -745,9 +892,20 @@ export class MonitorComponent implements OnInit {
     { index: 3, source: null }
   ]);
 
+  // Rename dialog state
+  renameDialogOpen = signal(false);
+  renameTarget = signal<CameraGroup | null>(null);
+  newDisplayName = '';
+  renaming = signal(false);
+
+  // Check if user can rename (superadmin or manager)
+  canRenameGroups = this.authService.isManager;
+
   constructor(private videoSourceService: VideoSourceService) {}
 
   ngOnInit() {
+    // Load camera groups from backend first
+    this.cameraGroupsService.loadGroups();
     this.loadVideoSources();
   }
 
@@ -787,22 +945,29 @@ export class MonitorComponent implements OnInit {
     // Convert to array and sort
     const groups: CameraGroup[] = [];
     groupMap.forEach((cameras, name) => {
+      // Get display name from service (custom name set by user)
+      const displayName = this.cameraGroupsService.getDisplayName(name);
       groups.push({
         id: name.toLowerCase(),
-        name: name,
+        name: name,  // Original name for grouping
+        displayName: displayName,  // Custom display name
         expanded: true,
         cameras: cameras.sort((a, b) => a.name.localeCompare(b.name))
       });
     });
 
-    // Sort groups alphabetically, but put "Other" at the end
+    // Sort groups alphabetically by display name, but put "Other" at the end
     groups.sort((a, b) => {
-      if (a.name === 'Other') return 1;
-      if (b.name === 'Other') return -1;
-      return a.name.localeCompare(b.name);
+      if (a.name === 'OTHER') return 1;
+      if (b.name === 'OTHER') return -1;
+      return a.displayName.localeCompare(b.displayName);
     });
 
     this.cameraGroups.set(groups);
+
+    // Sync group names to backend (creates any missing groups)
+    const groupNames = Array.from(groupMap.keys());
+    this.cameraGroupsService.syncGroups(groupNames);
   }
 
   toggleGroup(group: CameraGroup) {
@@ -1011,5 +1176,39 @@ export class MonitorComponent implements OnInit {
       pages.push(i);
     }
     return pages;
+  }
+
+  // Rename group methods
+  openRenameDialog(group: CameraGroup) {
+    this.renameTarget.set(group);
+    this.newDisplayName = group.displayName;
+    this.renameDialogOpen.set(true);
+  }
+
+  closeRenameDialog() {
+    this.renameDialogOpen.set(false);
+    this.renameTarget.set(null);
+    this.newDisplayName = '';
+  }
+
+  async saveGroupRename() {
+    const group = this.renameTarget();
+    if (!group || !this.newDisplayName) return;
+
+    this.renaming.set(true);
+    try {
+      await this.cameraGroupsService.renameGroup(group.name, this.newDisplayName);
+
+      // Update local state
+      this.cameraGroups.update(groups =>
+        groups.map(g => g.name === group.name ? { ...g, displayName: this.newDisplayName } : g)
+      );
+
+      this.closeRenameDialog();
+    } catch (error) {
+      console.error('Failed to rename group:', error);
+    } finally {
+      this.renaming.set(false);
+    }
   }
 }

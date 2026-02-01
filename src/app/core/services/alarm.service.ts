@@ -7,6 +7,7 @@ import {
   AlarmNotification,
   getAlarmNotificationType
 } from '../models/alarm.model';
+import { NotificationToastService } from './notification-toast.service';
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected';
 
@@ -15,12 +16,18 @@ export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected';
 })
 export class AlarmService implements OnDestroy {
   private http = inject(HttpClient);
+  private toastService = inject(NotificationToastService);
   private apiUrl = environment.apiUrl;
 
   // WebSocket
   private ws: WebSocket | null = null;
   private reconnectTimeout: any = null;
   private pingInterval: any = null;
+
+  // Audio for notifications
+  private audioContext: AudioContext | null = null;
+  private _soundEnabled = signal<boolean>(true);
+  readonly soundEnabled = this._soundEnabled.asReadonly();
 
   // Signals
   private _connectionStatus = signal<ConnectionStatus>('disconnected');
@@ -156,6 +163,12 @@ export class AlarmService implements OnDestroy {
   }
 
   private addNewAlarm(alarm: Alarm): void {
+    // Play notification sound
+    this.playNotificationSound();
+
+    // Show toast notification popup
+    this.toastService.showAlarmToast(alarm);
+
     // Add to alarms list
     this._alarms.update(alarms => [alarm, ...alarms]);
 
@@ -178,6 +191,51 @@ export class AlarmService implements OnDestroy {
         }
       };
     });
+  }
+
+  // ============ Sound Methods ============
+
+  toggleSound(): void {
+    this._soundEnabled.update(enabled => !enabled);
+  }
+
+  setSoundEnabled(enabled: boolean): void {
+    this._soundEnabled.set(enabled);
+  }
+
+  private playNotificationSound(): void {
+    if (!this._soundEnabled()) return;
+
+    try {
+      // Initialize AudioContext on first use (requires user interaction in some browsers)
+      if (!this.audioContext) {
+        this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      }
+
+      const ctx = this.audioContext;
+
+      // Create oscillator for alarm beep
+      const oscillator = ctx.createOscillator();
+      const gainNode = ctx.createGain();
+
+      oscillator.connect(gainNode);
+      gainNode.connect(ctx.destination);
+
+      // Alarm sound: two-tone beep (like emergency alert)
+      oscillator.frequency.setValueAtTime(880, ctx.currentTime); // A5
+      oscillator.frequency.setValueAtTime(660, ctx.currentTime + 0.15); // E5
+      oscillator.frequency.setValueAtTime(880, ctx.currentTime + 0.3); // A5
+
+      // Envelope
+      gainNode.gain.setValueAtTime(0.3, ctx.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.45);
+
+      oscillator.start(ctx.currentTime);
+      oscillator.stop(ctx.currentTime + 0.45);
+
+    } catch (error) {
+      console.warn('[AlarmService] Could not play notification sound:', error);
+    }
   }
 
   private alarmToNotification(alarm: Alarm): AlarmNotification {

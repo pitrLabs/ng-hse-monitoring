@@ -18,8 +18,7 @@ import { MatIconModule } from '@angular/material/icon';
         <h1 class="title">PTT - Push to Talk</h1>
         <div class="badge">Coming Soon</div>
         <p class="description">
-          Push-to-Talk functionality is currently under development.
-          This feature will enable real-time voice communication between team members.
+          Push-to-Talk feature coming soon. Real-time voice communication between team members.
         </p>
         <div class="features">
           <div class="feature-item">

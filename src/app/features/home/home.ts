@@ -1,4 +1,4 @@
-import { Component, signal, OnInit, inject, OnDestroy } from '@angular/core';
+import { Component, signal, OnInit, inject, OnDestroy, ViewChild } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterLink } from '@angular/router';
 import { MatIconModule } from '@angular/material/icon';
@@ -8,6 +8,8 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatDividerModule } from '@angular/material/divider';
 import { AlarmService } from '../../core/services/alarm.service';
 import { AlarmNotification, getAlarmImageUrl } from '../../core/models/alarm.model';
+import { LocationsService, CameraLocation } from '../../core/services/locations.service';
+import { LeafletMapComponent, MapMarker } from '../../shared/components/leaflet-map/leaflet-map';
 
 interface DeviceStatus {
   online: number;
@@ -35,7 +37,8 @@ interface DeviceClass {
     MatButtonModule,
     MatMenuModule,
     MatTooltipModule,
-    MatDividerModule
+    MatDividerModule,
+    LeafletMapComponent
   ],
   template: `
     <div class="home-container">
@@ -160,57 +163,39 @@ interface DeviceClass {
         <!-- Map Container -->
         <div class="map-container glass-card-static">
           <div class="map-toolbar-left">
-            <button mat-icon-button class="map-tool-btn" matTooltip="Zoom In">
+            <button mat-icon-button class="map-tool-btn" matTooltip="Zoom In" (click)="mapZoomIn()">
               <mat-icon>add</mat-icon>
             </button>
-            <button mat-icon-button class="map-tool-btn" matTooltip="Zoom Out">
+            <button mat-icon-button class="map-tool-btn" matTooltip="Zoom Out" (click)="mapZoomOut()">
               <mat-icon>remove</mat-icon>
             </button>
             <mat-divider></mat-divider>
-            <button mat-icon-button class="map-tool-btn" matTooltip="Grouping">
-              <mat-icon>workspaces</mat-icon>
+            <button mat-icon-button class="map-tool-btn" matTooltip="Sync Locations" (click)="syncLocations()">
+              <mat-icon>sync</mat-icon>
             </button>
-            <button mat-icon-button class="map-tool-btn" matTooltip="Classify">
-              <mat-icon>category</mat-icon>
+            <button mat-icon-button class="map-tool-btn" matTooltip="Fit All Markers" (click)="fitAllMarkers()">
+              <mat-icon>fit_screen</mat-icon>
             </button>
-            <button mat-icon-button class="map-tool-btn" matTooltip="Status">
-              <mat-icon>visibility</mat-icon>
-            </button>
-            <div class="auto-label">Auto-Google</div>
+            <div class="auto-label">{{ mapMarkers().length }} locations</div>
           </div>
 
           <div class="map-toolbar-right">
-            <button mat-button class="map-menu-btn" [matMenuTriggerFor]="mapToolsMenu">
-              <mat-icon>build</mat-icon>
-              Map Tools
-            </button>
-            <mat-menu #mapToolsMenu="matMenu">
-              <button mat-menu-item>
-                <mat-icon>straighten</mat-icon>
-                <span>Measure Distance</span>
-              </button>
-              <button mat-menu-item>
-                <mat-icon>square_foot</mat-icon>
-                <span>Measure Area</span>
-              </button>
-            </mat-menu>
-
             <button mat-button class="map-menu-btn" [matMenuTriggerFor]="mapTypeMenu">
               <mat-icon>layers</mat-icon>
               Map Type
             </button>
             <mat-menu #mapTypeMenu="matMenu">
-              <button mat-menu-item>
+              <button mat-menu-item (click)="setMapType('dark')">
+                <mat-icon>dark_mode</mat-icon>
+                <span>Dark</span>
+              </button>
+              <button mat-menu-item (click)="setMapType('standard')">
                 <mat-icon>map</mat-icon>
                 <span>Standard</span>
               </button>
-              <button mat-menu-item>
+              <button mat-menu-item (click)="setMapType('satellite')">
                 <mat-icon>satellite</mat-icon>
                 <span>Satellite</span>
-              </button>
-              <button mat-menu-item>
-                <mat-icon>terrain</mat-icon>
-                <span>Terrain</span>
               </button>
             </mat-menu>
           </div>
@@ -219,11 +204,14 @@ interface DeviceClass {
             <mat-icon>explore</mat-icon>
           </div>
 
-          <div class="map-placeholder">
-            <mat-icon>map</mat-icon>
-            <span>Map View</span>
-            <span class="map-hint">Interactive map will be displayed here</span>
-          </div>
+          <app-leaflet-map
+            #mapComponent
+            [markers]="mapMarkers()"
+            [tileLayer]="mapTileLayer()"
+            [center]="mapCenter"
+            [zoom]="10"
+            (markerClick)="onMarkerClick($event)"
+          ></app-leaflet-map>
         </div>
 
         <!-- Video Preview Panel -->
@@ -683,31 +671,10 @@ interface DeviceClass {
       }
     }
 
-    .map-placeholder {
+    app-leaflet-map {
       position: absolute;
       inset: 0;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 12px;
-      color: var(--text-tertiary);
-      background: linear-gradient(135deg, rgba(0, 212, 255, 0.05), rgba(124, 58, 237, 0.05));
-
-      mat-icon {
-        font-size: 64px;
-        width: 64px;
-        height: 64px;
-      }
-
-      span {
-        font-size: 14px;
-      }
-
-      .map-hint {
-        font-size: 12px;
-        opacity: 0.7;
-      }
+      z-index: 1;
     }
 
     // Video Panel
@@ -1012,7 +979,10 @@ interface DeviceClass {
   `]
 })
 export class HomeComponent implements OnInit, OnDestroy {
+  @ViewChild('mapComponent') mapComponent!: LeafletMapComponent;
+
   alarmService = inject(AlarmService);
+  locationsService = inject(LocationsService);
 
   deviceStatus = signal<DeviceStatus>({ online: 45, offline: 12 });
 
@@ -1034,10 +1004,70 @@ export class HomeComponent implements OnInit, OnDestroy {
 
   selectedNotification = signal<AlarmNotification | null>(null);
 
+  // Map related
+  mapMarkers = signal<MapMarker[]>([]);
+  mapTileLayer = signal<'dark' | 'standard' | 'satellite'>('dark');
+  mapCenter: [number, number] = [-6.2088, 106.8456]; // Jakarta default
+
   ngOnInit(): void {
     // Load initial alarms and stats
     this.alarmService.loadAlarms({ limit: 20 });
     this.alarmService.loadStats();
+
+    // Load camera locations
+    this.loadLocations();
+  }
+
+  async loadLocations(): Promise<void> {
+    const locations = await this.locationsService.loadLocations({ limit: 500 });
+    this.updateMapMarkers(locations);
+  }
+
+  private updateMapMarkers(locations: CameraLocation[]): void {
+    const markers: MapMarker[] = locations
+      .filter(loc => loc.latitude && loc.longitude)
+      .map(loc => ({
+        id: loc.id,
+        name: loc.name,
+        latitude: loc.latitude,
+        longitude: loc.longitude,
+        type: loc.location_type || loc.source,
+        isOnline: loc.is_active,
+        data: loc
+      }));
+    this.mapMarkers.set(markers);
+  }
+
+  mapZoomIn(): void {
+    this.mapComponent?.zoomIn();
+  }
+
+  mapZoomOut(): void {
+    this.mapComponent?.zoomOut();
+  }
+
+  fitAllMarkers(): void {
+    const markers = this.mapMarkers();
+    if (markers.length > 0 && this.mapComponent) {
+      const map = this.mapComponent.getMap();
+      if (map) {
+        const bounds = markers.map(m => [m.latitude, m.longitude] as [number, number]);
+        map.fitBounds(bounds, { padding: [50, 50] });
+      }
+    }
+  }
+
+  setMapType(type: 'dark' | 'standard' | 'satellite'): void {
+    this.mapTileLayer.set(type);
+  }
+
+  async syncLocations(): Promise<void> {
+    await this.locationsService.syncLocations('all');
+    await this.loadLocations();
+  }
+
+  onMarkerClick(marker: MapMarker): void {
+    console.log('Marker clicked:', marker);
   }
 
   ngOnDestroy(): void {

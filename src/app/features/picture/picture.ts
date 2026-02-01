@@ -1,22 +1,20 @@
-import { Component, signal } from '@angular/core';
+import { Component, inject, signal, computed, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MatIconModule } from '@angular/material/icon';
 import { MatButtonModule } from '@angular/material/button';
 import { MatCheckboxModule } from '@angular/material/checkbox';
-import { MatTabsModule } from '@angular/material/tabs';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatSelectModule } from '@angular/material/select';
 import { MatFormFieldModule } from '@angular/material/form-field';
-import { MatPaginatorModule } from '@angular/material/paginator';
+import { MatInputModule } from '@angular/material/input';
+import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
+import { AlarmService } from '../../core/services/alarm.service';
+import { Alarm, getAlarmImageUrl, getAlarmSeverity, AlarmSeverity } from '../../core/models/alarm.model';
 
-interface Picture {
-  id: number;
-  thumbnail: string;
-  device: string;
-  size: string;
-  reason: string;
-  date: string;
+interface AlarmPicture {
+  alarm: Alarm;
+  imageUrl: string;
   selected: boolean;
 }
 
@@ -29,140 +27,216 @@ interface Picture {
     MatIconModule,
     MatButtonModule,
     MatCheckboxModule,
-    MatTabsModule,
     MatTooltipModule,
     MatSelectModule,
     MatFormFieldModule,
-    MatPaginatorModule
+    MatInputModule,
+    MatProgressSpinnerModule
   ],
   template: `
     <div class="picture-container">
-      <!-- Left Panel -->
+      <!-- Left Panel - Filters -->
       <div class="left-panel glass-card-static">
-        <div class="search-box">
-          <mat-icon>search</mat-icon>
-          <input type="text" placeholder="Search device name/ID..." [(ngModel)]="searchQuery" class="search-input">
+        <h3 class="panel-title">
+          <mat-icon>filter_list</mat-icon>
+          Filters
+        </h3>
+
+        <div class="filter-section">
+          <label>Search</label>
+          <div class="search-box">
+            <mat-icon>search</mat-icon>
+            <input type="text" placeholder="Search camera or location..." [(ngModel)]="searchQuery">
+          </div>
         </div>
 
-        <mat-tab-group class="list-tabs">
-          <mat-tab label="Device List">
-            <div class="tab-content">
-              <mat-checkbox [(ngModel)]="deviceOnlineOnly" color="primary" class="filter-checkbox">
-                Online Only
-              </mat-checkbox>
-              <div class="device-list">
-                @for (device of filteredDevices(); track device.id) {
-                  <div class="device-item" [class.selected]="selectedDevice()?.id === device.id" (click)="selectDevice(device)">
-                    <mat-icon class="device-icon" [class.online]="device.online">videocam</mat-icon>
-                    <span class="device-name">{{ device.name }}</span>
-                    <span class="status-dot" [class.online]="device.online"></span>
-                  </div>
-                }
-              </div>
-            </div>
-          </mat-tab>
-          <mat-tab label="User List">
-            <div class="tab-content">
-              <mat-checkbox [(ngModel)]="userOnlineOnly" color="primary" class="filter-checkbox">
-                Online Only
-              </mat-checkbox>
-              <div class="user-list">
-                @for (user of users(); track user.id) {
-                  <div class="user-item">
-                    <mat-icon class="user-icon" [class.online]="user.online">person</mat-icon>
-                    <span class="user-name">{{ user.name }}</span>
-                    <span class="status-dot" [class.online]="user.online"></span>
-                  </div>
-                }
-              </div>
-            </div>
-          </mat-tab>
-        </mat-tab-group>
+        <div class="filter-section">
+          <label>Alarm Type</label>
+          <mat-form-field appearance="outline" class="full-width">
+            <mat-select [(ngModel)]="selectedType" (selectionChange)="applyFilters()">
+              <mat-option value="">All Types</mat-option>
+              @for (type of alarmTypes(); track type) {
+                <mat-option [value]="type">{{ type }}</mat-option>
+              }
+            </mat-select>
+          </mat-form-field>
+        </div>
+
+        <div class="filter-section">
+          <label>Camera</label>
+          <mat-form-field appearance="outline" class="full-width">
+            <mat-select [(ngModel)]="selectedCamera" (selectionChange)="applyFilters()">
+              <mat-option value="">All Cameras</mat-option>
+              @for (camera of cameras(); track camera) {
+                <mat-option [value]="camera">{{ camera }}</mat-option>
+              }
+            </mat-select>
+          </mat-form-field>
+        </div>
+
+        <div class="filter-section">
+          <label>Date Range</label>
+          <mat-form-field appearance="outline" class="full-width">
+            <input matInput type="date" [(ngModel)]="startDate" (change)="applyFilters()">
+          </mat-form-field>
+          <mat-form-field appearance="outline" class="full-width">
+            <input matInput type="date" [(ngModel)]="endDate" (change)="applyFilters()">
+          </mat-form-field>
+        </div>
+
+        <button mat-flat-button class="refresh-btn" (click)="loadAlarms()">
+          <mat-icon>refresh</mat-icon>
+          Refresh
+        </button>
+
+        <div class="stats-section">
+          <div class="stat-item">
+            <span class="stat-label">Total Images</span>
+            <span class="stat-value">{{ filteredPictures().length }}</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">Selected</span>
+            <span class="stat-value">{{ selectedCount() }}</span>
+          </div>
+        </div>
       </div>
 
-      <!-- Right Panel -->
+      <!-- Right Panel - Gallery -->
       <div class="right-panel">
-        <!-- Filter Bar -->
-        <div class="filter-bar glass-card-static">
-          <div class="filter-group">
-            <mat-form-field appearance="outline" class="filter-field">
-              <mat-label>Date Range</mat-label>
-              <input matInput placeholder="Select date range" [(ngModel)]="dateRange">
-            </mat-form-field>
-            <mat-form-field appearance="outline" class="filter-field">
-              <mat-label>Platform</mat-label>
-              <mat-select [(ngModel)]="platform">
-                <mat-option value="all">All</mat-option>
-                <mat-option value="mobile">Mobile</mat-option>
-                <mat-option value="fixed">Fixed Camera</mat-option>
-              </mat-select>
-            </mat-form-field>
+        <!-- Toolbar -->
+        <div class="toolbar glass-card-static">
+          <div class="toolbar-left">
+            <mat-checkbox [(ngModel)]="selectAll" (change)="toggleSelectAll()" color="primary">
+              Select All
+            </mat-checkbox>
+            <span class="result-count">{{ filteredPictures().length }} images found</span>
           </div>
-          <div class="filter-actions">
-            <button mat-button class="search-btn">
-              <mat-icon>search</mat-icon>
-              Search
+          <div class="toolbar-right">
+            <button mat-icon-button matTooltip="Grid view" [class.active]="viewMode === 'grid'" (click)="viewMode = 'grid'">
+              <mat-icon>grid_view</mat-icon>
             </button>
-            <button mat-button class="download-btn" [disabled]="!hasSelection()">
+            <button mat-icon-button matTooltip="List view" [class.active]="viewMode === 'list'" (click)="viewMode = 'list'">
+              <mat-icon>view_list</mat-icon>
+            </button>
+            <button mat-flat-button class="download-btn" [disabled]="selectedCount() === 0">
               <mat-icon>download</mat-icon>
-              Download
+              Download ({{ selectedCount() }})
             </button>
           </div>
         </div>
 
-        <!-- Picture Table -->
-        <div class="picture-table glass-card-static">
-          <div class="table-header">
-            <span class="col-check">
-              <mat-checkbox [(ngModel)]="selectAll" (change)="toggleSelectAll()" color="primary"></mat-checkbox>
-            </span>
-            <span class="col-picture">Picture</span>
-            <span class="col-device">Device</span>
-            <span class="col-size">Size</span>
-            <span class="col-reason">Reason</span>
-          </div>
-
-          <div class="table-body">
-            @for (pic of pictures(); track pic.id) {
-              <div class="table-row" (click)="togglePictureSelection(pic)">
-                <span class="col-check">
-                  <mat-checkbox [(ngModel)]="pic.selected" (click)="$event.stopPropagation()" color="primary"></mat-checkbox>
-                </span>
-                <span class="col-picture">
-                  <div class="thumbnail">
-                    <mat-icon>image</mat-icon>
+        <!-- Gallery Grid -->
+        <div class="gallery-container" [class.list-mode]="viewMode === 'list'">
+          @if (loading()) {
+            <div class="loading-state">
+              <mat-spinner diameter="40"></mat-spinner>
+              <span>Loading images...</span>
+            </div>
+          } @else if (filteredPictures().length === 0) {
+            <div class="empty-state">
+              <mat-icon>photo_library</mat-icon>
+              <span>No images found</span>
+              <p>Try adjusting your filters or wait for new alarms</p>
+            </div>
+          } @else {
+            @for (pic of paginatedPictures(); track pic.alarm.id) {
+              <div class="picture-card" [class.selected]="pic.selected" (click)="toggleSelection(pic)">
+                <div class="picture-checkbox" (click)="$event.stopPropagation()">
+                  <mat-checkbox [(ngModel)]="pic.selected" color="primary"></mat-checkbox>
+                </div>
+                <div class="picture-image" (click)="openViewer(pic); $event.stopPropagation()">
+                  <img [src]="pic.imageUrl" [alt]="pic.alarm.alarm_type" loading="lazy" (error)="onImageError($event)">
+                  <div class="picture-overlay">
+                    <mat-icon>zoom_in</mat-icon>
                   </div>
-                </span>
-                <span class="col-device">{{ pic.device }}</span>
-                <span class="col-size">{{ pic.size }}</span>
-                <span class="col-reason">
-                  <span class="reason-badge" [class]="getReasonClass(pic.reason)">{{ pic.reason }}</span>
-                </span>
+                </div>
+                <div class="picture-info">
+                  <div class="picture-header">
+                    <span class="severity-badge" [class]="getSeverityClass(pic.alarm.alarm_type)">
+                      {{ pic.alarm.alarm_type }}
+                    </span>
+                    <span class="picture-time">{{ formatTime(pic.alarm.alarm_time) }}</span>
+                  </div>
+                  <div class="picture-location">
+                    <mat-icon>videocam</mat-icon>
+                    {{ pic.alarm.camera_name || 'Unknown Camera' }}
+                  </div>
+                  @if (pic.alarm.confidence) {
+                    <div class="picture-confidence">
+                      Confidence: {{ (pic.alarm.confidence * 100).toFixed(0) }}%
+                    </div>
+                  }
+                </div>
               </div>
             }
+          }
+        </div>
 
-            @if (pictures().length === 0) {
-              <div class="empty-state">
-                <mat-icon>photo_library</mat-icon>
-                <span>No pictures found</span>
-              </div>
-            }
+        <!-- Pagination -->
+        @if (totalPages() > 1) {
+          <div class="pagination glass-card-static">
+            <button mat-icon-button [disabled]="currentPage() === 1" (click)="goToPage(1)">
+              <mat-icon>first_page</mat-icon>
+            </button>
+            <button mat-icon-button [disabled]="currentPage() === 1" (click)="prevPage()">
+              <mat-icon>chevron_left</mat-icon>
+            </button>
+            <span class="page-info">Page {{ currentPage() }} of {{ totalPages() }}</span>
+            <button mat-icon-button [disabled]="currentPage() === totalPages()" (click)="nextPage()">
+              <mat-icon>chevron_right</mat-icon>
+            </button>
+            <button mat-icon-button [disabled]="currentPage() === totalPages()" (click)="goToPage(totalPages())">
+              <mat-icon>last_page</mat-icon>
+            </button>
           </div>
+        }
+      </div>
 
-          <div class="table-footer">
-            <span class="total-info">Total: {{ pictures().length }}</span>
-            <div class="pagination">
-              <button mat-icon-button [disabled]="currentPage() === 1" (click)="prevPage()">
-                <mat-icon>chevron_left</mat-icon>
-              </button>
-              <span class="page-info">{{ currentPage() }} / {{ totalPages() }}</span>
-              <button mat-icon-button [disabled]="currentPage() === totalPages()" (click)="nextPage()">
-                <mat-icon>chevron_right</mat-icon>
-              </button>
+      <!-- Image Viewer Modal -->
+      @if (viewerOpen() && currentViewerPic(); as pic) {
+        <div class="viewer-overlay" (click)="closeViewer()">
+          <div class="viewer-content" (click)="$event.stopPropagation()">
+            <button class="viewer-close" (click)="closeViewer()">
+              <mat-icon>close</mat-icon>
+            </button>
+            <button class="viewer-nav prev" (click)="viewerPrev()" [disabled]="!canViewerPrev()">
+              <mat-icon>chevron_left</mat-icon>
+            </button>
+            <button class="viewer-nav next" (click)="viewerNext()" [disabled]="!canViewerNext()">
+              <mat-icon>chevron_right</mat-icon>
+            </button>
+
+            <img [src]="pic.imageUrl" [alt]="pic.alarm.alarm_type">
+
+            <div class="viewer-info">
+              <div class="viewer-header">
+                <span class="severity-badge large" [class]="getSeverityClass(pic.alarm.alarm_type)">
+                  {{ pic.alarm.alarm_type }}
+                </span>
+                <span class="viewer-time">{{ formatDateTime(pic.alarm.alarm_time) }}</span>
+              </div>
+              <div class="viewer-details">
+                <div class="detail-row">
+                  <mat-icon>videocam</mat-icon>
+                  <span>{{ pic.alarm.camera_name || 'Unknown Camera' }}</span>
+                </div>
+                @if (pic.alarm.location) {
+                  <div class="detail-row">
+                    <mat-icon>location_on</mat-icon>
+                    <span>{{ pic.alarm.location }}</span>
+                  </div>
+                }
+                @if (pic.alarm.confidence) {
+                  <div class="detail-row">
+                    <mat-icon>analytics</mat-icon>
+                    <span>Confidence: {{ (pic.alarm.confidence * 100).toFixed(1) }}%</span>
+                  </div>
+                }
+              </div>
             </div>
           </div>
         </div>
-      </div>
+      }
     </div>
   `,
   styles: [`
@@ -178,8 +252,37 @@ interface Picture {
       display: flex;
       flex-direction: column;
       padding: 16px;
-      gap: 12px;
-      overflow: hidden;
+      gap: 16px;
+      overflow-y: auto;
+    }
+
+    .panel-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-primary);
+
+      mat-icon {
+        font-size: 18px;
+        width: 18px;
+        height: 18px;
+        color: var(--accent-primary);
+      }
+    }
+
+    .filter-section {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+
+      label {
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--text-secondary);
+      }
     }
 
     .search-box {
@@ -192,13 +295,13 @@ interface Picture {
       border-radius: var(--radius-sm);
 
       mat-icon {
-        font-size: 20px;
-        width: 20px;
-        height: 20px;
+        font-size: 18px;
+        width: 18px;
+        height: 18px;
         color: var(--text-tertiary);
       }
 
-      .search-input {
+      input {
         flex: 1;
         background: transparent;
         border: none;
@@ -212,81 +315,50 @@ interface Picture {
       }
     }
 
-    .list-tabs {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      overflow: hidden;
+    .full-width {
+      width: 100%;
 
-      ::ng-deep .mat-mdc-tab-body-wrapper {
-        flex: 1;
+      ::ng-deep .mat-mdc-form-field-subscript-wrapper {
+        display: none;
       }
     }
 
-    .tab-content {
-      height: 100%;
-      display: flex;
-      flex-direction: column;
-      padding: 12px 0;
-    }
+    .refresh-btn {
+      background: var(--accent-primary);
+      color: white;
 
-    .filter-checkbox {
-      margin-bottom: 8px;
-
-      ::ng-deep .mat-mdc-checkbox-label {
-        font-size: 12px;
-        color: var(--text-secondary);
+      mat-icon {
+        font-size: 18px;
+        width: 18px;
+        height: 18px;
+        margin-right: 4px;
       }
     }
 
-    .device-list, .user-list {
-      flex: 1;
-      overflow-y: auto;
-    }
-
-    .device-item, .user-item {
+    .stats-section {
+      margin-top: auto;
+      padding-top: 16px;
+      border-top: 1px solid var(--glass-border);
       display: flex;
-      align-items: center;
+      flex-direction: column;
       gap: 8px;
-      padding: 8px;
-      border-radius: var(--radius-sm);
-      cursor: pointer;
-
-      &:hover {
-        background: var(--glass-bg);
-      }
-
-      &.selected {
-        background: rgba(0, 212, 255, 0.1);
-      }
     }
 
-    .device-icon, .user-icon {
-      font-size: 16px;
-      width: 16px;
-      height: 16px;
-      color: var(--text-tertiary);
-
-      &.online {
-        color: var(--success);
-      }
+    .stat-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
     }
 
-    .device-name, .user-name {
-      flex: 1;
+    .stat-label {
       font-size: 12px;
       color: var(--text-secondary);
     }
 
-    .status-dot {
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
-      background: var(--text-muted);
-
-      &.online {
-        background: var(--success);
-      }
+    .stat-value {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--accent-primary);
     }
 
     // Right Panel
@@ -294,54 +366,46 @@ interface Picture {
       display: flex;
       flex-direction: column;
       gap: 16px;
+      overflow: hidden;
     }
 
-    .filter-bar {
+    .toolbar {
       display: flex;
       justify-content: space-between;
       align-items: center;
       padding: 12px 16px;
     }
 
-    .filter-group {
+    .toolbar-left {
       display: flex;
-      gap: 12px;
+      align-items: center;
+      gap: 16px;
     }
 
-    .filter-field {
-      width: 180px;
-
-      ::ng-deep .mat-mdc-form-field-subscript-wrapper {
-        display: none;
-      }
+    .result-count {
+      font-size: 13px;
+      color: var(--text-secondary);
     }
 
-    .filter-actions {
+    .toolbar-right {
       display: flex;
+      align-items: center;
       gap: 8px;
-    }
 
-    .search-btn {
-      background: var(--accent-primary);
-      color: white;
-
-      mat-icon {
-        font-size: 16px;
-        width: 16px;
-        height: 16px;
-        margin-right: 4px;
+      button.active {
+        color: var(--accent-primary);
+        background: rgba(0, 212, 255, 0.1);
       }
     }
 
     .download-btn {
-      background: var(--glass-bg);
-      border: 1px solid var(--glass-border);
-      color: var(--text-secondary);
+      background: var(--accent-primary);
+      color: white;
 
       mat-icon {
-        font-size: 16px;
-        width: 16px;
-        height: 16px;
+        font-size: 18px;
+        width: 18px;
+        height: 18px;
         margin-right: 4px;
       }
 
@@ -350,253 +414,601 @@ interface Picture {
       }
     }
 
-    // Picture Table
-    .picture-table {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      overflow: hidden;
-    }
-
-    .table-header {
-      display: flex;
-      align-items: center;
-      padding: 12px 16px;
-      background: var(--glass-bg);
-      border-bottom: 1px solid var(--glass-border);
-      font-size: 12px;
-      font-weight: 600;
-      color: var(--text-secondary);
-    }
-
-    .table-body {
+    // Gallery
+    .gallery-container {
       flex: 1;
       overflow-y: auto;
-    }
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 16px;
+      padding: 4px;
+      align-content: start;
 
-    .table-row {
-      display: flex;
-      align-items: center;
-      padding: 12px 16px;
-      border-bottom: 1px solid var(--glass-border);
-      cursor: pointer;
-      transition: background 0.2s;
+      &.list-mode {
+        grid-template-columns: 1fr;
+        gap: 8px;
 
-      &:hover {
-        background: var(--glass-bg);
+        .picture-card {
+          flex-direction: row;
+          height: 100px;
+
+          .picture-image {
+            width: 140px;
+            height: 100%;
+            flex-shrink: 0;
+          }
+
+          .picture-info {
+            flex: 1;
+            padding: 12px;
+          }
+        }
       }
     }
 
-    .col-check {
-      width: 40px;
-    }
-
-    .col-picture {
-      width: 100px;
-    }
-
-    .col-device {
-      flex: 1;
-      font-size: 13px;
-      color: var(--text-primary);
-    }
-
-    .col-size {
-      width: 80px;
-      font-size: 12px;
-      color: var(--text-secondary);
-    }
-
-    .col-reason {
-      width: 120px;
-    }
-
-    .thumbnail {
-      width: 60px;
-      height: 40px;
-      background: var(--bg-tertiary);
-      border-radius: 4px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: var(--text-muted);
-
-      mat-icon {
-        font-size: 20px;
-        width: 20px;
-        height: 20px;
-      }
-    }
-
-    .reason-badge {
-      display: inline-block;
-      padding: 4px 8px;
-      border-radius: 4px;
-      font-size: 11px;
-      font-weight: 500;
-
-      &.motion {
-        background: rgba(245, 158, 11, 0.15);
-        color: var(--warning);
-      }
-
-      &.manual {
-        background: rgba(0, 212, 255, 0.15);
-        color: var(--accent-primary);
-      }
-
-      &.schedule {
-        background: rgba(16, 185, 129, 0.15);
-        color: var(--success);
-      }
-
-      &.alarm {
-        background: rgba(239, 68, 68, 0.15);
-        color: var(--error);
-      }
-    }
-
-    .empty-state {
+    .picture-card {
       display: flex;
       flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      padding: 48px;
-      color: var(--text-muted);
-      gap: 12px;
+      background: var(--glass-bg);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius-md);
+      overflow: hidden;
+      cursor: pointer;
+      transition: all 0.2s;
+      position: relative;
 
-      mat-icon {
-        font-size: 48px;
-        width: 48px;
-        height: 48px;
+      &:hover {
+        border-color: var(--accent-primary);
+        transform: translateY(-2px);
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+
+        .picture-overlay {
+          opacity: 1;
+        }
+      }
+
+      &.selected {
+        border-color: var(--accent-primary);
+        background: rgba(0, 212, 255, 0.05);
       }
     }
 
-    .table-footer {
+    .picture-checkbox {
+      position: absolute;
+      top: 8px;
+      left: 8px;
+      z-index: 2;
+    }
+
+    .picture-image {
+      position: relative;
+      width: 100%;
+      height: 160px;
+      background: var(--bg-tertiary);
+      overflow: hidden;
+
+      img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+    }
+
+    .picture-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      transition: opacity 0.2s;
+
+      mat-icon {
+        font-size: 32px;
+        width: 32px;
+        height: 32px;
+        color: white;
+      }
+    }
+
+    .picture-info {
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .picture-header {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      padding: 12px 16px;
-      border-top: 1px solid var(--glass-border);
     }
 
-    .total-info {
+    .severity-badge {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+
+      &.critical {
+        background: rgba(239, 68, 68, 0.2);
+        color: #ef4444;
+      }
+
+      &.high {
+        background: rgba(249, 115, 22, 0.2);
+        color: #f97316;
+      }
+
+      &.medium {
+        background: rgba(234, 179, 8, 0.2);
+        color: #eab308;
+      }
+
+      &.low {
+        background: rgba(59, 130, 246, 0.2);
+        color: #3b82f6;
+      }
+
+      &.large {
+        padding: 6px 12px;
+        font-size: 13px;
+      }
+    }
+
+    .picture-time {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .picture-location {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 12px;
+      color: var(--text-secondary);
+
+      mat-icon {
+        font-size: 14px;
+        width: 14px;
+        height: 14px;
+      }
+    }
+
+    .picture-confidence {
+      font-size: 11px;
+      color: var(--text-tertiary);
+    }
+
+    // Empty/Loading States
+    .loading-state, .empty-state {
+      grid-column: 1 / -1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 60px 20px;
+      color: var(--text-muted);
+      gap: 16px;
+
+      mat-icon {
+        font-size: 64px;
+        width: 64px;
+        height: 64px;
+      }
+
+      span {
+        font-size: 16px;
+        font-weight: 500;
+      }
+
+      p {
+        margin: 0;
+        font-size: 13px;
+        color: var(--text-tertiary);
+      }
+    }
+
+    // Pagination
+    .pagination {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 8px;
+      padding: 12px;
+    }
+
+    .page-info {
+      font-size: 13px;
+      color: var(--text-secondary);
+      min-width: 120px;
+      text-align: center;
+    }
+
+    // Viewer Modal
+    .viewer-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.9);
+      z-index: 10000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 40px;
+    }
+
+    .viewer-content {
+      position: relative;
+      max-width: 90vw;
+      max-height: 90vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 20px;
+
+      img {
+        max-width: 100%;
+        max-height: calc(90vh - 150px);
+        object-fit: contain;
+        border-radius: 8px;
+      }
+    }
+
+    .viewer-close {
+      position: absolute;
+      top: -30px;
+      right: -30px;
+      background: transparent;
+      border: none;
+      color: white;
+      cursor: pointer;
+      padding: 8px;
+      border-radius: 50%;
+
+      &:hover {
+        background: rgba(255, 255, 255, 0.1);
+      }
+
+      mat-icon {
+        font-size: 28px;
+        width: 28px;
+        height: 28px;
+      }
+    }
+
+    .viewer-nav {
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      background: rgba(255, 255, 255, 0.1);
+      border: none;
+      color: white;
+      cursor: pointer;
+      padding: 16px 8px;
+      border-radius: 4px;
+
+      &:hover:not(:disabled) {
+        background: rgba(255, 255, 255, 0.2);
+      }
+
+      &:disabled {
+        opacity: 0.3;
+        cursor: not-allowed;
+      }
+
+      mat-icon {
+        font-size: 32px;
+        width: 32px;
+        height: 32px;
+      }
+
+      &.prev {
+        left: -60px;
+      }
+
+      &.next {
+        right: -60px;
+      }
+    }
+
+    .viewer-info {
+      background: var(--glass-bg);
+      border: 1px solid var(--glass-border);
+      border-radius: 12px;
+      padding: 16px 24px;
+      min-width: 400px;
+    }
+
+    .viewer-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+
+    .viewer-time {
       font-size: 13px;
       color: var(--text-secondary);
     }
 
-    .pagination {
+    .viewer-details {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .detail-row {
       display: flex;
       align-items: center;
       gap: 8px;
+      font-size: 13px;
+      color: var(--text-secondary);
 
-      .page-info {
-        font-size: 12px;
-        color: var(--text-secondary);
-        min-width: 60px;
-        text-align: center;
+      mat-icon {
+        font-size: 16px;
+        width: 16px;
+        height: 16px;
+        color: var(--text-tertiary);
       }
     }
 
     @media (max-width: 900px) {
       .picture-container {
         grid-template-columns: 1fr;
-        grid-template-rows: 250px 1fr;
+        grid-template-rows: auto 1fr;
       }
 
-      .filter-bar {
-        flex-direction: column;
+      .left-panel {
+        flex-direction: row;
+        flex-wrap: wrap;
         gap: 12px;
+        overflow-x: auto;
       }
 
-      .filter-group {
+      .filter-section {
+        min-width: 150px;
+      }
+
+      .stats-section {
+        margin-top: 0;
+        padding-top: 0;
+        border-top: none;
+        flex-direction: row;
+        gap: 16px;
+      }
+
+      .viewer-nav {
+        &.prev { left: 10px; }
+        &.next { right: 10px; }
+      }
+
+      .viewer-info {
+        min-width: unset;
         width: 100%;
-      }
-
-      .filter-field {
-        flex: 1;
       }
     }
   `]
 })
-export class PictureComponent {
+export class PictureComponent implements OnInit {
+  private alarmService = inject(AlarmService);
+
+  // Filters
   searchQuery = '';
-  deviceOnlineOnly = false;
-  userOnlineOnly = false;
-  dateRange = '';
-  platform = 'all';
+  selectedType = '';
+  selectedCamera = '';
+  startDate = '';
+  endDate = '';
   selectAll = false;
+  viewMode: 'grid' | 'list' = 'grid';
 
-  selectedDevice = signal<any>(null);
+  // State
+  loading = signal(false);
   currentPage = signal(1);
-  totalPages = signal(5);
+  pageSize = 20;
 
-  devices = signal([
-    { id: 1, name: 'Camera 01', online: true },
-    { id: 2, name: 'Camera 02', online: true },
-    { id: 3, name: 'Camera 03', online: false },
-    { id: 4, name: 'Camera 04', online: true },
-    { id: 5, name: 'Camera 05', online: false }
-  ]);
+  // All pictures (alarms with images)
+  private allPictures = signal<AlarmPicture[]>([]);
 
-  users = signal([
-    { id: 1, name: 'Admin', online: true },
-    { id: 2, name: 'Operator 1', online: true },
-    { id: 3, name: 'Operator 2', online: false }
-  ]);
+  // Viewer
+  viewerOpen = signal(false);
+  viewerIndex = signal(0);
 
-  pictures = signal<Picture[]>([
-    { id: 1, thumbnail: '', device: 'Camera 01', size: '2.4 MB', reason: 'Motion', date: '2024-01-21', selected: false },
-    { id: 2, thumbnail: '', device: 'Camera 02', size: '1.8 MB', reason: 'Manual', date: '2024-01-21', selected: false },
-    { id: 3, thumbnail: '', device: 'Camera 01', size: '3.1 MB', reason: 'Alarm', date: '2024-01-20', selected: false },
-    { id: 4, thumbnail: '', device: 'Camera 03', size: '2.0 MB', reason: 'Schedule', date: '2024-01-20', selected: false },
-    { id: 5, thumbnail: '', device: 'Camera 04', size: '1.5 MB', reason: 'Motion', date: '2024-01-19', selected: false }
-  ]);
+  // Derived values
+  alarmTypes = computed(() => {
+    const types = new Set<string>();
+    this.allPictures().forEach(p => types.add(p.alarm.alarm_type));
+    return Array.from(types).sort();
+  });
 
-  filteredDevices() {
-    let devices = this.devices();
-    if (this.deviceOnlineOnly) {
-      devices = devices.filter(d => d.online);
-    }
+  cameras = computed(() => {
+    const cameras = new Set<string>();
+    this.allPictures().forEach(p => {
+      if (p.alarm.camera_name) cameras.add(p.alarm.camera_name);
+    });
+    return Array.from(cameras).sort();
+  });
+
+  filteredPictures = computed(() => {
+    let pics = this.allPictures();
+
+    // Search filter
     if (this.searchQuery) {
-      devices = devices.filter(d =>
-        d.name.toLowerCase().includes(this.searchQuery.toLowerCase())
+      const query = this.searchQuery.toLowerCase();
+      pics = pics.filter(p =>
+        (p.alarm.camera_name?.toLowerCase().includes(query)) ||
+        (p.alarm.location?.toLowerCase().includes(query)) ||
+        (p.alarm.alarm_type?.toLowerCase().includes(query))
       );
     }
-    return devices;
+
+    // Type filter
+    if (this.selectedType) {
+      pics = pics.filter(p => p.alarm.alarm_type === this.selectedType);
+    }
+
+    // Camera filter
+    if (this.selectedCamera) {
+      pics = pics.filter(p => p.alarm.camera_name === this.selectedCamera);
+    }
+
+    // Date filters
+    if (this.startDate) {
+      const start = new Date(this.startDate);
+      pics = pics.filter(p => new Date(p.alarm.alarm_time) >= start);
+    }
+    if (this.endDate) {
+      const end = new Date(this.endDate);
+      end.setHours(23, 59, 59, 999);
+      pics = pics.filter(p => new Date(p.alarm.alarm_time) <= end);
+    }
+
+    return pics;
+  });
+
+  totalPages = computed(() => Math.ceil(this.filteredPictures().length / this.pageSize) || 1);
+
+  paginatedPictures = computed(() => {
+    const start = (this.currentPage() - 1) * this.pageSize;
+    return this.filteredPictures().slice(start, start + this.pageSize);
+  });
+
+  selectedCount = computed(() => this.allPictures().filter(p => p.selected).length);
+
+  currentViewerPic = computed(() => {
+    const pics = this.filteredPictures();
+    return pics[this.viewerIndex()] || null;
+  });
+
+  ngOnInit() {
+    this.loadAlarms();
   }
 
-  selectDevice(device: any): void {
-    this.selectedDevice.set(device);
+  loadAlarms() {
+    this.loading.set(true);
+
+    // Load alarms with images (limit to recent 500)
+    this.alarmService.loadAlarms({ limit: 500 });
+
+    // Subscribe to alarms and filter those with images
+    setTimeout(() => {
+      const alarms = this.alarmService.alarms();
+      const pictures: AlarmPicture[] = [];
+
+      for (const alarm of alarms) {
+        const imageUrl = getAlarmImageUrl(alarm.image_url);
+        if (imageUrl) {
+          pictures.push({
+            alarm,
+            imageUrl,
+            selected: false
+          });
+        }
+      }
+
+      this.allPictures.set(pictures);
+      this.loading.set(false);
+      this.currentPage.set(1);
+    }, 500);
   }
 
-  togglePictureSelection(pic: Picture): void {
+  applyFilters() {
+    this.currentPage.set(1);
+  }
+
+  toggleSelection(pic: AlarmPicture) {
     pic.selected = !pic.selected;
   }
 
-  toggleSelectAll(): void {
-    const pictures = this.pictures();
-    pictures.forEach(p => p.selected = this.selectAll);
-    this.pictures.set([...pictures]);
+  toggleSelectAll() {
+    const pics = this.filteredPictures();
+    pics.forEach(p => p.selected = this.selectAll);
   }
 
-  hasSelection(): boolean {
-    return this.pictures().some(p => p.selected);
+  getSeverityClass(alarmType: string): string {
+    return getAlarmSeverity(alarmType);
   }
 
-  getReasonClass(reason: string): string {
-    return reason.toLowerCase();
+  formatTime(dateStr: string | undefined): string {
+    if (!dateStr) return '';
+    const date = new Date(dateStr);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffMins < 1440) {
+      const hours = Math.floor(diffMins / 60);
+      return `${hours}h ago`;
+    }
+    return date.toLocaleDateString('id-ID', { day: '2-digit', month: 'short' });
   }
 
-  prevPage(): void {
+  formatDateTime(dateStr: string | undefined): string {
+    if (!dateStr) return '';
+    return new Date(dateStr).toLocaleString('id-ID', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  }
+
+  onImageError(event: Event) {
+    const img = event.target as HTMLImageElement;
+    img.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%23666"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>';
+  }
+
+  // Pagination
+  goToPage(page: number) {
+    this.currentPage.set(page);
+  }
+
+  prevPage() {
     if (this.currentPage() > 1) {
       this.currentPage.update(p => p - 1);
     }
   }
 
-  nextPage(): void {
+  nextPage() {
     if (this.currentPage() < this.totalPages()) {
       this.currentPage.update(p => p + 1);
+    }
+  }
+
+  // Viewer
+  openViewer(pic: AlarmPicture) {
+    const index = this.filteredPictures().indexOf(pic);
+    if (index >= 0) {
+      this.viewerIndex.set(index);
+      this.viewerOpen.set(true);
+    }
+  }
+
+  closeViewer() {
+    this.viewerOpen.set(false);
+  }
+
+  canViewerPrev(): boolean {
+    return this.viewerIndex() > 0;
+  }
+
+  canViewerNext(): boolean {
+    return this.viewerIndex() < this.filteredPictures().length - 1;
+  }
+
+  viewerPrev() {
+    if (this.canViewerPrev()) {
+      this.viewerIndex.update(i => i - 1);
+    }
+  }
+
+  viewerNext() {
+    if (this.canViewerNext()) {
+      this.viewerIndex.update(i => i + 1);
     }
   }
 }

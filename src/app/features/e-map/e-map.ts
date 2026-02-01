@@ -1,4 +1,4 @@
-import { Component, signal } from '@angular/core';
+import { Component, signal, OnInit, inject, ViewChild, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MatIconModule } from '@angular/material/icon';
@@ -8,12 +8,15 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatCheckboxModule } from '@angular/material/checkbox';
 import { MatInputModule } from '@angular/material/input';
 import { MatFormFieldModule } from '@angular/material/form-field';
+import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
+import { LocationsService, CameraLocation } from '../../core/services/locations.service';
+import { LeafletMapComponent, MapMarker } from '../../shared/components/leaflet-map/leaflet-map';
 
 interface DeviceGroup {
-  id: number;
+  id: string;
   name: string;
   expanded: boolean;
-  devices: { id: number; name: string; online: boolean }[];
+  devices: { id: string; name: string; online: boolean; location: CameraLocation }[];
 }
 
 @Component({
@@ -28,7 +31,9 @@ interface DeviceGroup {
     MatTooltipModule,
     MatCheckboxModule,
     MatInputModule,
-    MatFormFieldModule
+    MatFormFieldModule,
+    MatProgressSpinnerModule,
+    LeafletMapComponent
   ],
   template: `
     <div class="emap-container">
@@ -48,32 +53,46 @@ interface DeviceGroup {
 
         <!-- Device Groups -->
         <div class="device-tree">
-          @for (group of filteredGroups(); track group.id) {
-            <div class="tree-node">
-              <div class="node-header" (click)="toggleGroup(group)">
-                <mat-icon class="expand-icon" [class.expanded]="group.expanded">
-                  chevron_right
-                </mat-icon>
-                <mat-icon class="folder-icon">folder</mat-icon>
-                <mat-checkbox [checked]="isGroupChecked(group)" (change)="toggleGroupCheck(group, $event)" (click)="$event.stopPropagation()"></mat-checkbox>
-                <span class="node-name">{{ group.name }}</span>
-                <span class="node-count">({{ group.devices.length }})</span>
-              </div>
-              @if (group.expanded) {
-                <div class="node-children">
-                  @for (device of getFilteredDevices(group); track device.id) {
-                    <div class="device-item">
-                      <mat-checkbox [(ngModel)]="device.online" (click)="$event.stopPropagation()"></mat-checkbox>
-                      <mat-icon class="device-icon" [class.online]="device.online">
-                        {{ device.online ? 'videocam' : 'videocam_off' }}
-                      </mat-icon>
-                      <span class="device-name">{{ device.name }}</span>
-                      <span class="status-dot" [class.online]="device.online"></span>
-                    </div>
-                  }
-                </div>
-              }
+          @if (loading()) {
+            <div class="tree-loading">
+              <mat-spinner diameter="24"></mat-spinner>
+              <span>Loading locations...</span>
             </div>
+          } @else if (filteredGroups().length === 0) {
+            <div class="tree-empty">
+              <mat-icon>location_off</mat-icon>
+              <span>No locations found</span>
+              <button mat-stroked-button (click)="syncLocations()">
+                <mat-icon>sync</mat-icon>
+                Sync from API
+              </button>
+            </div>
+          } @else {
+            @for (group of filteredGroups(); track group.id) {
+              <div class="tree-node">
+                <div class="node-header" (click)="toggleGroup(group)">
+                  <mat-icon class="expand-icon" [class.expanded]="group.expanded">
+                    chevron_right
+                  </mat-icon>
+                  <mat-icon class="folder-icon">folder</mat-icon>
+                  <span class="node-name">{{ group.name }}</span>
+                  <span class="node-count">({{ group.devices.length }})</span>
+                </div>
+                @if (group.expanded) {
+                  <div class="node-children">
+                    @for (device of getFilteredDevices(group); track device.id) {
+                      <div class="device-item" (click)="focusOnDevice(device)">
+                        <mat-icon class="device-icon" [class.online]="device.online">
+                          {{ device.online ? 'location_on' : 'location_off' }}
+                        </mat-icon>
+                        <span class="device-name">{{ device.name }}</span>
+                        <span class="status-dot" [class.online]="device.online"></span>
+                      </div>
+                    }
+                  </div>
+                }
+              </div>
+            }
           }
         </div>
       </div>
@@ -82,74 +101,48 @@ interface DeviceGroup {
       <div class="map-area glass-card-static">
         <!-- Left Toolbar -->
         <div class="map-toolbar-left">
-          <button mat-icon-button class="map-tool-btn" matTooltip="Zoom In">
+          <button mat-icon-button class="map-tool-btn" matTooltip="Zoom In" (click)="mapZoomIn()">
             <mat-icon>add</mat-icon>
           </button>
-          <button mat-icon-button class="map-tool-btn" matTooltip="Zoom Out">
+          <button mat-icon-button class="map-tool-btn" matTooltip="Zoom Out" (click)="mapZoomOut()">
             <mat-icon>remove</mat-icon>
           </button>
           <div class="toolbar-divider"></div>
-          <button mat-icon-button class="map-tool-btn" matTooltip="Draw Polygon" [class.active]="activeTool() === 'polygon'">
-            <mat-icon>pentagon</mat-icon>
+          <button mat-icon-button class="map-tool-btn" matTooltip="Sync Locations" (click)="syncLocations()" [disabled]="syncing()">
+            @if (syncing()) {
+              <mat-spinner diameter="18"></mat-spinner>
+            } @else {
+              <mat-icon>sync</mat-icon>
+            }
           </button>
-          <button mat-icon-button class="map-tool-btn" matTooltip="Draw Circle" [class.active]="activeTool() === 'circle'">
-            <mat-icon>radio_button_unchecked</mat-icon>
-          </button>
-          <button mat-icon-button class="map-tool-btn" matTooltip="Draw Rectangle" [class.active]="activeTool() === 'rectangle'">
-            <mat-icon>crop_square</mat-icon>
-          </button>
-          <button mat-icon-button class="map-tool-btn" matTooltip="Measure Distance" [class.active]="activeTool() === 'ruler'">
-            <mat-icon>straighten</mat-icon>
+          <button mat-icon-button class="map-tool-btn" matTooltip="Fit All Markers" (click)="fitAllMarkers()">
+            <mat-icon>fit_screen</mat-icon>
           </button>
           <div class="toolbar-divider"></div>
-          <button mat-icon-button class="map-tool-btn" matTooltip="Import Data">
-            <mat-icon>upload_file</mat-icon>
+          <button mat-icon-button class="map-tool-btn" matTooltip="Filter: Online Only" [class.active]="onlineOnly" (click)="onlineOnly = !onlineOnly">
+            <mat-icon>wifi</mat-icon>
           </button>
         </div>
 
         <!-- Right Toolbar -->
         <div class="map-toolbar-right">
-          <button mat-button class="map-menu-btn" [matMenuTriggerFor]="mapToolsMenu">
-            <mat-icon>build</mat-icon>
-            Map Tools
-            <mat-icon>expand_more</mat-icon>
-          </button>
-          <mat-menu #mapToolsMenu="matMenu">
-            <button mat-menu-item>
-              <mat-icon>straighten</mat-icon>
-              <span>Measure Distance</span>
-            </button>
-            <button mat-menu-item>
-              <mat-icon>square_foot</mat-icon>
-              <span>Measure Area</span>
-            </button>
-            <button mat-menu-item>
-              <mat-icon>my_location</mat-icon>
-              <span>Get Coordinates</span>
-            </button>
-          </mat-menu>
-
           <button mat-button class="map-menu-btn" [matMenuTriggerFor]="mapTypeMenu">
             <mat-icon>layers</mat-icon>
             Map Type
             <mat-icon>expand_more</mat-icon>
           </button>
           <mat-menu #mapTypeMenu="matMenu">
-            <button mat-menu-item>
+            <button mat-menu-item (click)="setMapType('dark')">
+              <mat-icon>dark_mode</mat-icon>
+              <span>Dark</span>
+            </button>
+            <button mat-menu-item (click)="setMapType('standard')">
               <mat-icon>map</mat-icon>
               <span>Standard</span>
             </button>
-            <button mat-menu-item>
+            <button mat-menu-item (click)="setMapType('satellite')">
               <mat-icon>satellite</mat-icon>
               <span>Satellite</span>
-            </button>
-            <button mat-menu-item>
-              <mat-icon>terrain</mat-icon>
-              <span>Terrain</span>
-            </button>
-            <button mat-menu-item>
-              <mat-icon>traffic</mat-icon>
-              <span>Traffic</span>
             </button>
           </mat-menu>
         </div>
@@ -160,12 +153,15 @@ interface DeviceGroup {
           <span class="compass-label">N</span>
         </div>
 
-        <!-- Map Placeholder -->
-        <div class="map-placeholder">
-          <mat-icon>map</mat-icon>
-          <span>E-Map View</span>
-          <span class="map-hint">Interactive map with device locations</span>
-        </div>
+        <!-- Leaflet Map -->
+        <app-leaflet-map
+          #mapComponent
+          [markers]="mapMarkers()"
+          [tileLayer]="mapTileLayer()"
+          [center]="mapCenter"
+          [zoom]="10"
+          (markerClick)="onMarkerClick($event)"
+        ></app-leaflet-map>
       </div>
     </div>
   `,
@@ -232,6 +228,28 @@ interface DeviceGroup {
     .device-tree {
       flex: 1;
       overflow-y: auto;
+    }
+
+    .tree-loading, .tree-empty {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      padding: 40px 20px;
+      color: var(--text-tertiary);
+      font-size: 13px;
+
+      mat-icon {
+        font-size: 32px;
+        width: 32px;
+        height: 32px;
+        opacity: 0.5;
+      }
+
+      button {
+        margin-top: 8px;
+      }
     }
 
     .tree-node {
@@ -439,32 +457,10 @@ interface DeviceGroup {
       }
     }
 
-    .map-placeholder {
+    app-leaflet-map {
       position: absolute;
       inset: 0;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 12px;
-      color: var(--text-tertiary);
-      background: linear-gradient(135deg, rgba(0, 212, 255, 0.05), rgba(124, 58, 237, 0.05));
-
-      mat-icon {
-        font-size: 80px;
-        width: 80px;
-        height: 80px;
-      }
-
-      span {
-        font-size: 16px;
-        font-weight: 500;
-      }
-
-      .map-hint {
-        font-size: 13px;
-        opacity: 0.7;
-      }
+      z-index: 1;
     }
 
     @media (max-width: 900px) {
@@ -475,55 +471,99 @@ interface DeviceGroup {
     }
   `]
 })
-export class EMapComponent {
+export class EMapComponent implements OnInit {
+  @ViewChild('mapComponent') mapComponent!: LeafletMapComponent;
+
+  private locationsService = inject(LocationsService);
+
   searchQuery = '';
   onlineOnly = false;
   onlineInGroup = false;
-  activeTool = signal<string | null>(null);
+  loading = signal(false);
+  syncing = signal(false);
 
-  deviceGroups = signal<DeviceGroup[]>([
-    {
-      id: 1,
-      name: 'Building A',
-      expanded: true,
-      devices: [
-        { id: 1, name: 'Camera 01', online: true },
-        { id: 2, name: 'Camera 02', online: true },
-        { id: 3, name: 'Camera 03', online: false },
-        { id: 4, name: 'Sensor 01', online: true }
-      ]
-    },
-    {
-      id: 2,
-      name: 'Building B',
-      expanded: false,
-      devices: [
-        { id: 5, name: 'Camera 04', online: true },
-        { id: 6, name: 'Camera 05', online: false },
-        { id: 7, name: 'Sensor 02', online: true }
-      ]
-    },
-    {
-      id: 3,
-      name: 'Warehouse',
-      expanded: false,
-      devices: [
-        { id: 8, name: 'Camera 06', online: true },
-        { id: 9, name: 'Camera 07', online: true },
-        { id: 10, name: 'Sensor 03', online: true },
-        { id: 11, name: 'Sensor 04', online: false }
-      ]
-    },
-    {
-      id: 4,
-      name: 'Gate Area',
-      expanded: false,
-      devices: [
-        { id: 12, name: 'Camera 08', online: true },
-        { id: 13, name: 'Camera 09', online: true }
-      ]
+  // Map state
+  mapTileLayer = signal<'dark' | 'standard' | 'satellite'>('dark');
+  mapCenter: [number, number] = [-6.2088, 106.8456]; // Jakarta default
+  locations = signal<CameraLocation[]>([]);
+
+  // Computed markers from locations
+  mapMarkers = computed(() => {
+    let locs = this.locations();
+    if (this.onlineOnly) {
+      locs = locs.filter(l => l.is_active);
     }
-  ]);
+    return locs
+      .filter(loc => loc.latitude && loc.longitude)
+      .map(loc => ({
+        id: loc.id,
+        name: loc.name,
+        latitude: loc.latitude,
+        longitude: loc.longitude,
+        type: loc.location_type || loc.source,
+        isOnline: loc.is_active,
+        data: loc
+      }));
+  });
+
+  // Device groups from locations
+  deviceGroups = computed(() => {
+    const locs = this.locations();
+    const groupMap = new Map<string, DeviceGroup>();
+
+    for (const loc of locs) {
+      const groupName = loc.source || 'Other';
+      if (!groupMap.has(groupName)) {
+        groupMap.set(groupName, {
+          id: groupName,
+          name: this.formatGroupName(groupName),
+          expanded: groupName === 'keypoint',
+          devices: []
+        });
+      }
+      groupMap.get(groupName)!.devices.push({
+        id: loc.id,
+        name: loc.name,
+        online: loc.is_active,
+        location: loc
+      });
+    }
+
+    return Array.from(groupMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+  });
+
+  ngOnInit(): void {
+    this.loadLocations();
+  }
+
+  async loadLocations(): Promise<void> {
+    this.loading.set(true);
+    try {
+      const locations = await this.locationsService.loadLocations({ limit: 1000 });
+      this.locations.set(locations);
+    } finally {
+      this.loading.set(false);
+    }
+  }
+
+  async syncLocations(): Promise<void> {
+    this.syncing.set(true);
+    try {
+      await this.locationsService.syncLocations('all');
+      await this.loadLocations();
+    } finally {
+      this.syncing.set(false);
+    }
+  }
+
+  private formatGroupName(source: string): string {
+    switch (source) {
+      case 'keypoint': return 'Keypoint Cameras';
+      case 'gps_tim_har': return 'GPS TIM HAR';
+      case 'manual': return 'Manual Locations';
+      default: return source.charAt(0).toUpperCase() + source.slice(1);
+    }
+  }
 
   filteredGroups() {
     let groups = this.deviceGroups();
@@ -558,7 +598,41 @@ export class EMapComponent {
   }
 
   toggleGroupCheck(group: DeviceGroup, event: any): void {
-    const checked = event.checked;
-    group.devices.forEach(d => d.online = checked);
+    // This would require API update - just visual for now
+  }
+
+  // Map controls
+  mapZoomIn(): void {
+    this.mapComponent?.zoomIn();
+  }
+
+  mapZoomOut(): void {
+    this.mapComponent?.zoomOut();
+  }
+
+  fitAllMarkers(): void {
+    const markers = this.mapMarkers();
+    if (markers.length > 0 && this.mapComponent) {
+      const map = this.mapComponent.getMap();
+      if (map) {
+        const bounds = markers.map(m => [m.latitude, m.longitude] as [number, number]);
+        map.fitBounds(bounds, { padding: [50, 50] });
+      }
+    }
+  }
+
+  setMapType(type: 'dark' | 'standard' | 'satellite'): void {
+    this.mapTileLayer.set(type);
+  }
+
+  onMarkerClick(marker: MapMarker): void {
+    console.log('Location clicked:', marker);
+    // Could open a detail popup or highlight in the list
+  }
+
+  focusOnDevice(device: { id: string; name: string; location: CameraLocation }): void {
+    if (device.location.latitude && device.location.longitude) {
+      this.mapComponent?.setView(device.location.latitude, device.location.longitude, 15);
+    }
   }
 }

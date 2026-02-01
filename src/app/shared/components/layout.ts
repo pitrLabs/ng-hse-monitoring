@@ -11,6 +11,8 @@ import { MatDividerModule } from '@angular/material/divider';
 import { MatBadgeModule } from '@angular/material/badge';
 import { filter, interval, Subscription } from 'rxjs';
 import { AuthService } from '../../core/services/auth.service';
+import { AlarmService } from '../../core/services/alarm.service';
+import { NotificationToastComponent } from './notification-toast/notification-toast.component';
 
 interface NavItem {
   label: string;
@@ -34,7 +36,8 @@ interface NavItem {
     MatMenuModule,
     MatTooltipModule,
     MatDividerModule,
-    MatBadgeModule
+    MatBadgeModule,
+    NotificationToastComponent
   ],
   template: `
     <div class="layout-container">
@@ -195,7 +198,7 @@ interface NavItem {
             </div>
 
             <!-- Alarm Voice Toggle -->
-            <div class="toggle-item" (click)="alarmVoiceEnabled.set(!alarmVoiceEnabled())" matTooltip="Toggle Alarm Voice">
+            <div class="toggle-item" (click)="toggleAlarmSound()" matTooltip="Toggle Alarm Voice">
               <mat-icon class="toggle-icon">{{ alarmVoiceEnabled() ? 'volume_up' : 'volume_off' }}</mat-icon>
               <span class="toggle-label">Alarm Voice</span>
               <div class="toggle-switch" [class.active]="alarmVoiceEnabled()">
@@ -273,6 +276,9 @@ interface NavItem {
           <router-outlet></router-outlet>
         </main>
       </div>
+
+      <!-- Toast Notifications -->
+      <app-notification-toast></app-notification-toast>
     </div>
   `,
   styles: [`
@@ -881,27 +887,35 @@ interface NavItem {
 })
 export class LayoutComponent implements OnInit, OnDestroy {
   private authService = inject(AuthService);
+  private alarmService = inject(AlarmService);
   private router = inject(Router);
   private timeSubscription?: Subscription;
 
   sidebarCollapsed = signal(false);
   pageTitle = signal('Home');
   currentDateTime = signal('');
-  alarmCount = signal(3);
   adminExpanded = signal(false);
   notificationEnabled = signal(true);
-  alarmVoiceEnabled = signal(true);
+
+  // Connect alarm voice toggle to AlarmService
+  alarmVoiceEnabled = this.alarmService.soundEnabled;
 
   currentUser = this.authService.currentUser;
   isAdmin = computed(() => this.currentUser()?.is_superuser === true);
   // P3 and above can see limited admin menu
   isP3OrAbove = computed(() => this.authService.isP3());
 
-  alarms = signal([
-    { id: 1, title: 'Motion detected - Camera 01', time: '2 min ago', type: 'warning', icon: 'warning' },
-    { id: 2, title: 'Device offline - Sensor 05', time: '10 min ago', type: 'error', icon: 'error' },
-    { id: 3, title: 'New device connected', time: '1 hour ago', type: 'info', icon: 'info' }
-  ]);
+  // Connect alarm count and notifications to AlarmService
+  alarmCount = this.alarmService.newAlarmsCount;
+  alarms = computed(() => {
+    return this.alarmService.notifications().map(n => ({
+      id: n.id,
+      title: n.message,
+      time: n.time,
+      type: n.type,
+      icon: n.type === 'error' ? 'error' : n.type === 'warning' ? 'warning' : 'info'
+    }));
+  });
 
   navItems: NavItem[] = [
     { label: 'Home', icon: 'home', route: '/home' },
@@ -1051,6 +1065,10 @@ export class LayoutComponent implements OnInit, OnDestroy {
 
   toggleAdminMenu(): void {
     this.adminExpanded.update(v => !v);
+  }
+
+  toggleAlarmSound(): void {
+    this.alarmService.toggleSound();
   }
 
   logout(): void {

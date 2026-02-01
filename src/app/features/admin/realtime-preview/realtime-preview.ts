@@ -1,14 +1,19 @@
-import { Component, OnInit, OnDestroy, ElementRef, ViewChild } from '@angular/core';
+import { Component, OnInit, OnDestroy, ElementRef, ViewChild, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
 import { MatIconModule } from '@angular/material/icon';
 import { MatButtonModule } from '@angular/material/button';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
+import { MatInputModule } from '@angular/material/input';
+import { MatFormFieldModule } from '@angular/material/form-field';
 import { BmappVideoPlayerComponent } from '../../../shared/components/bmapp-video-player/bmapp-video-player.component';
 import { WsVideoPlayerComponent } from '../../../shared/components/ws-video-player/ws-video-player.component';
 import { VideoSourceService, VideoSource } from '../../../core/services/video-source.service';
 import { AITaskService, AITask, ZLMStream } from '../../../core/services/ai-task.service';
+import { CameraGroupsService } from '../../../core/services/camera-groups.service';
+import { AuthService } from '../../../core/services/auth.service';
 import { environment } from '../../../../environments/environment';
 
 interface VideoChannel {
@@ -24,7 +29,8 @@ interface VideoChannel {
 
 interface ChannelGroup {
   id: string;
-  name: string;
+  name: string;          // Original name for grouping
+  displayName: string;   // Custom display name (can be renamed)
   expanded: boolean;
   channels: VideoChannel[];
 }
@@ -32,7 +38,7 @@ interface ChannelGroup {
 @Component({
   standalone: true,
   selector: 'app-admin-realtime-preview',
-  imports: [CommonModule, MatIconModule, MatButtonModule, MatTooltipModule, MatProgressSpinnerModule, BmappVideoPlayerComponent, WsVideoPlayerComponent],
+  imports: [CommonModule, FormsModule, MatIconModule, MatButtonModule, MatTooltipModule, MatProgressSpinnerModule, MatInputModule, MatFormFieldModule, BmappVideoPlayerComponent, WsVideoPlayerComponent],
   template: `
     <div class="realtime-preview" #previewContainer>
       <!-- Toolbar -->
@@ -114,8 +120,13 @@ interface ChannelGroup {
                   <div class="node-header" (click)="toggleGroup(group)">
                     <mat-icon class="expand-icon" [class.expanded]="group.expanded">chevron_right</mat-icon>
                     <mat-icon class="folder-icon">folder</mat-icon>
-                    <span class="node-name">{{ group.name }}</span>
+                    <span class="node-name">{{ group.displayName }}</span>
                     <span class="node-count">({{ group.channels.length }})</span>
+                    @if (canRenameGroups()) {
+                      <button mat-icon-button class="rename-btn" matTooltip="Rename folder" (click)="openRenameDialog(group); $event.stopPropagation()">
+                        <mat-icon>edit</mat-icon>
+                      </button>
+                    }
                   </div>
                   @if (group.expanded) {
                     <div class="node-children">
@@ -203,6 +214,40 @@ interface ChannelGroup {
           }
         </div>
       </div>
+
+      <!-- Rename Dialog -->
+      @if (renameDialogOpen) {
+        <div class="dialog-overlay" (click)="closeRenameDialog()">
+          <div class="rename-dialog" (click)="$event.stopPropagation()">
+            <div class="dialog-header">
+              <h3>Rename Folder</h3>
+              <button mat-icon-button (click)="closeRenameDialog()">
+                <mat-icon>close</mat-icon>
+              </button>
+            </div>
+            <div class="dialog-body">
+              <div class="current-name">
+                <label>Original Name</label>
+                <span>{{ renameTarget?.name }}</span>
+              </div>
+              <mat-form-field appearance="outline" class="full-width">
+                <mat-label>Display Name</mat-label>
+                <input matInput [(ngModel)]="newDisplayName" placeholder="Enter new display name">
+              </mat-form-field>
+            </div>
+            <div class="dialog-actions">
+              <button mat-button (click)="closeRenameDialog()">Cancel</button>
+              <button mat-flat-button color="primary" (click)="saveGroupRename()" [disabled]="!newDisplayName || renaming">
+                @if (renaming) {
+                  <mat-spinner diameter="16"></mat-spinner>
+                } @else {
+                  Save
+                }
+              </button>
+            </div>
+          </div>
+        </div>
+      }
     </div>
   `,
   styles: [`
@@ -470,8 +515,10 @@ interface ChannelGroup {
       font-size: 16px;
       width: 16px;
       height: 16px;
+      min-width: 16px;
       color: var(--text-tertiary);
       transition: transform 0.2s;
+      flex-shrink: 0;
 
       &.expanded {
         transform: rotate(90deg);
@@ -482,7 +529,9 @@ interface ChannelGroup {
       font-size: 16px;
       width: 16px;
       height: 16px;
+      min-width: 16px;
       color: #f59e0b;
+      flex-shrink: 0;
     }
 
     .node-name {
@@ -490,11 +539,16 @@ interface ChannelGroup {
       font-size: 12px;
       font-weight: 500;
       color: var(--text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     .node-count {
       font-size: 11px;
       color: var(--text-tertiary);
+      flex-shrink: 0;
+      margin-right: 4px;
     }
 
     .node-children {
@@ -758,9 +812,103 @@ interface ChannelGroup {
       font-size: 13px;
       color: var(--text-tertiary);
     }
+
+    .rename-btn {
+      width: 24px;
+      height: 24px;
+      min-width: 24px;
+      visibility: hidden;
+      opacity: 0;
+      transition: opacity 0.2s, visibility 0.2s;
+      margin-left: auto;
+      flex-shrink: 0;
+
+      mat-icon {
+        font-size: 14px;
+        width: 14px;
+        height: 14px;
+      }
+    }
+
+    .node-header:hover .rename-btn {
+      visibility: visible;
+      opacity: 1;
+    }
+
+    // Rename Dialog
+    .dialog-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.7);
+      z-index: 10000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .rename-dialog {
+      width: 400px;
+      max-width: 90vw;
+      background: var(--glass-bg, rgba(20, 20, 35, 0.95));
+      border: 1px solid var(--glass-border);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+
+    .dialog-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--glass-border);
+
+      h3 {
+        margin: 0;
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--text-primary);
+      }
+    }
+
+    .dialog-body {
+      padding: 20px;
+
+      .current-name {
+        margin-bottom: 16px;
+
+        label {
+          display: block;
+          font-size: 12px;
+          color: var(--text-tertiary);
+          margin-bottom: 4px;
+        }
+
+        span {
+          font-size: 14px;
+          font-weight: 500;
+          color: var(--text-secondary);
+        }
+      }
+
+      .full-width {
+        width: 100%;
+      }
+    }
+
+    .dialog-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 12px;
+      padding: 16px 20px;
+      border-top: 1px solid var(--glass-border);
+      background: var(--glass-bg);
+    }
   `]
 })
 export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
+  private cameraGroupsService = inject(CameraGroupsService);
+  private authService = inject(AuthService);
+
   @ViewChild('previewContainer') previewContainer!: ElementRef<HTMLElement>;
 
   gridLayout: '1x1' | '2x2' | '3x3' | '4x4' = '2x2';
@@ -772,6 +920,15 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
   // Pagination for 4x4 grid
   currentPage = 1;
   itemsPerPage = 16;
+
+  // Rename dialog state
+  renameDialogOpen = false;
+  renameTarget: ChannelGroup | null = null;
+  newDisplayName = '';
+  renaming = false;
+
+  // Check if user can rename (superadmin or manager)
+  canRenameGroups = this.authService.isManager;
 
   private fullscreenChangeHandler = () => this.onFullscreenChange();
 
@@ -790,6 +947,8 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
   ) {}
 
   ngOnInit() {
+    // Load camera groups from backend first
+    this.cameraGroupsService.loadGroups();
     this.loadVideoSources();
     document.addEventListener('fullscreenchange', this.fullscreenChangeHandler);
   }
@@ -1048,22 +1207,29 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
     // Convert to array and sort
     const groups: ChannelGroup[] = [];
     groupMap.forEach((channels, name) => {
+      // Get display name from service (custom name set by user)
+      const displayName = this.cameraGroupsService.getDisplayName(name);
       groups.push({
         id: name.toLowerCase(),
-        name: name,
+        name: name,  // Original name for grouping
+        displayName: displayName,  // Custom display name
         expanded: true,
         channels: channels.sort((a, b) => a.name.localeCompare(b.name))
       });
     });
 
-    // Sort groups alphabetically, but put "Other" at the end
+    // Sort groups alphabetically by display name, but put "Other" at the end
     groups.sort((a, b) => {
-      if (a.name === 'Other') return 1;
-      if (b.name === 'Other') return -1;
-      return a.name.localeCompare(b.name);
+      if (a.name === 'OTHER') return 1;
+      if (b.name === 'OTHER') return -1;
+      return a.displayName.localeCompare(b.displayName);
     });
 
     this.channelGroups = groups;
+
+    // Sync group names to backend (creates any missing groups)
+    const groupNames = Array.from(groupMap.keys());
+    this.cameraGroupsService.syncGroups(groupNames);
   }
 
   toggleGroup(group: ChannelGroup) {
@@ -1198,6 +1364,40 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
 
     for (let i = 0; i < Math.min(pageChannels.length, totalSlots); i++) {
       this.gridSlots[i] = pageChannels[i];
+    }
+  }
+
+  // Rename group methods
+  openRenameDialog(group: ChannelGroup) {
+    this.renameTarget = group;
+    this.newDisplayName = group.displayName;
+    this.renameDialogOpen = true;
+  }
+
+  closeRenameDialog() {
+    this.renameDialogOpen = false;
+    this.renameTarget = null;
+    this.newDisplayName = '';
+  }
+
+  async saveGroupRename() {
+    if (!this.renameTarget || !this.newDisplayName) return;
+
+    this.renaming = true;
+    try {
+      await this.cameraGroupsService.renameGroup(this.renameTarget.name, this.newDisplayName);
+
+      // Update local state
+      const group = this.channelGroups.find(g => g.name === this.renameTarget!.name);
+      if (group) {
+        group.displayName = this.newDisplayName;
+      }
+
+      this.closeRenameDialog();
+    } catch (error) {
+      console.error('Failed to rename group:', error);
+    } finally {
+      this.renaming = false;
     }
   }
 }

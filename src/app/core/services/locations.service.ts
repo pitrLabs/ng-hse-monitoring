@@ -93,7 +93,7 @@ export class LocationsService {
     }
   }
 
-  async syncLocations(source: string = 'all'): Promise<SyncResult | null> {
+  async syncLocations(source: string = 'gps_tim_har'): Promise<SyncResult | null> {
     try {
       const result = await firstValueFrom(
         this.http.post<SyncResult>(`${this.baseUrl}/sync`, null, {

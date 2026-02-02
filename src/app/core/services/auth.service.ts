@@ -1,7 +1,7 @@
 import { Injectable, signal, computed } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Router } from '@angular/router';
-import { Observable, tap, catchError, throwError, Subject } from 'rxjs';
+import { Observable, tap, catchError, throwError, Subject, firstValueFrom } from 'rxjs';
 import { environment } from '../../../environments/environment';
 import { User, LoginResponse, UserUpdate } from '../models/user.model';
 
@@ -18,6 +18,10 @@ export class AuthService {
 
   private currentUserSignal = signal<User | null>(null);
   private isLoadingSignal = signal(false);
+  private isInitialized = signal(false);
+
+  // Cache the initialization promise to prevent duplicate fetches
+  private initPromise: Promise<void> | null = null;
 
   readonly currentUser = this.currentUserSignal.asReadonly();
   readonly isLoading = this.isLoadingSignal.asReadonly();
@@ -47,35 +51,84 @@ export class AuthService {
   constructor(
     private http: HttpClient,
     private router: Router
-  ) {
-    this.loadUserFromToken();
-  }
+  ) {}
 
-  private loadUserFromToken(): void {
-    const token = this.getToken();
-    if (token) {
-      this.fetchCurrentUser().subscribe({
-        error: () => this.logout()
-      });
+  /**
+   * Initialize auth state. Called by APP_INITIALIZER before app starts.
+   * This ensures user data is loaded before any routing happens.
+   */
+  initAuth(): Promise<void> {
+    // Return cached promise if already initializing/initialized
+    if (this.initPromise) {
+      return this.initPromise;
     }
+
+    const token = this.getToken();
+    if (!token) {
+      this.isInitialized.set(true);
+      return Promise.resolve();
+    }
+
+    this.initPromise = firstValueFrom(this.fetchCurrentUser())
+      .then(() => {
+        this.isInitialized.set(true);
+      })
+      .catch(() => {
+        // Token invalid, clear it
+        this.removeToken();
+        this.isInitialized.set(true);
+      });
+
+    return this.initPromise;
   }
 
-  login(username: string, password: string): Observable<LoginResponse> {
+  /**
+   * Ensure user data is loaded. Used by guards.
+   * Returns the user if authenticated, null otherwise.
+   */
+  async ensureUserLoaded(): Promise<User | null> {
+    // Wait for initialization if not done
+    if (!this.isInitialized()) {
+      await this.initAuth();
+    }
+    return this.currentUserSignal();
+  }
+
+  /**
+   * Login and fetch user data.
+   * Returns Observable that completes only after user data is loaded.
+   */
+  login(username: string, password: string): Observable<User> {
     this.isLoadingSignal.set(true);
     const formData = new FormData();
     formData.append('username', username);
     formData.append('password', password);
 
-    return this.http.post<LoginResponse>(`${this.apiUrl}/auth/login`, formData).pipe(
-      tap(response => {
-        this.setToken(response.access_token);
-        this.fetchCurrentUser().subscribe();
-      }),
-      catchError(error => {
-        this.isLoadingSignal.set(false);
-        return throwError(() => error);
-      })
-    );
+    return new Observable<User>(observer => {
+      this.http.post<LoginResponse>(`${this.apiUrl}/auth/login`, formData).subscribe({
+        next: async (response) => {
+          this.setToken(response.access_token);
+          // Reset init state for fresh login
+          this.initPromise = null;
+          this.isInitialized.set(false);
+
+          try {
+            // Wait for user data to be loaded
+            const user = await firstValueFrom(this.fetchCurrentUser());
+            this.isInitialized.set(true);
+            observer.next(user);
+            observer.complete();
+          } catch (error) {
+            this.isLoadingSignal.set(false);
+            observer.error(error);
+          }
+        },
+        error: (error) => {
+          this.isLoadingSignal.set(false);
+          observer.error(error);
+        }
+      });
+    });
   }
 
   fetchCurrentUser(): Observable<User> {
@@ -102,8 +155,12 @@ export class AuthService {
     // Emit logout event so other services can cleanup (e.g., disconnect WebSocket)
     this.logoutSubject.next();
 
+    // Clear all auth state
     this.removeToken();
     this.currentUserSignal.set(null);
+    this.initPromise = null;
+    this.isInitialized.set(false);
+
     this.router.navigate(['/login']);
   }
 

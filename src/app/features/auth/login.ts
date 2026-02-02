@@ -290,6 +290,7 @@ export class LoginComponent {
     const { username, password } = this.loginForm.value;
     this.authService.login(username, password).subscribe({
       next: () => {
+        this.isLoading.set(false);
         this.router.navigate(['/home']);
       },
       error: (err) => {

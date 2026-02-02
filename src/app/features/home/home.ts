@@ -1,4 +1,4 @@
-import { Component, signal, OnInit, inject, OnDestroy, ViewChild } from '@angular/core';
+import { Component, signal, computed, OnInit, inject, OnDestroy, ViewChild } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterLink } from '@angular/router';
 import { MatIconModule } from '@angular/material/icon';
@@ -9,6 +9,7 @@ import { MatDividerModule } from '@angular/material/divider';
 import { AlarmService } from '../../core/services/alarm.service';
 import { AlarmNotification, getAlarmImageUrl } from '../../core/models/alarm.model';
 import { LocationsService, CameraLocation } from '../../core/services/locations.service';
+import { AuthService } from '../../core/services/auth.service';
 import { LeafletMapComponent, MapMarker } from '../../shared/components/leaflet-map/leaflet-map';
 
 interface DeviceStatus {
@@ -247,7 +248,9 @@ interface DeviceClass {
                 <span class="live-indicator"></span>
               }
             </h3>
-            <a routerLink="/admin/alarms" class="view-all-link">View All</a>
+            @if (authService.isSuperadmin()) {
+              <a routerLink="/admin/alarms" class="view-all-link">View All</a>
+            }
           </div>
           <div class="notify-list">
             @for (notif of alarmService.notifications(); track notif.id) {
@@ -322,9 +325,11 @@ interface DeviceClass {
                 Acknowledge
               </button>
             }
-            <a mat-flat-button color="primary" routerLink="/admin/alarms" (click)="closePopup()">
-              View All Alarms
-            </a>
+            @if (authService.isSuperadmin()) {
+              <a mat-flat-button color="primary" routerLink="/admin/alarms" (click)="closePopup()">
+                View All Alarms
+              </a>
+            }
           </div>
         </div>
       </div>
@@ -983,6 +988,7 @@ export class HomeComponent implements OnInit, OnDestroy {
 
   alarmService = inject(AlarmService);
   locationsService = inject(LocationsService);
+  authService = inject(AuthService);
 
   deviceStatus = signal<DeviceStatus>({ online: 45, offline: 12 });
 
@@ -1023,13 +1029,9 @@ export class HomeComponent implements OnInit, OnDestroy {
     this.updateMapMarkers(locations);
   }
 
-  // Allowed regions for home page map
-  private allowedRegions = ['AMP01', 'AMP02', 'AMP03', 'AMP04'];
-
   private updateMapMarkers(locations: CameraLocation[]): void {
     const markers: MapMarker[] = locations
       .filter(loc => loc.latitude && loc.longitude)
-      .filter(loc => this.isInAllowedRegion(loc))
       .map(loc => ({
         id: loc.id,
         name: loc.name,
@@ -1040,24 +1042,6 @@ export class HomeComponent implements OnInit, OnDestroy {
         data: loc
       }));
     this.mapMarkers.set(markers);
-  }
-
-  private isInAllowedRegion(loc: CameraLocation): boolean {
-    const extraData = loc.extra_data as Record<string, unknown> | null;
-
-    // Check FEEDER_01 field
-    if (extraData?.['FEEDER_01']) {
-      const feeder = String(extraData['FEEDER_01']).trim().toUpperCase();
-      return this.allowedRegions.some(r => feeder.includes(r));
-    }
-
-    // Check location name for region pattern
-    if (loc.name) {
-      const nameUpper = loc.name.toUpperCase();
-      return this.allowedRegions.some(r => nameUpper.includes(r));
-    }
-
-    return false;
   }
 
   mapZoomIn(): void {
@@ -1084,7 +1068,7 @@ export class HomeComponent implements OnInit, OnDestroy {
   }
 
   async syncLocations(): Promise<void> {
-    await this.locationsService.syncLocations('all');
+    await this.locationsService.syncLocations('gps_tim_har');
     await this.loadLocations();
   }
 

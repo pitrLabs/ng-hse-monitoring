@@ -233,6 +233,13 @@ interface NavItem {
                   <span>No new notifications</span>
                 </div>
               }
+              @if (isAdmin()) {
+                <mat-divider></mat-divider>
+                <a mat-menu-item routerLink="/admin/alarms" class="notif-view-all">
+                  <span>View All Alarms</span>
+                  <mat-icon>arrow_forward</mat-icon>
+                </a>
+              }
             </mat-menu>
 
             <!-- User Menu -->
@@ -837,6 +844,20 @@ interface NavItem {
         font-size: 32px;
         width: 32px;
         height: 32px;
+      }
+    }
+
+    .notif-view-all {
+      display: flex !important;
+      justify-content: space-between !important;
+      align-items: center !important;
+      color: var(--accent-primary) !important;
+      font-weight: 500 !important;
+
+      mat-icon {
+        font-size: 18px;
+        width: 18px;
+        height: 18px;
       }
     }
 

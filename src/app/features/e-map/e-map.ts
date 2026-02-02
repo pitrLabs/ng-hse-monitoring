@@ -273,7 +273,7 @@ interface RegionGroup {
     .node-header {
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 4px;
       padding: 8px;
       border-radius: var(--radius-sm);
       cursor: pointer;
@@ -288,11 +288,49 @@ interface RegionGroup {
       font-size: 18px;
       width: 18px;
       height: 18px;
+      min-width: 18px;
       color: var(--text-tertiary);
       transition: transform 0.2s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
 
       &.expanded {
         transform: rotate(90deg);
+      }
+    }
+
+    .visibility-check {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 24px;
+      min-width: 24px;
+      height: 24px;
+      margin: 0;
+
+      ::ng-deep .mdc-form-field {
+        padding: 0;
+      }
+
+      ::ng-deep .mdc-checkbox {
+        width: 18px;
+        height: 18px;
+        padding: 0;
+        margin: 0;
+        flex: 0 0 18px;
+      }
+
+      ::ng-deep .mdc-checkbox__background {
+        width: 16px;
+        height: 16px;
+        top: 1px;
+        left: 1px;
+      }
+
+      ::ng-deep .mat-mdc-checkbox-touch-target {
+        width: 24px;
+        height: 24px;
       }
     }
 
@@ -300,18 +338,26 @@ interface RegionGroup {
       font-size: 18px;
       width: 18px;
       height: 18px;
+      min-width: 18px;
       color: var(--warning);
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
 
     .node-name {
       flex: 1;
       font-size: 13px;
       color: var(--text-primary);
+      line-height: 24px;
+      margin-left: 4px;
     }
 
     .node-count {
       font-size: 11px;
       color: var(--text-tertiary);
+      line-height: 24px;
+      margin-left: 4px;
     }
 
     .node-children {
@@ -325,21 +371,6 @@ interface RegionGroup {
 
     .region-folder {
       color: var(--accent-primary) !important;
-    }
-
-    .visibility-check {
-      margin-right: 4px;
-
-      ::ng-deep .mdc-checkbox {
-        width: 18px;
-        height: 18px;
-        padding: 0;
-      }
-
-      ::ng-deep .mdc-checkbox__background {
-        width: 16px;
-        height: 16px;
-      }
     }
 
     .device-item {
@@ -622,7 +653,7 @@ export class EMapComponent implements OnInit {
   async syncLocations(): Promise<void> {
     this.syncing.set(true);
     try {
-      await this.locationsService.syncLocations('all');
+      await this.locationsService.syncLocations('gps_tim_har');
       await this.loadLocations();
     } finally {
       this.syncing.set(false);

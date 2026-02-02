@@ -2,11 +2,16 @@ import { inject } from '@angular/core';
 import { Router, CanActivateFn } from '@angular/router';
 import { AuthService } from '../services/auth.service';
 
+/**
+ * Guards are simplified because APP_INITIALIZER ensures user data
+ * is loaded before any routing happens.
+ */
+
 export const authGuard: CanActivateFn = () => {
   const authService = inject(AuthService);
   const router = inject(Router);
 
-  if (authService.getToken()) {
+  if (authService.isAuthenticated()) {
     return true;
   }
 
@@ -30,13 +35,12 @@ export const superuserGuard: CanActivateFn = () => {
   const authService = inject(AuthService);
   const router = inject(Router);
 
-  if (!authService.getToken()) {
+  if (!authService.isAuthenticated()) {
     router.navigate(['/login']);
     return false;
   }
 
-  const user = authService.currentUser();
-  if (user?.is_superuser) {
+  if (authService.isSuperadmin()) {
     return true;
   }
 
@@ -44,23 +48,18 @@ export const superuserGuard: CanActivateFn = () => {
   return false;
 };
 
-// Guard for pages accessible by P3 and above (P3, operator, manager, superadmin)
+// Guard for pages accessible by P3 and above (all authenticated users)
 export const p3Guard: CanActivateFn = () => {
   const authService = inject(AuthService);
   const router = inject(Router);
 
-  if (!authService.getToken()) {
+  if (!authService.isAuthenticated()) {
     router.navigate(['/login']);
     return false;
   }
 
-  // P3 and above can access
-  if (authService.isP3()) {
-    return true;
-  }
-
-  router.navigate(['/home']);
-  return false;
+  // All authenticated users have P3 access
+  return true;
 };
 
 // Guard for pages accessible by operator and above (operator, manager, superadmin)
@@ -68,7 +67,7 @@ export const operatorGuard: CanActivateFn = () => {
   const authService = inject(AuthService);
   const router = inject(Router);
 
-  if (!authService.getToken()) {
+  if (!authService.isAuthenticated()) {
     router.navigate(['/login']);
     return false;
   }
@@ -86,7 +85,7 @@ export const managerGuard: CanActivateFn = () => {
   const authService = inject(AuthService);
   const router = inject(Router);
 
-  if (!authService.getToken()) {
+  if (!authService.isAuthenticated()) {
     router.navigate(['/login']);
     return false;
   }

@@ -973,6 +973,8 @@ export class MonitorComponent implements OnInit {
     // Load camera groups from backend first
     this.cameraGroupsService.loadGroups();
     this.loadVideoSources();
+    // Pre-load AI tasks for BM-APP mode (avoid race condition)
+    this.loadAiTasks();
   }
 
   loadVideoSources() {
@@ -1005,7 +1007,10 @@ export class MonitorComponent implements OnInit {
     });
   }
 
-  // Get WebSocket stream ID for BM-APP video
+  // Get WebSocket stream ID for BM-APP video WebSocket
+  // BM-APP video WebSocket expects:
+  // - "X" (TaskIdx as string) for individual camera view (e.g., "1", "7")
+  // - "group/X" for mosaic view showing all cameras in group X
   getWsStreamId(source: VideoSource): string {
     // Try to find matching AI task by camera name
     const tasks = this.aiTasks();
@@ -1015,11 +1020,25 @@ export class MonitorComponent implements OnInit {
       source.name?.includes(t.MediaName)
     );
 
-    // If found, use task format; otherwise use source name
-    if (task) {
-      return `task/${task.AlgTaskSession}`;
+    // Debug logging
+    console.log('[Monitor.getWsStreamId] Source:', source.name, 'Matching task:', task ? {
+      MediaName: task.MediaName,
+      AlgTaskSession: task.AlgTaskSession,
+      TaskIdx: task.TaskIdx
+    } : 'none');
+
+    // If found, use TaskIdx as string for individual camera view
+    // BM-APP video WebSocket expects just the number, not "task/X" prefix
+    if (task && task.TaskIdx !== undefined && task.TaskIdx !== null) {
+      const streamId = String(task.TaskIdx);
+      console.log('[Monitor.getWsStreamId] Using TaskIdx as string:', streamId);
+      return streamId;
     }
-    return `task/${source.name}`;
+
+    // Fallback: no matching task found - this will likely not work
+    // because BM-APP needs a valid TaskIdx
+    console.log('[Monitor.getWsStreamId] No matching task, cannot determine TaskIdx');
+    return source.name;
   }
 
   /**

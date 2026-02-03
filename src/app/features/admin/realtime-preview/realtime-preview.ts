@@ -25,6 +25,7 @@ interface VideoChannel {
   stream: string;
   app: string;
   taskIdx?: number; // BM-APP TaskIdx for individual camera view (e.g., 0, 1, 7)
+  previewChn?: string; // Channel identifier from app_preview_channel API
 }
 
 interface ChannelGroup {
@@ -969,38 +970,69 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
     }
   }
 
+  // Store preview channel mapping (TaskIdx -> preview channel identifier)
+  private previewChannelMap = new Map<number, string>();
+
   // Direct query to BM-APP API via proxy
   // BM-APP nginx routes: /api/ -> port 10002 (backend API)
   loadDirectFromBmapp() {
     console.log('Loading from BM-APP via proxy...');
 
-    // Also fetch preview channels to understand the structure
+    // First fetch preview channels to get proper channel identifiers
     const previewUrl = `${this.bmappProxyUrl}/api/app_preview_channel`;
     this.http.post<any>(previewUrl, {}).subscribe({
       next: (res) => {
         console.log('=== PREVIEW CHANNELS RAW RESPONSE ===');
         console.log(JSON.stringify(res, null, 2));
-        if (res.Content) {
-          console.log('ChnGroup:', res.Content.ChnGroup);
-          console.log('TaskGroup:', res.Content.TaskGroup);
-          // Log individual channel structure
-          if (res.Content.ChnGroup?.length > 0) {
-            console.log('First ChnGroup item:', JSON.stringify(res.Content.ChnGroup[0], null, 2));
-          }
-          if (res.Content.TaskGroup?.length > 0) {
-            console.log('First TaskGroup item:', JSON.stringify(res.Content.TaskGroup[0], null, 2));
-            // Check if tasks have individual URLs
-            const firstTask = res.Content.TaskGroup[0];
-            if (firstTask.chn?.length > 0) {
-              console.log('First task channel:', JSON.stringify(firstTask.chn[0], null, 2));
-            }
-          }
-        }
-      },
-      error: (err) => console.log('Preview channels fetch failed (optional):', err.message)
-    });
 
-    // Get tasks for video display
+        // Build a map of TaskIdx to preview channel identifier
+        this.previewChannelMap.clear();
+
+        if (res.Content?.TaskGroup) {
+          // TaskGroup contains groups of tasks
+          // Each group may have a "chn" array with individual channel info
+          res.Content.TaskGroup.forEach((group: any, groupIdx: number) => {
+            console.log(`TaskGroup[${groupIdx}]:`, JSON.stringify(group, null, 2));
+
+            // Check for chn array which contains individual channels
+            if (group.chn && Array.isArray(group.chn)) {
+              group.chn.forEach((chn: any, chnIdx: number) => {
+                // chn might have: TaskIdx, MediaName, or other identifiers
+                // Store the mapping for lookup later
+                if (chn.TaskIdx !== undefined) {
+                  // The channel identifier might be in various formats
+                  // Try to extract the correct one
+                  const channelId = chn.chn || chn.id || `task/${chn.TaskIdx}`;
+                  this.previewChannelMap.set(chn.TaskIdx, channelId);
+                  console.log(`Mapped TaskIdx ${chn.TaskIdx} -> "${channelId}"`);
+                }
+              });
+            }
+
+            // Also check if group itself has TaskIdx
+            if (group.TaskIdx !== undefined) {
+              const channelId = group.chn || group.id || `task/${group.TaskIdx}`;
+              this.previewChannelMap.set(group.TaskIdx, channelId);
+              console.log(`Mapped group TaskIdx ${group.TaskIdx} -> "${channelId}"`);
+            }
+          });
+        }
+
+        console.log('Preview channel map:', Object.fromEntries(this.previewChannelMap));
+
+        // Now load tasks
+        this.loadTasksFromBmapp();
+      },
+      error: (err) => {
+        console.log('Preview channels fetch failed (optional):', err.message);
+        // Still try to load tasks without preview channel mapping
+        this.loadTasksFromBmapp();
+      }
+    });
+  }
+
+  // Load tasks from BM-APP
+  private loadTasksFromBmapp() {
     const taskUrl = `${this.bmappProxyUrl}/api/alg_task_fetch`;
 
     this.http.post<any>(taskUrl, {}).subscribe({
@@ -1013,8 +1045,11 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
             const isOnline = statusType === 4; // Only "Healthy" is truly online
             const isConnecting = statusType === 1;
 
-            // Debug: log TaskIdx for each task
-            console.log(`Task[${index}]: ${t.MediaName}, TaskIdx=${t.TaskIdx}, Session=${t.AlgTaskSession}`);
+            // Get preview channel identifier if available
+            const previewChn = this.previewChannelMap.get(t.TaskIdx);
+
+            // Debug: log TaskIdx and preview channel for each task
+            console.log(`Task[${index}]: ${t.MediaName}, TaskIdx=${t.TaskIdx}, Session=${t.AlgTaskSession}, previewChn=${previewChn}`);
 
             return {
               id: t.AlgTaskSession,
@@ -1024,10 +1059,15 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
               isConnecting,
               stream: t.AlgTaskSession, // Task session is the stream name for AI output
               app: 'live',
-              taskIdx: t.TaskIdx // For WebSocket video streaming (individual camera view)
+              taskIdx: t.TaskIdx, // For WebSocket video streaming (individual camera view)
+              previewChn: previewChn // Channel identifier from preview API (if available)
             };
           });
-          console.log('Loaded tasks with TaskIdx:', this.videoChannels.map(c => ({ name: c.name, taskIdx: c.taskIdx })));
+          console.log('Loaded tasks with TaskIdx:', this.videoChannels.map(c => ({
+            name: c.name,
+            taskIdx: c.taskIdx,
+            previewChn: c.previewChn
+          })));
         } else {
           this.videoChannels = [];
         }
@@ -1273,15 +1313,35 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
 
   // Get WebSocket stream ID for BM-APP video WebSocket
   // Based on BM-APP video WebSocket protocol:
-  // - "X" (number as string) = individual camera view by TaskIdx (e.g., "1", "7")
+  // - "X" (TaskIdx as string) = individual camera view (e.g., "1", "7")
   // - "group/X" = mosaic view showing all cameras in group X
-  // For individual camera view, use taskIdx (the numeric index)
+  // For individual camera view, use just the TaskIdx number as string
   getWsStreamId(channel: VideoChannel): string {
-    // Use TaskIdx for individual camera view (just the number as string)
-    if (channel.taskIdx !== undefined) {
-      return String(channel.taskIdx);
+    // DEBUG: Log channel info
+    console.log('[getWsStreamId] Channel:', {
+      name: channel.name,
+      stream: channel.stream,
+      taskIdx: channel.taskIdx,
+      previewChn: channel.previewChn,
+      app: channel.app
+    });
+
+    // Priority 1: Use previewChn from app_preview_channel API if available
+    if (channel.previewChn) {
+      console.log('[getWsStreamId] Using previewChn:', channel.previewChn);
+      return channel.previewChn;
     }
+
+    // Priority 2: Use TaskIdx as string for individual camera view
+    // BM-APP video WebSocket expects just the number, not "task/X" prefix
+    if (channel.taskIdx !== undefined && channel.taskIdx !== null) {
+      const streamId = String(channel.taskIdx);
+      console.log('[getWsStreamId] Using TaskIdx as string:', streamId);
+      return streamId;
+    }
+
     // Fallback to stream name if taskIdx not available
+    console.log('[getWsStreamId] Fallback to stream:', channel.stream);
     return channel.stream;
   }
 

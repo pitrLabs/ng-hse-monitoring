@@ -447,9 +447,14 @@ export class WsVideoPlayerComponent implements OnInit, OnDestroy, OnChanges {
 
   private sendChannelSelection() {
     if (this.websocket?.readyState === WebSocket.OPEN && this.stream) {
-      // Try sending just the channel string - BM-APP might expect simple format
+      // BM-APP WebSocket expects: {"chn": "X"} where X is:
+      // - TaskIdx number as string (e.g., "1", "7") for individual camera
+      // - "group/X" for mosaic view
       const message = JSON.stringify({ chn: this.stream });
-      console.log(`[${this.sessionId}] Sending channel selection for stream "${this.stream}":`, message);
+      console.log(`[WsVideoPlayer] Sending channel selection:`, {
+        stream: this.stream,
+        message: message
+      });
       this.websocket.send(message);
     }
   }

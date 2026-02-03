@@ -177,7 +177,10 @@ export class VideoStreamService {
     this.currentStream = stream;
 
     const message = JSON.stringify({ chn: stream });
-    console.log(`[VideoStreamService] Selecting stream: ${stream}`);
+    console.log(`[VideoStreamService] Selecting stream:`, {
+      stream: stream,
+      message: message
+    });
     this.websocket.send(message);
   }
 

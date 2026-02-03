@@ -146,7 +146,7 @@ interface NavItem {
                     routerLinkActive="active"
                   >
                     <mat-icon>live_tv</mat-icon>
-                    <span class="nav-label">Real-time Preview</span>
+                    <span class="nav-label">Monitoring AI</span>
                     <div class="nav-indicator"></div>
                   </a>
                 </div>
@@ -945,13 +945,13 @@ export class LayoutComponent implements OnInit, OnDestroy {
 
   navItems: NavItem[] = [
     { label: 'Home', icon: 'home', route: '/home' },
-    { label: 'E-Map', icon: 'map', route: '/e-map' },
+    { label: 'Lokasi Koper', icon: 'map', route: '/e-map' },
     { label: 'Monitor', icon: 'videocam', route: '/monitor' },
     { label: 'PTT', icon: 'mic', route: '/ptt' },
     { label: 'Track', icon: 'route', route: '/track' },
-    { label: 'Picture', icon: 'photo_library', route: '/picture' },
-    { label: 'Playback', icon: 'play_circle', route: '/playback' },
-    { label: 'Event', icon: 'event', route: '/event' },
+    { label: 'Bukti Foto', icon: 'photo_library', route: '/picture' },
+    { label: 'Rekaman', icon: 'play_circle', route: '/playback' },
+    { label: 'Catatan Pelanggaran', icon: 'event', route: '/event' },
   ];
 
   adminNavItems: NavItem[] = [
@@ -961,7 +961,7 @@ export class LayoutComponent implements OnInit, OnDestroy {
       adminOnly: true,
       children: [
         { label: 'Dashboard', icon: 'dashboard', route: '/admin/dashboard' },
-        { label: 'Real-time Preview', icon: 'live_tv', route: '/admin/realtime-preview' },
+        { label: 'Monitoring AI', icon: 'live_tv', route: '/admin/realtime-preview' },
         { label: 'Users', icon: 'people', route: '/admin/users' },
         { label: 'Roles', icon: 'security', route: '/admin/roles' },
         { label: 'Permissions', icon: 'key', route: '/admin/permissions' },
@@ -1034,17 +1034,17 @@ export class LayoutComponent implements OnInit, OnDestroy {
     const url = this.router.url;
     const titles: Record<string, string> = {
       '/home': 'Home',
-      '/e-map': 'E-Map',
+      '/e-map': 'Lokasi Koper',
       '/monitor': 'Monitor',
       '/ptt': 'PTT',
       '/track': 'Track',
-      '/picture': 'Picture',
-      '/playback': 'Playback',
-      '/event': 'Event',
+      '/picture': 'Bukti Foto',
+      '/playback': 'Rekaman',
+      '/event': 'Catatan Pelanggaran',
       '/profile': 'Profile Settings',
       // Admin routes
       '/admin/dashboard': 'Admin Dashboard',
-      '/admin/realtime-preview': 'Real-time Preview',
+      '/admin/realtime-preview': 'Monitoring AI',
       '/admin/users': 'User Management',
       '/admin/roles': 'Role Management',
       '/admin/permissions': 'Permissions',

@@ -24,6 +24,8 @@ export interface AlarmStats {
   acknowledged: number;
   resolved: number;
   by_type: Record<string, number>;
+  by_camera?: Record<string, number>;
+  daily_counts?: { date: string; count: number }[];
 }
 
 export interface AlarmNotification {

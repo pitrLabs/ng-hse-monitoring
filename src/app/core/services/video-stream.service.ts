@@ -172,11 +172,12 @@ export class VideoStreamService {
   private selectStream(stream: string) {
     if (!this.websocket || this.websocket.readyState !== WebSocket.OPEN) return;
 
-    const streamUrl = stream.startsWith('task/') ? stream : `task/${stream}`;
-    this.currentStream = streamUrl;
+    // BM-APP expects just the channel identifier (TaskIdx number or "group/X")
+    // Don't prepend "task/" - the stream value should already be in the correct format
+    this.currentStream = stream;
 
-    const message = JSON.stringify({ chn: streamUrl });
-    console.log(`[VideoStreamService] Selecting stream: ${streamUrl}`);
+    const message = JSON.stringify({ chn: stream });
+    console.log(`[VideoStreamService] Selecting stream: ${stream}`);
     this.websocket.send(message);
   }
 
@@ -184,17 +185,23 @@ export class VideoStreamService {
     try {
       const data = JSON.parse(event.data);
 
-      if (data.image && data.task) {
-        // Find subscriptions for this task and send them the frame
+      if (data.image) {
+        // BM-APP sends frames for the currently selected channel
+        // Since we're cycling through channels, we need to match frames to the
+        // subscriber who requested the current stream
         const frameUrl = 'data:image/jpeg;base64,' + data.image;
-        const taskStream = `task/${data.task}`;
 
-        this.subscriptions.forEach(sub => {
-          const subStream = sub.stream.startsWith('task/') ? sub.stream : `task/${sub.stream}`;
-          if (subStream === taskStream) {
-            sub.callback(frameUrl);
-          }
-        });
+        // data.task contains the task NAME (e.g., "BWC SALATIGA 1")
+        // But we subscribe by TaskIdx (e.g., "7")
+        // Since BM-APP only sends one stream at a time based on current selection,
+        // we distribute to subscribers who match the CURRENT stream being requested
+        if (this.currentStream) {
+          this.subscriptions.forEach(sub => {
+            if (sub.stream === this.currentStream) {
+              sub.callback(frameUrl);
+            }
+          });
+        }
       }
 
       if (data.error) {

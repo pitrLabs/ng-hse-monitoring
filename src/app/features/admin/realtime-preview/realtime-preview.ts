@@ -1272,14 +1272,17 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
   }
 
   // Get WebSocket stream ID for BM-APP video WebSocket
-  // Based on BM-APP preview channels API response:
-  // - "group/<number>" = mosaic view (9 cameras) e.g., "group/1"
-  // - "task/<task_name>" = individual camera e.g., "task/BWC SALATIGA 2"
-  // The task name is the AlgTaskSession/stream value
+  // Based on BM-APP video WebSocket protocol:
+  // - "X" (number as string) = individual camera view by TaskIdx (e.g., "1", "7")
+  // - "group/X" = mosaic view showing all cameras in group X
+  // For individual camera view, use taskIdx (the numeric index)
   getWsStreamId(channel: VideoChannel): string {
-    // Use task/<task_name> format for individual camera view
-    const streamUrl = `task/${channel.stream}`;
-    return streamUrl;
+    // Use TaskIdx for individual camera view (just the number as string)
+    if (channel.taskIdx !== undefined) {
+      return String(channel.taskIdx);
+    }
+    // Fallback to stream name if taskIdx not available
+    return channel.stream;
   }
 
   // Determine if shared service mode should be used

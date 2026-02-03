@@ -10,6 +10,7 @@ import { AlarmService } from '../../core/services/alarm.service';
 import { AlarmNotification, getAlarmImageUrl } from '../../core/models/alarm.model';
 import { LocationsService, CameraLocation } from '../../core/services/locations.service';
 import { AuthService } from '../../core/services/auth.service';
+import { VideoSourceService } from '../../core/services/video-source.service';
 import { LeafletMapComponent, MapMarker } from '../../shared/components/leaflet-map/leaflet-map';
 
 interface DeviceStatus {
@@ -989,24 +990,65 @@ export class HomeComponent implements OnInit, OnDestroy {
   alarmService = inject(AlarmService);
   locationsService = inject(LocationsService);
   authService = inject(AuthService);
+  videoSourceService = inject(VideoSourceService);
 
-  deviceStatus = signal<DeviceStatus>({ online: 45, offline: 12 });
+  // Computed device status from real camera data
+  deviceStatus = computed<DeviceStatus>(() => {
+    const cameras = this.videoSourceService.videoSources();
+    return {
+      online: cameras.filter(c => c.is_active).length,
+      offline: cameras.filter(c => !c.is_active).length
+    };
+  });
 
-  alarmData = signal<AlarmData[]>([
-    { date: '01/15', count: 12 },
-    { date: '01/16', count: 28 },
-    { date: '01/17', count: 18 },
-    { date: '01/18', count: 35 },
-    { date: '01/19', count: 22 },
-    { date: '01/20', count: 15 }
-  ]);
+  // Computed alarm data from real stats (last 6 entries)
+  alarmData = computed<AlarmData[]>(() => {
+    const stats = this.alarmService.stats();
+    if (stats?.daily_counts && stats.daily_counts.length > 0) {
+      return stats.daily_counts.slice(-6).map(d => ({
+        date: new Date(d.date).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit' }),
+        count: d.count
+      }));
+    }
+    // Fallback to recent alarms grouped by date
+    const alarms = this.alarmService.alarms();
+    const countsByDate = new Map<string, number>();
+    alarms.forEach(alarm => {
+      const date = new Date(alarm.alarm_time).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit' });
+      countsByDate.set(date, (countsByDate.get(date) || 0) + 1);
+    });
+    return Array.from(countsByDate.entries())
+      .slice(0, 6)
+      .map(([date, count]) => ({ date, count }));
+  });
 
-  deviceClasses = signal<DeviceClass[]>([
-    { name: 'Camera', online: 24, offline: 3 },
-    { name: 'Sensor', online: 18, offline: 5 },
-    { name: 'Gateway', online: 8, offline: 2 },
-    { name: 'Radio', online: 12, offline: 1 }
-  ]);
+  // Computed device classes from real camera groups
+  deviceClasses = computed<DeviceClass[]>(() => {
+    const cameras = this.videoSourceService.videoSources();
+
+    // Group cameras by first word of name (e.g., "BWC", "H8C")
+    const groups = new Map<string, { online: number; offline: number }>();
+
+    cameras.forEach(cam => {
+      const firstWord = cam.name.split(/[\s-]/)[0] || 'Other';
+      const groupName = firstWord.toUpperCase();
+
+      if (!groups.has(groupName)) {
+        groups.set(groupName, { online: 0, offline: 0 });
+      }
+
+      const group = groups.get(groupName)!;
+      if (cam.is_active) {
+        group.online++;
+      } else {
+        group.offline++;
+      }
+    });
+
+    return Array.from(groups.entries())
+      .map(([name, stats]) => ({ name, ...stats }))
+      .sort((a, b) => (b.online + b.offline) - (a.online + a.offline));
+  });
 
   selectedNotification = signal<AlarmNotification | null>(null);
 
@@ -1019,6 +1061,9 @@ export class HomeComponent implements OnInit, OnDestroy {
     // Load initial alarms and stats
     this.alarmService.loadAlarms({ limit: 20 });
     this.alarmService.loadStats();
+
+    // Load video sources for device status
+    this.videoSourceService.loadVideoSources();
 
     // Load camera locations
     this.loadLocations();

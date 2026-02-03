@@ -1,13 +1,19 @@
-import { Component, signal } from '@angular/core';
+import { Component, signal, inject, OnInit, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MatIconModule } from '@angular/material/icon';
 import { MatButtonModule } from '@angular/material/button';
+import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
+import { AlarmService } from '../../../core/services/alarm.service';
+import { VideoSourceService } from '../../../core/services/video-source.service';
+import { AITaskService } from '../../../core/services/ai-task.service';
+import { HttpClient } from '@angular/common/http';
+import { environment } from '../../../../environments/environment';
 
 @Component({
   standalone: true,
   selector: 'app-admin-statistics',
-  imports: [CommonModule, FormsModule, MatIconModule, MatButtonModule],
+  imports: [CommonModule, FormsModule, MatIconModule, MatButtonModule, MatProgressSpinnerModule],
   template: `
     <div class="admin-statistics">
       <div class="page-header">
@@ -231,44 +237,208 @@ import { MatButtonModule } from '@angular/material/button';
     .activity-time { font-size: 12px; color: var(--text-tertiary); }
   `]
 })
-export class AdminStatisticsComponent {
-  selectedPeriod = 'today';
+export class AdminStatisticsComponent implements OnInit {
+  private alarmService = inject(AlarmService);
+  private videoSourceService = inject(VideoSourceService);
+  private aiTaskService = inject(AITaskService);
+  private http = inject(HttpClient);
+  private apiUrl = environment.apiUrl;
 
-  stats = signal({
-    totalAlarms: 156,
-    alarmsTrend: 12,
-    resolvedAlarms: 142,
-    resolvedRate: 91,
-    activeCameras: 7,
-    totalCameras: 8,
-    cameraUptime: 98,
-    runningTasks: 12,
-    taskEfficiency: 95
+  selectedPeriod = 'today';
+  loading = signal(false);
+
+  // Real stats from services
+  alarmStats = this.alarmService.stats;
+
+  // Computed stats
+  stats = computed(() => {
+    const alarmStats = this.alarmStats();
+    const cameras = this.videoSourceService.videoSources();
+    const tasks = this.aiTasks();
+
+    const activeCameras = cameras.filter(c => c.is_active).length;
+    const totalCameras = cameras.length;
+
+    return {
+      totalAlarms: alarmStats?.total || 0,
+      alarmsTrend: 0, // Would need historical data to calculate
+      resolvedAlarms: alarmStats?.resolved || 0,
+      resolvedRate: alarmStats?.total ? Math.round((alarmStats.resolved / alarmStats.total) * 100) : 0,
+      activeCameras,
+      totalCameras,
+      cameraUptime: totalCameras > 0 ? Math.round((activeCameras / totalCameras) * 100) : 0,
+      runningTasks: tasks.filter(t => t.AlgTaskStatus?.type === 4).length, // type 4 = Healthy/Running
+      taskEfficiency: 95 // Would need actual metrics
+    };
   });
 
-  alarmsByType = signal([
-    { type: 'No Helmet', count: 45, percentage: 100, color: '#ef4444' },
-    { type: 'No Vest', count: 38, percentage: 84, color: '#f59e0b' },
-    { type: 'Intrusion', count: 28, percentage: 62, color: '#3b82f6' },
-    { type: 'Fire/Smoke', count: 12, percentage: 27, color: '#dc2626' },
-    { type: 'Other', count: 33, percentage: 73, color: '#6b7280' }
-  ]);
+  // AI Tasks
+  aiTasks = signal<any[]>([]);
 
-  alarmsByCamera = signal([
-    { camera: 'Camera 01', count: 42, percentage: 100 },
-    { camera: 'Camera 02', count: 38, percentage: 90 },
-    { camera: 'Camera 03', count: 35, percentage: 83 },
-    { camera: 'Camera 04', count: 28, percentage: 67 },
-    { camera: 'Camera 05', count: 13, percentage: 31 }
-  ]);
+  // Alarms by type from real data
+  alarmsByType = computed(() => {
+    const stats = this.alarmStats();
+    if (!stats?.by_type) return [];
 
-  recentActivity = signal([
-    { id: 1, type: 'alarm', icon: 'warning', title: 'New Alarm', description: 'No helmet detected at Camera 01', time: '2 min ago' },
-    { id: 2, type: 'user', icon: 'person', title: 'User Login', description: 'admin logged in from 192.168.1.100', time: '15 min ago' },
-    { id: 3, type: 'task', icon: 'smart_toy', title: 'Task Started', description: 'AI Task "Helmet Detection" started', time: '1 hour ago' },
-    { id: 4, type: 'alarm', icon: 'check', title: 'Alarm Resolved', description: 'Intrusion alert marked as resolved', time: '2 hours ago' }
-  ]);
+    const entries = Object.entries(stats.by_type);
+    const maxCount = Math.max(...entries.map(([, count]) => count as number), 1);
 
-  loadStats() { console.log('Load stats for', this.selectedPeriod); }
-  exportReport() { console.log('Export report'); }
+    const typeColors: Record<string, string> = {
+      'NoHelmet': '#ef4444',
+      'NoVest': '#f59e0b',
+      'Intrusion': '#3b82f6',
+      'Fire': '#dc2626',
+      'Smoke': '#dc2626',
+      'NoSafetyGlasses': '#a855f7',
+      'NoGloves': '#10b981',
+      'NoMask': '#ec4899',
+      'Fall': '#f97316'
+    };
+
+    return entries.map(([type, count]) => ({
+      type: this.formatAlarmType(type),
+      count: count as number,
+      percentage: Math.round(((count as number) / maxCount) * 100),
+      color: typeColors[type] || '#6b7280'
+    })).sort((a, b) => b.count - a.count);
+  });
+
+  // Alarms by camera from real data
+  alarmsByCamera = signal<{ camera: string; count: number; percentage: number }[]>([]);
+
+  // Recent activity from real alarms
+  recentActivity = computed(() => {
+    return this.alarmService.notifications().slice(0, 5).map((notif, idx) => ({
+      id: idx + 1,
+      type: 'alarm',
+      icon: notif.type === 'error' ? 'error' : notif.type === 'warning' ? 'warning' : 'info',
+      title: notif.message,
+      description: notif.location,
+      time: notif.time
+    }));
+  });
+
+  ngOnInit(): void {
+    this.loadStats();
+    this.loadAiTasks();
+    this.loadAlarmsByCamera();
+
+    // Load video sources for camera stats
+    this.videoSourceService.loadVideoSources();
+  }
+
+  loadStats(): void {
+    this.loading.set(true);
+
+    // Calculate date range based on period
+    const now = new Date();
+    let startDate: string | undefined;
+
+    switch (this.selectedPeriod) {
+      case 'today':
+        startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+        break;
+      case 'week':
+        const weekAgo = new Date(now);
+        weekAgo.setDate(weekAgo.getDate() - 7);
+        startDate = weekAgo.toISOString();
+        break;
+      case 'month':
+        const monthAgo = new Date(now);
+        monthAgo.setMonth(monthAgo.getMonth() - 1);
+        startDate = monthAgo.toISOString();
+        break;
+      case 'year':
+        const yearAgo = new Date(now);
+        yearAgo.setFullYear(yearAgo.getFullYear() - 1);
+        startDate = yearAgo.toISOString();
+        break;
+    }
+
+    this.alarmService.loadStats(startDate);
+    this.alarmService.loadAlarms({ limit: 100 });
+    this.loading.set(false);
+  }
+
+  loadAiTasks(): void {
+    this.aiTaskService.getTasks().subscribe({
+      next: (tasks) => this.aiTasks.set(tasks),
+      error: () => this.aiTasks.set([])
+    });
+  }
+
+  loadAlarmsByCamera(): void {
+    // Get alarm statistics by camera from backend
+    this.http.get<any>(`${this.apiUrl}/alarms/stats/by-camera`).subscribe({
+      next: (data) => {
+        if (data?.by_camera) {
+          const entries = Object.entries(data.by_camera) as [string, number][];
+          const maxCount = Math.max(...entries.map(([, count]) => count), 1);
+
+          this.alarmsByCamera.set(
+            entries.map(([camera, count]) => ({
+              camera,
+              count,
+              percentage: Math.round((count / maxCount) * 100)
+            })).sort((a, b) => b.count - a.count).slice(0, 8)
+          );
+        }
+      },
+      error: () => {
+        // Fallback: use video sources as camera list with zero counts
+        const cameras = this.videoSourceService.videoSources();
+        this.alarmsByCamera.set(
+          cameras.slice(0, 8).map(cam => ({
+            camera: cam.name,
+            count: 0,
+            percentage: 0
+          }))
+        );
+      }
+    });
+  }
+
+  private formatAlarmType(type: string): string {
+    // Convert camelCase/PascalCase to readable format
+    return type
+      .replace(/([A-Z])/g, ' $1')
+      .replace(/^./, str => str.toUpperCase())
+      .trim();
+  }
+
+  exportReport(): void {
+    // Generate CSV report
+    const stats = this.stats();
+    const alarmTypes = this.alarmsByType();
+    const cameras = this.alarmsByCamera();
+
+    let csv = 'HSE Monitoring Statistics Report\n\n';
+    csv += `Period,${this.selectedPeriod}\n`;
+    csv += `Generated,${new Date().toISOString()}\n\n`;
+
+    csv += 'Summary\n';
+    csv += `Total Alarms,${stats.totalAlarms}\n`;
+    csv += `Resolved,${stats.resolvedAlarms}\n`;
+    csv += `Resolution Rate,${stats.resolvedRate}%\n`;
+    csv += `Active Cameras,${stats.activeCameras}/${stats.totalCameras}\n`;
+    csv += `Running AI Tasks,${stats.runningTasks}\n\n`;
+
+    csv += 'Alarms by Type\n';
+    csv += 'Type,Count\n';
+    alarmTypes.forEach(a => csv += `${a.type},${a.count}\n`);
+    csv += '\n';
+
+    csv += 'Alarms by Camera\n';
+    csv += 'Camera,Count\n';
+    cameras.forEach(c => csv += `${c.camera},${c.count}\n`);
+
+    // Download
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `hse-statistics-${this.selectedPeriod}-${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    window.URL.revokeObjectURL(url);
+  }
 }

@@ -13,8 +13,10 @@ import { MatInputModule } from '@angular/material/input';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { VideoSourceService, VideoSource } from '../../core/services/video-source.service';
 import { VideoPlayerComponent } from '../../shared/components/video-player';
+import { WsVideoPlayerComponent } from '../../shared/components/ws-video-player/ws-video-player.component';
 import { CameraGroupsService } from '../../core/services/camera-groups.service';
 import { AuthService } from '../../core/services/auth.service';
+import { AITaskService, BmappTask } from '../../core/services/ai-task.service';
 
 interface CameraGroup {
   id: string;
@@ -40,7 +42,8 @@ interface CameraGroup {
     MatProgressSpinnerModule,
     MatInputModule,
     MatFormFieldModule,
-    VideoPlayerComponent
+    VideoPlayerComponent,
+    WsVideoPlayerComponent
   ],
   template: `
     <div class="monitor-container">
@@ -58,6 +61,16 @@ interface CameraGroup {
         <div class="source-count">
           <mat-icon>videocam</mat-icon>
           <span>{{ filteredVideoSources().length }} Sources</span>
+        </div>
+        <div class="source-toggle">
+          <button class="source-btn" [class.active]="sourceMode() === 'local'" (click)="setSourceMode('local')" matTooltip="Local Sources (MediaMTX)">
+            <mat-icon>videocam</mat-icon>
+            <span>Local</span>
+          </button>
+          <button class="source-btn" [class.active]="sourceMode() === 'bmapp'" (click)="setSourceMode('bmapp')" matTooltip="BM-APP AI Streams">
+            <mat-icon>smart_display</mat-icon>
+            <span>BM-APP</span>
+          </button>
         </div>
         <div class="top-actions">
           <button mat-icon-button matTooltip="Fullscreen" (click)="toggleFullscreen()">
@@ -161,10 +174,18 @@ interface CameraGroup {
               >
                 @if (cell.source) {
                   <div class="video-content">
-                    <app-video-player [streamName]="cell.source.stream_name" [muted]="true" mode="mediamtx"></app-video-player>
+                    @if (sourceMode() === 'local') {
+                      <app-video-player [streamName]="cell.source.stream_name" [muted]="true" mode="mediamtx"></app-video-player>
+                    } @else {
+                      <app-ws-video-player
+                        [stream]="getWsStreamId(cell.source)"
+                        [showControls]="true"
+                        [showFps]="true">
+                      </app-ws-video-player>
+                    }
                     <div class="video-info">
                       <span class="video-name">{{ cell.source.name }}</span>
-                      <span class="video-type">{{ cell.source.source_type | uppercase }}</span>
+                      <span class="video-type">{{ sourceMode() === 'local' ? (cell.source.source_type | uppercase) : 'AI' }}</span>
                     </div>
                   </div>
                   <div class="video-overlay">
@@ -317,6 +338,44 @@ interface CameraGroup {
         width: 18px;
         height: 18px;
         color: var(--accent-primary);
+      }
+    }
+
+    .source-toggle {
+      display: flex;
+      gap: 4px;
+      padding: 4px;
+      background: var(--glass-bg);
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--glass-border);
+    }
+
+    .source-btn {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      background: transparent;
+      border: none;
+      border-radius: 4px;
+      color: var(--text-secondary);
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.2s;
+
+      mat-icon {
+        font-size: 16px;
+        width: 16px;
+        height: 16px;
+      }
+
+      &:hover {
+        background: var(--glass-bg-hover);
+      }
+
+      &.active {
+        background: var(--accent-primary);
+        color: white;
       }
     }
 
@@ -870,6 +929,7 @@ interface CameraGroup {
 export class MonitorComponent implements OnInit {
   private cameraGroupsService = inject(CameraGroupsService);
   private authService = inject(AuthService);
+  private aiTaskService = inject(AITaskService);
 
   searchQuery = '';
   showActiveOnly = true;
@@ -879,6 +939,12 @@ export class MonitorComponent implements OnInit {
   loading = signal(false);
   videoSources = signal<VideoSource[]>([]);
   cameraGroups = signal<CameraGroup[]>([]);
+
+  // Source mode: local (MediaMTX) or bmapp (BM-APP WebSocket)
+  sourceMode = signal<'local' | 'bmapp'>('local');
+
+  // BM-APP tasks for WebSocket streaming
+  aiTasks = signal<BmappTask[]>([]);
 
   // Pagination for 4x4 grid
   currentPage = signal(1);
@@ -922,6 +988,38 @@ export class MonitorComponent implements OnInit {
         this.loading.set(false);
       }
     });
+  }
+
+  setSourceMode(mode: 'local' | 'bmapp') {
+    this.sourceMode.set(mode);
+    if (mode === 'bmapp') {
+      this.loadAiTasks();
+    }
+  }
+
+  loadAiTasks() {
+    // Use getBmappTasks to get the BM-APP format with AlgTaskSession and MediaName
+    this.aiTaskService.getBmappTasks().subscribe({
+      next: (tasks) => this.aiTasks.set(tasks),
+      error: () => this.aiTasks.set([])
+    });
+  }
+
+  // Get WebSocket stream ID for BM-APP video
+  getWsStreamId(source: VideoSource): string {
+    // Try to find matching AI task by camera name
+    const tasks = this.aiTasks();
+    const task = tasks.find(t =>
+      t.MediaName === source.name ||
+      t.MediaName?.includes(source.name) ||
+      source.name?.includes(t.MediaName)
+    );
+
+    // If found, use task format; otherwise use source name
+    if (task) {
+      return `task/${task.AlgTaskSession}`;
+    }
+    return `task/${source.name}`;
   }
 
   /**

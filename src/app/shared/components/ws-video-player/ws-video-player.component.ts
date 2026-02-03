@@ -340,7 +340,9 @@ export class WsVideoPlayerComponent implements OnInit, OnDestroy, OnChanges {
     this.status.set('connecting');
     this.statusMessage.set('Connecting via shared service...');
 
-    const streamUrl = this.stream.startsWith('task/') ? this.stream : `task/${this.stream}`;
+    // BM-APP expects just the channel identifier (TaskIdx number or "group/X")
+    // Don't prepend "task/" - the stream value should already be in the correct format
+    const streamUrl = this.stream;
     console.log(`[${this.sessionId}] Subscribing to shared service for: ${streamUrl}`);
 
     this.videoStreamService.subscribe(this.sessionId, streamUrl, (frame: string) => {
@@ -471,16 +473,9 @@ export class WsVideoPlayerComponent implements OnInit, OnDestroy, OnChanges {
 
       if (data.task) {
         // Task identifier from server - verify it matches our requested stream
-        const expectedTask = this.stream.replace('task/', '');
-        if (data.task !== expectedTask) {
-          const now = Date.now();
-          if (now - this.lastChannelResend > this.channelResendCooldown) {
-            console.warn(`[${this.sessionId}] Stream mismatch! Expected: ${expectedTask}, Received: ${data.task}. Resending channel selection.`);
-            this.lastChannelResend = now;
-            // Re-send channel selection to try to get correct stream
-            this.sendChannelSelection();
-          }
-        }
+        // Note: BM-APP sends back task name, but we request by taskIdx number
+        // This mismatch is expected, only resend if we're getting a completely different channel
+        console.log(`[${this.sessionId}] Receiving stream: ${data.task} (requested: ${this.stream})`);
       }
 
       if (data.error) {

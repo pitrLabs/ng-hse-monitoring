@@ -3,7 +3,8 @@ import { Subject, BehaviorSubject } from 'rxjs';
 
 interface StreamSubscription {
   id: string;
-  stream: string;
+  stream: string;           // Full stream ID: "task/AlgTaskSession" or "group/X"
+  streamKey: string;        // Normalized key for matching: AlgTaskSession (what BM-APP returns in data.task)
   callback: (frame: string) => void;
 }
 
@@ -36,12 +37,30 @@ export class VideoStreamService {
   constructor() {}
 
   /**
+   * Extract the task/session key from a stream identifier
+   * "task/AlgTaskSession" -> "AlgTaskSession"
+   * "group/1" -> "group/1"
+   * "AlgTaskSession" -> "AlgTaskSession"
+   */
+  private extractStreamKey(stream: string): string {
+    // Remove "task/" prefix if present to get the actual session name
+    if (stream.startsWith('task/')) {
+      return stream.substring(5).trim();
+    }
+    return stream.trim();
+  }
+
+  /**
    * Subscribe to a video stream
+   * @param id Unique subscriber ID
+   * @param stream Stream identifier (e.g., "task/AlgTaskSession")
+   * @param callback Function to receive frame data
    */
   subscribe(id: string, stream: string, callback: (frame: string) => void): void {
-    console.log(`[VideoStreamService] Subscribing: ${id} -> ${stream}`);
+    const streamKey = this.extractStreamKey(stream);
+    console.log(`[VideoStreamService] Subscribing: ${id} -> ${stream} (streamKey: ${streamKey})`);
 
-    this.subscriptions.set(id, { id, stream, callback });
+    this.subscriptions.set(id, { id, stream, streamKey, callback });
     this.updateStreamQueue();
 
     if (!this.isConnected) {
@@ -185,25 +204,66 @@ export class VideoStreamService {
   }
 
   private handleMessage(event: MessageEvent) {
+    // Handle binary data (Blob or ArrayBuffer)
+    if (event.data instanceof Blob) {
+      this.handleBinaryFrame(event.data);
+      return;
+    }
+
+    if (event.data instanceof ArrayBuffer) {
+      const blob = new Blob([event.data], { type: 'image/jpeg' });
+      this.handleBinaryFrame(blob);
+      return;
+    }
+
+    // Handle text/JSON data
     try {
       const data = JSON.parse(event.data);
 
       if (data.image) {
-        // BM-APP sends frames for the currently selected channel
-        // Since we're cycling through channels, we need to match frames to the
-        // subscriber who requested the current stream
         const frameUrl = 'data:image/jpeg;base64,' + data.image;
 
-        // data.task contains the task NAME (e.g., "BWC SALATIGA 1")
-        // But we subscribe by TaskIdx (e.g., "7")
-        // Since BM-APP only sends one stream at a time based on current selection,
-        // we distribute to subscribers who match the CURRENT stream being requested
-        if (this.currentStream) {
+        // IMPORTANT: Use data.task from server response to identify which stream
+        // this frame actually belongs to, NOT this.currentStream
+        // This prevents frames from wrong streams being delivered during channel switching
+        const frameTask = data.task?.trim();
+
+        if (frameTask) {
+          // Normalize the frame task for matching (lowercase, trim whitespace)
+          // BM-APP returns data.task = AlgTaskSession (e.g., "BWC SALATIGA 1")
+          const frameTaskNormalized = frameTask.toLowerCase();
+
+          // Match frame to subscribers based on the actual task in the frame
+          // streamKey is derived from AlgTaskSession, data.task is also AlgTaskSession
+          let delivered = false;
           this.subscriptions.forEach(sub => {
-            if (sub.stream === this.currentStream) {
+            const subKeyNormalized = sub.streamKey.toLowerCase();
+
+            // Exact match with streamKey (both are AlgTaskSession)
+            if (subKeyNormalized === frameTaskNormalized) {
               sub.callback(frameUrl);
+              delivered = true;
             }
           });
+
+          if (!delivered && this.subscriptions.size > 0) {
+            // Log for debugging - show what we're trying to match
+            const subKeys = Array.from(this.subscriptions.values()).map(s => s.streamKey);
+            console.log(`[VideoStreamService] Frame discarded - task "${frameTask}" doesn't match any subscriber. Subscribers:`, subKeys);
+          }
+        } else {
+          // Fallback: if no task info in response, use currentStream (legacy behavior)
+          // This shouldn't happen with BM-APP but kept for safety
+          console.warn('[VideoStreamService] No task in frame data, using currentStream fallback');
+          if (this.currentStream) {
+            const currentKey = this.extractStreamKey(this.currentStream);
+            const currentKeyNormalized = currentKey.toLowerCase();
+            this.subscriptions.forEach(sub => {
+              if (sub.streamKey.toLowerCase() === currentKeyNormalized) {
+                sub.callback(frameUrl);
+              }
+            });
+          }
         }
       }
 
@@ -212,7 +272,29 @@ export class VideoStreamService {
       }
 
     } catch (e) {
-      console.error('[VideoStreamService] Message parse error:', e);
+      // If JSON parse fails, the data might be raw binary sent as string
+      // This happens when server sends binary data without proper framing
+      // Just silently ignore these malformed messages
+      if (event.data && typeof event.data === 'string' && event.data.length > 100) {
+        // Likely a corrupted/partial message, skip logging to avoid console spam
+        return;
+      }
+      console.warn('[VideoStreamService] Message parse error:', e);
+    }
+  }
+
+  private handleBinaryFrame(blob: Blob) {
+    // Binary frames don't have task info, deliver to currentStream subscriber
+    if (this.currentStream) {
+      const frameUrl = URL.createObjectURL(blob);
+      const currentKey = this.extractStreamKey(this.currentStream);
+      const currentKeyNormalized = currentKey.toLowerCase();
+
+      this.subscriptions.forEach(sub => {
+        if (sub.streamKey.toLowerCase() === currentKeyNormalized) {
+          sub.callback(frameUrl);
+        }
+      });
     }
   }
 

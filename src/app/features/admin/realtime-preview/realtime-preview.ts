@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy, ElementRef, ViewChild, inject } from '@angular/core';
+import { Component, OnInit, OnDestroy, ElementRef, ViewChild, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
@@ -164,7 +164,7 @@ interface ChannelGroup {
                         [stream]="getWsStreamId(channel)"
                         [showControls]="true"
                         [showFps]="true"
-                        [useSharedService]="shouldUseSharedService()">
+                        [useSharedService]="useSharedServiceMode()">
                       </app-ws-video-player>
                     } @else {
                       <app-bmapp-video-player
@@ -937,6 +937,10 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
   channelGroups: ChannelGroup[] = [];
   gridSlots: (VideoChannel | null)[] = [];
 
+  // Signal to track whether shared service mode should be used
+  // This prevents race conditions from template re-evaluation during change detection
+  useSharedServiceMode = signal(false);
+
   private bmappUrl = environment.bmappUrl;
   // Use proxy in development to bypass CORS
   private bmappProxyUrl = '/bmapp-api';
@@ -1227,6 +1231,9 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
       this.gridSlots[i] = onlineChannels[i];
     }
 
+    // Update shared service mode based on active streams
+    this.updateSharedServiceMode();
+
     // Build channel groups for folder structure
     this.buildChannelGroups();
   }
@@ -1305,6 +1312,7 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
     const emptyIndex = this.gridSlots.findIndex(slot => slot === null);
     if (emptyIndex !== -1) {
       this.gridSlots[emptyIndex] = channel;
+      this.updateSharedServiceMode();
     }
   }
 
@@ -1314,6 +1322,7 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
 
   removeFromSlot(index: number) {
     this.gridSlots[index] = null;
+    this.updateSharedServiceMode();
   }
 
   // Get WebSocket stream ID for BM-APP video WebSocket
@@ -1357,13 +1366,14 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
     return '';
   }
 
-  // Determine if shared service mode should be used
+  // Update shared service mode based on active streams
   // BM-APP WebSocket doesn't properly support multiple concurrent streams,
   // so we use a shared service that cycles through streams when more than 1 is active
-  shouldUseSharedService(): boolean {
+  // This is called whenever gridSlots changes to update the signal
+  private updateSharedServiceMode(): void {
     const activeStreams = this.gridSlots.filter(s => s !== null).length;
     // Use shared service when more than 1 stream is displayed simultaneously
-    return activeStreams > 1;
+    this.useSharedServiceMode.set(activeStreams > 1);
   }
 
   toggleFullscreen() {
@@ -1440,6 +1450,8 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
     for (let i = 0; i < Math.min(pageChannels.length, totalSlots); i++) {
       this.gridSlots[i] = pageChannels[i];
     }
+
+    this.updateSharedServiceMode();
   }
 
   // Rename group methods

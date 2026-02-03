@@ -235,7 +235,7 @@ import { VideoStreamService } from '../../../core/services/video-stream.service'
   `]
 })
 export class WsVideoPlayerComponent implements OnInit, OnDestroy, OnChanges {
-  @Input() stream = ''; // BM-APP channel URL: "task/<name>" for individual, "group/<n>" for mosaic
+  @Input() stream = ''; // BM-APP channel URL: "task/<AlgTaskSession>" for individual, "group/<n>" for mosaic
   @Input() showControls = true;
   @Input() showFps = false;
   @Input() autoConnect = true;
@@ -340,11 +340,11 @@ export class WsVideoPlayerComponent implements OnInit, OnDestroy, OnChanges {
     this.status.set('connecting');
     this.statusMessage.set('Connecting via shared service...');
 
-    // BM-APP expects just the channel identifier (TaskIdx number or "group/X")
-    // Don't prepend "task/" - the stream value should already be in the correct format
+    // BM-APP expects the channel identifier in format "task/AlgTaskSession" or "group/X"
     const streamUrl = this.stream;
     console.log(`[${this.sessionId}] Subscribing to shared service for: ${streamUrl}`);
 
+    // Subscribe using stream URL - matching is done via AlgTaskSession (data.task from WebSocket)
     this.videoStreamService.subscribe(this.sessionId, streamUrl, (frame: string) => {
       this.frameUrl.set(frame);
       this.frameCount++;
@@ -460,6 +460,19 @@ export class WsVideoPlayerComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   private handleMessage(event: MessageEvent) {
+    // Handle binary data (Blob or ArrayBuffer)
+    if (event.data instanceof Blob) {
+      this.handleBinaryMessage(event.data);
+      return;
+    }
+
+    if (event.data instanceof ArrayBuffer) {
+      const blob = new Blob([event.data], { type: 'image/jpeg' });
+      this.handleBinaryMessage(blob);
+      return;
+    }
+
+    // Handle text/JSON data
     try {
       const data = JSON.parse(event.data);
 
@@ -489,7 +502,28 @@ export class WsVideoPlayerComponent implements OnInit, OnDestroy, OnChanges {
       }
 
     } catch (e) {
-      console.error('Failed to parse WebSocket message:', e);
+      // If JSON parse fails, the data might be raw binary sent as string
+      // This happens when server sends binary data without proper framing
+      // Just silently ignore these malformed messages
+      if (event.data && typeof event.data === 'string' && event.data.length > 100) {
+        // Likely a corrupted/partial message, skip logging to avoid console spam
+        return;
+      }
+      console.warn('Failed to parse WebSocket message:', e);
+    }
+  }
+
+  private handleBinaryMessage(blob: Blob) {
+    // Convert Blob to data URL for image display
+    const url = URL.createObjectURL(blob);
+    this.frameUrl.set(url);
+    this.frameCount++;
+    this.lastFrameTime = Date.now();
+
+    // First frame received - we're playing
+    if (this.status() !== 'playing') {
+      this.status.set('playing');
+      this.resetRetry();
     }
   }
 

@@ -123,6 +123,18 @@ export class VideoPlayerComponent implements OnInit, OnDestroy {
     return (window as any).__env?.MEDIA_SERVER_URL || environment.mediaServerUrl;
   }
 
+  /**
+   * Sanitize stream name for MediaMTX compatibility.
+   * MediaMTX only allows: alphanumeric, underscore, dot, tilde, minus, slash, colon
+   */
+  private sanitizeStreamName(name: string): string {
+    // Replace spaces with underscores
+    let sanitized = name.replace(/ /g, '_');
+    // Remove any other invalid characters
+    sanitized = sanitized.replace(/[^a-zA-Z0-9_.\-~/:]/g, '');
+    return sanitized;
+  }
+
   ngOnInit() {
     if (this.streamName) {
       this.connect();
@@ -267,9 +279,10 @@ export class VideoPlayerComponent implements OnInit, OnDestroy {
 
     await this.waitForIceGathering();
 
-    const encodedStreamName = encodeURIComponent(this.streamName);
-    const whepUrl = `${this.getMediaServerUrl()}/${encodedStreamName}/whep`;
-    console.log(`[MediaMTX WHEP] Connecting to: ${whepUrl}`);
+    // Sanitize stream name to match MediaMTX path format (spaces → underscores)
+    const sanitizedStreamName = this.sanitizeStreamName(this.streamName);
+    const whepUrl = `${this.getMediaServerUrl()}/${sanitizedStreamName}/whep`;
+    console.log(`[MediaMTX WHEP] Connecting to: ${whepUrl} (original: ${this.streamName})`);
 
     const response = await fetch(whepUrl, {
       method: 'POST',

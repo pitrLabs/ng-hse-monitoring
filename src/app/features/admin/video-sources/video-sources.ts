@@ -69,6 +69,14 @@ interface BmAppMedia {
             }
             Sync to BM-APP
           </button>
+          <button mat-stroked-button (click)="syncMediaMtx()" [disabled]="syncingMediaMtx()" matTooltip="Re-sync all streams to MediaMTX (use after MediaMTX restart)">
+            @if (syncingMediaMtx()) {
+              <mat-spinner diameter="18"></mat-spinner>
+            } @else {
+              <mat-icon>sync</mat-icon>
+            }
+            Sync MediaMTX
+          </button>
           <button mat-raised-button class="btn-primary" (click)="openCreateDialog()">
             <mat-icon>add</mat-icon>
             Add Source
@@ -600,6 +608,7 @@ export class AdminVideoSourcesComponent implements OnInit {
 
   loading = signal(true);
   syncing = signal(false);
+  syncingMediaMtx = signal(false);
   importing = signal(false);
   saving = signal(false);
   creatingFolder = signal(false);
@@ -661,6 +670,21 @@ export class AdminVideoSourcesComponent implements OnInit {
         console.error('Sync error:', err);
         this.syncing.set(false);
         this.showError(err.error?.detail || 'Failed to sync with BM-APP');
+      }
+    });
+  }
+
+  syncMediaMtx() {
+    this.syncingMediaMtx.set(true);
+    this.http.post(`${this.apiUrl}/video-sources/sync-mediamtx`, {}).subscribe({
+      next: (res: any) => {
+        this.syncingMediaMtx.set(false);
+        this.showSuccess(res.message || 'Synced to MediaMTX successfully');
+      },
+      error: (err) => {
+        console.error('MediaMTX sync error:', err);
+        this.syncingMediaMtx.set(false);
+        this.showError(err.error?.detail || 'Failed to sync with MediaMTX');
       }
     });
   }

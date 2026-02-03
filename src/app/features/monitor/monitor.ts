@@ -1028,14 +1028,17 @@ export class MonitorComponent implements OnInit {
     } : 'none');
 
     // Use "task/<AlgTaskSession>" format for individual camera view
+    // IMPORTANT: Trim whitespace from AlgTaskSession as BM-APP may include leading tabs/spaces
     if (task && task.AlgTaskSession) {
-      const streamId = `task/${task.AlgTaskSession}`;
+      const sessionTrimmed = task.AlgTaskSession.trim();
+      const streamId = `task/${sessionTrimmed}`;
       console.log('[Monitor.getWsStreamId] Using task/AlgTaskSession:', streamId);
       return streamId;
     }
 
-    // Fallback: use task/<source.name> format
-    const streamId = `task/${source.name}`;
+    // Fallback: use task/<source.name> format (trimmed)
+    const nameTrimmed = source.name?.trim() || '';
+    const streamId = `task/${nameTrimmed}`;
     console.log('[Monitor.getWsStreamId] Fallback to task/source.name:', streamId);
     return streamId;
   }

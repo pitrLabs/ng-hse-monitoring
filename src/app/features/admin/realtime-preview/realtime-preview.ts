@@ -1057,12 +1057,12 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
             console.log(`Task[${index}]: ${t.MediaName}, TaskIdx=${t.TaskIdx}, Session=${t.AlgTaskSession}, previewChn=${previewChn}`);
 
             return {
-              id: t.AlgTaskSession,
-              name: t.MediaName || t.AlgTaskSession,
+              id: sessionTrimmed || t.AlgTaskSession,
+              name: t.MediaName?.trim() || sessionTrimmed || t.AlgTaskSession,
               status: isOnline ? 'online' : 'offline',
               statusLabel: t.AlgTaskStatus?.label || 'Unknown',
               isConnecting,
-              stream: t.AlgTaskSession, // Task session is the stream name for AI output
+              stream: sessionTrimmed || t.AlgTaskSession?.trim(), // Task session (trimmed) is the stream name for AI output
               app: 'live',
               taskIdx: t.TaskIdx, // For WebSocket video streaming (individual camera view)
               previewChn: previewChn // Channel URL from preview API: "task/<AlgTaskSession>"
@@ -1331,21 +1331,25 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
     });
 
     // Priority 1: Use previewChn which contains the correct "task/XXX" format
+    // IMPORTANT: Trim whitespace as BM-APP may include leading tabs/spaces in AlgTaskSession
     if (channel.previewChn) {
-      console.log('[getWsStreamId] Using previewChn:', channel.previewChn);
-      return channel.previewChn;
+      const trimmed = channel.previewChn.trim();
+      console.log('[getWsStreamId] Using previewChn:', trimmed);
+      return trimmed;
     }
 
     // Priority 2: Construct "task/<AlgTaskSession>" format if stream available
     if (channel.stream) {
-      const streamId = `task/${channel.stream}`;
+      const streamTrimmed = channel.stream.trim();
+      const streamId = `task/${streamTrimmed}`;
       console.log('[getWsStreamId] Constructed task/stream:', streamId);
       return streamId;
     }
 
     // Priority 3: Use MediaName with task/ prefix
     if (channel.name) {
-      const streamId = `task/${channel.name}`;
+      const nameTrimmed = channel.name.trim();
+      const streamId = `task/${nameTrimmed}`;
       console.log('[getWsStreamId] Constructed task/name:', streamId);
       return streamId;
     }

@@ -1312,10 +1312,12 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
   }
 
   // Get WebSocket stream ID for BM-APP video WebSocket
-  // Based on BM-APP video WebSocket protocol:
-  // - "X" (TaskIdx as string) = individual camera view (e.g., "1", "7")
-  // - "group/X" = mosaic view showing all cameras in group X
-  // For individual camera view, use just the TaskIdx number as string
+  // Testing different channel formats to find the correct one for individual camera view
+  // Format options:
+  // - TaskIdx number: "10" - TESTED, shows mosaic
+  // - AlgTaskSession: "DCC1-HARKP3_KOPER03" - trying this
+  // - MediaName: "KOPER03" - backup option
+  // - "group/X" = mosaic view
   getWsStreamId(channel: VideoChannel): string {
     // DEBUG: Log channel info
     console.log('[getWsStreamId] Channel:', {
@@ -1332,17 +1334,27 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
       return channel.previewChn;
     }
 
-    // Priority 2: Use TaskIdx as string for individual camera view
-    // BM-APP video WebSocket expects just the number, not "task/X" prefix
+    // Priority 2: Try using AlgTaskSession (stream) as channel identifier
+    // This is the task session name which might be what BM-APP expects
+    if (channel.stream) {
+      console.log('[getWsStreamId] Using AlgTaskSession (stream):', channel.stream);
+      return channel.stream;
+    }
+
+    // Priority 3: Use MediaName (channel name) as fallback
+    if (channel.name) {
+      console.log('[getWsStreamId] Using MediaName (name):', channel.name);
+      return channel.name;
+    }
+
+    // Last fallback to TaskIdx
     if (channel.taskIdx !== undefined && channel.taskIdx !== null) {
       const streamId = String(channel.taskIdx);
-      console.log('[getWsStreamId] Using TaskIdx as string:', streamId);
+      console.log('[getWsStreamId] Fallback to TaskIdx:', streamId);
       return streamId;
     }
 
-    // Fallback to stream name if taskIdx not available
-    console.log('[getWsStreamId] Fallback to stream:', channel.stream);
-    return channel.stream;
+    return '';
   }
 
   // Determine if shared service mode should be used

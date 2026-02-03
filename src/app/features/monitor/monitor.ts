@@ -1008,9 +1008,11 @@ export class MonitorComponent implements OnInit {
   }
 
   // Get WebSocket stream ID for BM-APP video WebSocket
-  // BM-APP video WebSocket expects:
-  // - "X" (TaskIdx as string) for individual camera view (e.g., "1", "7")
-  // - "group/X" for mosaic view showing all cameras in group X
+  // Testing different channel formats to find the correct one for individual camera view
+  // Format options:
+  // - TaskIdx number: "10" - TESTED, shows mosaic (not correct)
+  // - AlgTaskSession: "DCC1-HARKP3_KOPER03" - trying this
+  // - MediaName: "KOPER03" - backup option
   getWsStreamId(source: VideoSource): string {
     // Try to find matching AI task by camera name
     const tasks = this.aiTasks();
@@ -1027,17 +1029,21 @@ export class MonitorComponent implements OnInit {
       TaskIdx: task.TaskIdx
     } : 'none');
 
-    // If found, use TaskIdx as string for individual camera view
-    // BM-APP video WebSocket expects just the number, not "task/X" prefix
-    if (task && task.TaskIdx !== undefined && task.TaskIdx !== null) {
-      const streamId = String(task.TaskIdx);
-      console.log('[Monitor.getWsStreamId] Using TaskIdx as string:', streamId);
-      return streamId;
+    // If found, try AlgTaskSession as the channel identifier
+    // This is the task session name which might be what BM-APP expects for individual camera
+    if (task && task.AlgTaskSession) {
+      console.log('[Monitor.getWsStreamId] Using AlgTaskSession:', task.AlgTaskSession);
+      return task.AlgTaskSession;
     }
 
-    // Fallback: no matching task found - this will likely not work
-    // because BM-APP needs a valid TaskIdx
-    console.log('[Monitor.getWsStreamId] No matching task, cannot determine TaskIdx');
+    // Fallback to MediaName
+    if (task && task.MediaName) {
+      console.log('[Monitor.getWsStreamId] Using MediaName:', task.MediaName);
+      return task.MediaName;
+    }
+
+    // Last fallback to source name
+    console.log('[Monitor.getWsStreamId] No matching task, using source name:', source.name);
     return source.name;
   }
 

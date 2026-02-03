@@ -1008,11 +1008,9 @@ export class MonitorComponent implements OnInit {
   }
 
   // Get WebSocket stream ID for BM-APP video WebSocket
-  // Testing different channel formats to find the correct one for individual camera view
-  // Format options:
-  // - TaskIdx number: "10" - TESTED, shows mosaic (not correct)
-  // - AlgTaskSession: "DCC1-HARKP3_KOPER03" - trying this
-  // - MediaName: "KOPER03" - backup option
+  // Correct format from app_preview_channel API:
+  // - Individual camera: "task/<AlgTaskSession>" (e.g., "task/DCC1-HARKP3_KOPER03")
+  // - Mosaic view: "group/<number>" (e.g., "group/1")
   getWsStreamId(source: VideoSource): string {
     // Try to find matching AI task by camera name
     const tasks = this.aiTasks();
@@ -1029,22 +1027,17 @@ export class MonitorComponent implements OnInit {
       TaskIdx: task.TaskIdx
     } : 'none');
 
-    // If found, try AlgTaskSession as the channel identifier
-    // This is the task session name which might be what BM-APP expects for individual camera
+    // Use "task/<AlgTaskSession>" format for individual camera view
     if (task && task.AlgTaskSession) {
-      console.log('[Monitor.getWsStreamId] Using AlgTaskSession:', task.AlgTaskSession);
-      return task.AlgTaskSession;
+      const streamId = `task/${task.AlgTaskSession}`;
+      console.log('[Monitor.getWsStreamId] Using task/AlgTaskSession:', streamId);
+      return streamId;
     }
 
-    // Fallback to MediaName
-    if (task && task.MediaName) {
-      console.log('[Monitor.getWsStreamId] Using MediaName:', task.MediaName);
-      return task.MediaName;
-    }
-
-    // Last fallback to source name
-    console.log('[Monitor.getWsStreamId] No matching task, using source name:', source.name);
-    return source.name;
+    // Fallback: use task/<source.name> format
+    const streamId = `task/${source.name}`;
+    console.log('[Monitor.getWsStreamId] Fallback to task/source.name:', streamId);
+    return streamId;
   }
 
   /**

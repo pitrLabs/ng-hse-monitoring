@@ -970,8 +970,8 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
     }
   }
 
-  // Store preview channel mapping (TaskIdx -> preview channel identifier)
-  private previewChannelMap = new Map<number, string>();
+  // Store preview channel mapping (task name -> url for WebSocket)
+  private previewChannelMap = new Map<string, string>();
 
   // Direct query to BM-APP API via proxy
   // BM-APP nginx routes: /api/ -> port 10002 (backend API)
@@ -985,40 +985,31 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
         console.log('=== PREVIEW CHANNELS RAW RESPONSE ===');
         console.log(JSON.stringify(res, null, 2));
 
-        // Build a map of TaskIdx to preview channel identifier
+        // Build a map of task name -> url from preview channels
+        // Format from BM-APP:
+        // { "name": "Task Stream", "chn": [{ "name": "H8C-1", "task": "H8C-1", "url": "task/H8C-1" }] }
         this.previewChannelMap.clear();
 
-        if (res.Content?.TaskGroup) {
-          // TaskGroup contains groups of tasks
-          // Each group may have a "chn" array with individual channel info
-          res.Content.TaskGroup.forEach((group: any, groupIdx: number) => {
-            console.log(`TaskGroup[${groupIdx}]:`, JSON.stringify(group, null, 2));
-
-            // Check for chn array which contains individual channels
+        if (res.Content && Array.isArray(res.Content)) {
+          res.Content.forEach((group: any) => {
             if (group.chn && Array.isArray(group.chn)) {
-              group.chn.forEach((chn: any, chnIdx: number) => {
-                // chn might have: TaskIdx, MediaName, or other identifiers
-                // Store the mapping for lookup later
-                if (chn.TaskIdx !== undefined) {
-                  // The channel identifier might be in various formats
-                  // Try to extract the correct one
-                  const channelId = chn.chn || chn.id || `task/${chn.TaskIdx}`;
-                  this.previewChannelMap.set(chn.TaskIdx, channelId);
-                  console.log(`Mapped TaskIdx ${chn.TaskIdx} -> "${channelId}"`);
+              group.chn.forEach((chn: any) => {
+                // Map by task name (which is AlgTaskSession) to the url
+                if (chn.task && chn.url) {
+                  this.previewChannelMap.set(chn.task.trim(), chn.url);
+                  console.log(`Mapped task "${chn.task.trim()}" -> "${chn.url}"`);
+                }
+                // Also map by name if different
+                if (chn.name && chn.url && chn.name !== chn.task) {
+                  this.previewChannelMap.set(chn.name.trim(), chn.url);
+                  console.log(`Mapped name "${chn.name.trim()}" -> "${chn.url}"`);
                 }
               });
-            }
-
-            // Also check if group itself has TaskIdx
-            if (group.TaskIdx !== undefined) {
-              const channelId = group.chn || group.id || `task/${group.TaskIdx}`;
-              this.previewChannelMap.set(group.TaskIdx, channelId);
-              console.log(`Mapped group TaskIdx ${group.TaskIdx} -> "${channelId}"`);
             }
           });
         }
 
-        console.log('Preview channel map:', Object.fromEntries(this.previewChannelMap));
+        console.log('Preview channel map size:', this.previewChannelMap.size);
 
         // Now load tasks
         this.loadTasksFromBmapp();
@@ -1045,8 +1036,22 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
             const isOnline = statusType === 4; // Only "Healthy" is truly online
             const isConnecting = statusType === 1;
 
-            // Get preview channel identifier if available
-            const previewChn = this.previewChannelMap.get(t.TaskIdx);
+            // Get preview channel URL from the map
+            // Try matching by AlgTaskSession (task name)
+            const sessionTrimmed = t.AlgTaskSession?.trim();
+            let previewChn = this.previewChannelMap.get(sessionTrimmed);
+
+            // If not found, try MediaName
+            if (!previewChn && t.MediaName) {
+              previewChn = this.previewChannelMap.get(t.MediaName.trim());
+            }
+
+            // If still not found and we have AlgTaskSession, construct the URL
+            // Format: "task/<AlgTaskSession>"
+            if (!previewChn && sessionTrimmed) {
+              previewChn = `task/${sessionTrimmed}`;
+              console.log(`Constructed previewChn for ${sessionTrimmed}: ${previewChn}`);
+            }
 
             // Debug: log TaskIdx and preview channel for each task
             console.log(`Task[${index}]: ${t.MediaName}, TaskIdx=${t.TaskIdx}, Session=${t.AlgTaskSession}, previewChn=${previewChn}`);
@@ -1060,12 +1065,12 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
               stream: t.AlgTaskSession, // Task session is the stream name for AI output
               app: 'live',
               taskIdx: t.TaskIdx, // For WebSocket video streaming (individual camera view)
-              previewChn: previewChn // Channel identifier from preview API (if available)
+              previewChn: previewChn // Channel URL from preview API: "task/<AlgTaskSession>"
             };
           });
-          console.log('Loaded tasks with TaskIdx:', this.videoChannels.map(c => ({
+          console.log('Loaded tasks with previewChn:', this.videoChannels.map(c => ({
             name: c.name,
-            taskIdx: c.taskIdx,
+            stream: c.stream,
             previewChn: c.previewChn
           })));
         } else {
@@ -1312,12 +1317,9 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
   }
 
   // Get WebSocket stream ID for BM-APP video WebSocket
-  // Testing different channel formats to find the correct one for individual camera view
-  // Format options:
-  // - TaskIdx number: "10" - TESTED, shows mosaic
-  // - AlgTaskSession: "DCC1-HARKP3_KOPER03" - trying this
-  // - MediaName: "KOPER03" - backup option
-  // - "group/X" = mosaic view
+  // Correct format from app_preview_channel API:
+  // - Individual camera: "task/<AlgTaskSession>" (e.g., "task/DCC1-HARKP3_KOPER03")
+  // - Mosaic view: "group/<number>" (e.g., "group/1")
   getWsStreamId(channel: VideoChannel): string {
     // DEBUG: Log channel info
     console.log('[getWsStreamId] Channel:', {
@@ -1328,29 +1330,23 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
       app: channel.app
     });
 
-    // Priority 1: Use previewChn from app_preview_channel API if available
+    // Priority 1: Use previewChn which contains the correct "task/XXX" format
     if (channel.previewChn) {
       console.log('[getWsStreamId] Using previewChn:', channel.previewChn);
       return channel.previewChn;
     }
 
-    // Priority 2: Try using AlgTaskSession (stream) as channel identifier
-    // This is the task session name which might be what BM-APP expects
+    // Priority 2: Construct "task/<AlgTaskSession>" format if stream available
     if (channel.stream) {
-      console.log('[getWsStreamId] Using AlgTaskSession (stream):', channel.stream);
-      return channel.stream;
+      const streamId = `task/${channel.stream}`;
+      console.log('[getWsStreamId] Constructed task/stream:', streamId);
+      return streamId;
     }
 
-    // Priority 3: Use MediaName (channel name) as fallback
+    // Priority 3: Use MediaName with task/ prefix
     if (channel.name) {
-      console.log('[getWsStreamId] Using MediaName (name):', channel.name);
-      return channel.name;
-    }
-
-    // Last fallback to TaskIdx
-    if (channel.taskIdx !== undefined && channel.taskIdx !== null) {
-      const streamId = String(channel.taskIdx);
-      console.log('[getWsStreamId] Fallback to TaskIdx:', streamId);
+      const streamId = `task/${channel.name}`;
+      console.log('[getWsStreamId] Constructed task/name:', streamId);
       return streamId;
     }
 

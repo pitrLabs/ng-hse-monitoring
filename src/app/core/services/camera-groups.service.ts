@@ -7,16 +7,11 @@ export interface CameraGroup {
   name: string;
   display_name: string | null;
   description: string | null;
+  user_id: string | null;
   is_active: boolean;
   created_at: string;
   updated_at: string;
   created_by_id: string | null;
-}
-
-export interface CameraGroupUpdate {
-  display_name?: string;
-  description?: string;
-  is_active?: boolean;
 }
 
 @Injectable({
@@ -28,11 +23,20 @@ export class CameraGroupsService {
 
   // State
   private _groups = signal<CameraGroup[]>([]);
+  private _assignments = signal<Record<string, string>>({}); // {video_source_id: group_id}
   private _loading = signal(false);
 
   // Public signals
   readonly groups = this._groups.asReadonly();
+  readonly assignments = this._assignments.asReadonly();
   readonly loading = this._loading.asReadonly();
+
+  // Computed map for quick lookup by id
+  readonly groupsById = computed(() => {
+    const map = new Map<string, CameraGroup>();
+    this._groups().forEach(g => map.set(g.id, g));
+    return map;
+  });
 
   // Computed map for quick lookup by name
   readonly groupsMap = computed(() => {
@@ -42,8 +46,14 @@ export class CameraGroupsService {
   });
 
   /**
+   * Get the group_id for a given video source (per-user assignment)
+   */
+  getAssignedGroupId(videoSourceId: string): string | null {
+    return this._assignments()[videoSourceId] || null;
+  }
+
+  /**
    * Get display name for a group
-   * Returns custom display_name if set, otherwise returns original name
    */
   getDisplayName(groupName: string): string {
     const group = this.groupsMap().get(groupName);
@@ -51,11 +61,12 @@ export class CameraGroupsService {
   }
 
   /**
-   * Load all camera groups from API
+   * Load current user's personal folders and assignments
    */
   loadGroups(): void {
     this._loading.set(true);
-    this.http.get<CameraGroup[]>(`${this.apiUrl}/locations/groups`).subscribe({
+    // Load groups and assignments in parallel
+    this.http.get<CameraGroup[]>(`${this.apiUrl}/locations/groups/my`).subscribe({
       next: (groups) => {
         this._groups.set(groups);
         this._loading.set(false);
@@ -65,22 +76,37 @@ export class CameraGroupsService {
         this._loading.set(false);
       }
     });
+
+    this.loadAssignments();
   }
 
   /**
-   * Create or update a group (upsert)
-   * Used to ensure a group exists when cameras are loaded
+   * Load current user's camera-to-group assignments
    */
-  upsertGroup(name: string, displayName?: string): Promise<CameraGroup> {
+  loadAssignments(): void {
+    this.http.get<{ assignments: Record<string, string> }>(`${this.apiUrl}/locations/groups/my/assignments`).subscribe({
+      next: (res) => {
+        this._assignments.set(res.assignments || {});
+      },
+      error: (err) => {
+        console.error('[CameraGroupsService] Failed to load assignments:', err);
+        this._assignments.set({});
+      }
+    });
+  }
+
+  /**
+   * Create a personal folder (upsert by name)
+   */
+  createGroup(name: string, displayName?: string): Promise<CameraGroup> {
     return new Promise((resolve, reject) => {
       let params = new HttpParams().set('name', name);
       if (displayName) {
         params = params.set('display_name', displayName);
       }
 
-      this.http.post<CameraGroup>(`${this.apiUrl}/locations/groups/upsert`, null, { params }).subscribe({
+      this.http.post<CameraGroup>(`${this.apiUrl}/locations/groups/my`, null, { params }).subscribe({
         next: (group) => {
-          // Update local state
           this._groups.update(groups => {
             const index = groups.findIndex(g => g.name === name);
             if (index >= 0) {
@@ -98,16 +124,14 @@ export class CameraGroupsService {
   }
 
   /**
-   * Update a group (rename display name)
+   * Rename a personal folder
    */
-  updateGroup(groupId: string, update: CameraGroupUpdate): Promise<CameraGroup> {
+  renameGroup(groupId: string, newDisplayName: string): Promise<CameraGroup> {
     return new Promise((resolve, reject) => {
-      this.http.patch<CameraGroup>(`${this.apiUrl}/locations/groups/${groupId}`, update).subscribe({
+      const params = new HttpParams().set('display_name', newDisplayName);
+      this.http.patch<CameraGroup>(`${this.apiUrl}/locations/groups/my/${groupId}`, null, { params }).subscribe({
         next: (group) => {
-          // Update local state
-          this._groups.update(groups => {
-            return groups.map(g => g.id === groupId ? group : g);
-          });
+          this._groups.update(groups => groups.map(g => g.id === groupId ? group : g));
           resolve(group);
         },
         error: reject
@@ -116,26 +140,22 @@ export class CameraGroupsService {
   }
 
   /**
-   * Rename a group by its original name
+   * Delete a personal folder (also removes its assignments)
    */
-  renameGroup(originalName: string, newDisplayName: string): Promise<CameraGroup> {
-    const group = this.groupsMap().get(originalName);
-    if (!group) {
-      // Group doesn't exist in DB yet, create it
-      return this.upsertGroup(originalName, newDisplayName);
-    }
-    return this.updateGroup(group.id, { display_name: newDisplayName });
-  }
-
-  /**
-   * Delete a group
-   */
-  deleteGroup(groupId: string): Promise<void> {
+  deleteGroup(groupId: string): Promise<{ message: string }> {
     return new Promise((resolve, reject) => {
-      this.http.delete(`${this.apiUrl}/locations/groups/${groupId}`).subscribe({
-        next: () => {
+      this.http.delete<{ message: string }>(`${this.apiUrl}/locations/groups/my/${groupId}`).subscribe({
+        next: (result) => {
           this._groups.update(groups => groups.filter(g => g.id !== groupId));
-          resolve();
+          // Remove assignments for this group
+          this._assignments.update(assignments => {
+            const updated = { ...assignments };
+            for (const [vsId, gId] of Object.entries(updated)) {
+              if (gId === groupId) delete updated[vsId];
+            }
+            return updated;
+          });
+          resolve(result);
         },
         error: reject
       });
@@ -143,20 +163,52 @@ export class CameraGroupsService {
   }
 
   /**
-   * Sync groups from a list of group names
-   * Creates any missing groups in the database
+   * Assign cameras to a personal folder
    */
-  async syncGroups(groupNames: string[]): Promise<void> {
-    const existingNames = new Set(this._groups().map(g => g.name));
-    const missingNames = groupNames.filter(name => !existingNames.has(name));
+  assignCamerasToGroup(groupId: string, videoSourceIds: string[]): Promise<{ message: string }> {
+    return new Promise((resolve, reject) => {
+      let params = new HttpParams().set('group_id', groupId);
+      videoSourceIds.forEach(id => {
+        params = params.append('video_source_ids', id);
+      });
 
-    // Create missing groups
-    for (const name of missingNames) {
-      try {
-        await this.upsertGroup(name);
-      } catch (err) {
-        console.warn(`[CameraGroupsService] Failed to create group ${name}:`, err);
-      }
-    }
+      this.http.post<{ message: string }>(`${this.apiUrl}/locations/groups/my/assign`, null, { params }).subscribe({
+        next: (result) => {
+          // Update local assignments
+          this._assignments.update(assignments => {
+            const updated = { ...assignments };
+            videoSourceIds.forEach(id => { updated[id] = groupId; });
+            return updated;
+          });
+          resolve(result);
+        },
+        error: reject
+      });
+    });
+  }
+
+  /**
+   * Remove cameras from their folders (back to ungrouped)
+   */
+  unassignCameras(videoSourceIds: string[]): Promise<{ message: string }> {
+    return new Promise((resolve, reject) => {
+      let params = new HttpParams();
+      videoSourceIds.forEach(id => {
+        params = params.append('video_source_ids', id);
+      });
+
+      this.http.post<{ message: string }>(`${this.apiUrl}/locations/groups/my/unassign`, null, { params }).subscribe({
+        next: (result) => {
+          // Update local assignments
+          this._assignments.update(assignments => {
+            const updated = { ...assignments };
+            videoSourceIds.forEach(id => { delete updated[id]; });
+            return updated;
+          });
+          resolve(result);
+        },
+        error: reject
+      });
+    });
   }
 }

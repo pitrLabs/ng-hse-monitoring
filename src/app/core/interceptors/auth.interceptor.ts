@@ -34,13 +34,17 @@ export const authInterceptor: HttpInterceptorFn = (req, next) => {
           req.url.includes(endpoint)
         );
 
-        // Only auto-logout if:
-        // 1. Not a public endpoint
-        // 2. User was previously authenticated (has token)
-        // 3. The /auth/me endpoint fails (confirms token is invalid)
-        if (!isPublicEndpoint && token && req.url.includes('/auth/me')) {
-          authService.logout();
-          router.navigate(['/login']);
+        if (!isPublicEndpoint && token) {
+          // Check if session was invalidated (logged in from another device)
+          const isSessionInvalid = error.error?.detail === 'session_invalid';
+
+          if (isSessionInvalid) {
+            // Session invalidated - user logged in from another device
+            authService.forceLogout('Sesi Anda telah berakhir karena login dari perangkat lain.');
+          } else if (req.url.includes('/auth/me')) {
+            // Token expired or invalid
+            authService.logout();
+          }
         }
       }
       return throwError(() => error);

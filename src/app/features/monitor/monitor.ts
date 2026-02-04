@@ -1,4 +1,4 @@
-import { Component, signal, OnInit, computed, inject } from '@angular/core';
+import { Component, signal, OnInit, computed, inject, effect } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MatIconModule } from '@angular/material/icon';
@@ -11,6 +11,7 @@ import { MatTabsModule } from '@angular/material/tabs';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatInputModule } from '@angular/material/input';
 import { MatFormFieldModule } from '@angular/material/form-field';
+import { MatSelectModule } from '@angular/material/select';
 import { VideoSourceService, VideoSource } from '../../core/services/video-source.service';
 import { VideoPlayerComponent } from '../../shared/components/video-player';
 import { WsVideoPlayerComponent } from '../../shared/components/ws-video-player/ws-video-player.component';
@@ -42,6 +43,7 @@ interface CameraGroup {
     MatProgressSpinnerModule,
     MatInputModule,
     MatFormFieldModule,
+    MatSelectModule,
     VideoPlayerComponent,
     WsVideoPlayerComponent
   ],
@@ -85,9 +87,16 @@ interface CameraGroup {
         <div class="left-panel glass-card-static">
           <div class="panel-header">
             <h3>Video Sources</h3>
-            <mat-checkbox [(ngModel)]="showActiveOnly" color="primary" (change)="loadVideoSources()">
-              Active Only
-            </mat-checkbox>
+            <div class="header-actions">
+              @if (canRenameGroups()) {
+                <button mat-icon-button class="add-folder-btn" matTooltip="Create folder" (click)="openCreateFolderDialog()">
+                  <mat-icon>create_new_folder</mat-icon>
+                </button>
+              }
+              <mat-checkbox [(ngModel)]="showActiveOnly" color="primary" (change)="loadVideoSources()">
+                Active Only
+              </mat-checkbox>
+            </div>
           </div>
 
           @if (loading()) {
@@ -104,15 +113,25 @@ interface CameraGroup {
             <div class="source-list">
               @for (group of filteredGroups(); track group.id) {
                 <div class="tree-node">
-                  <div class="node-header" (click)="toggleGroup(group)">
+                  <div class="node-header"
+                       [class.drag-over]="dragOverGroup === group.id"
+                       (click)="toggleGroup(group)"
+                       (dragover)="onFolderDragOver($event, group)"
+                       (dragleave)="onFolderDragLeave($event)"
+                       (drop)="onFolderDrop($event, group)">
                     <mat-icon class="expand-icon" [class.expanded]="group.expanded">chevron_right</mat-icon>
                     <mat-icon class="folder-icon">folder</mat-icon>
                     <span class="node-name">{{ group.displayName }}</span>
                     <span class="node-count">({{ group.cameras.length }})</span>
                     @if (canRenameGroups()) {
-                      <button mat-icon-button class="rename-btn" matTooltip="Rename folder" (click)="openRenameDialog(group); $event.stopPropagation()">
-                        <mat-icon>edit</mat-icon>
-                      </button>
+                      <div class="folder-actions">
+                        <button mat-icon-button class="folder-action-btn" matTooltip="Rename folder" (click)="openRenameDialog(group); $event.stopPropagation()">
+                          <mat-icon>edit</mat-icon>
+                        </button>
+                        <button mat-icon-button class="folder-action-btn delete-btn" matTooltip="Delete folder" (click)="openDeleteDialog(group); $event.stopPropagation()">
+                          <mat-icon>delete</mat-icon>
+                        </button>
+                      </div>
                     }
                   </div>
                   @if (group.expanded) {
@@ -122,6 +141,10 @@ interface CameraGroup {
                           class="source-item"
                           [class.selected]="isSourceSelected(source)"
                           [class.active]="source.is_active"
+                          [class.dragging]="draggingCamera?.id === source.id"
+                          draggable="true"
+                          (dragstart)="onCameraDragStart($event, source, group)"
+                          (dragend)="onCameraDragEnd($event)"
                           (click)="selectSource(source)"
                           (dblclick)="addToGrid(source)"
                         >
@@ -261,6 +284,90 @@ interface CameraGroup {
                   <mat-spinner diameter="16"></mat-spinner>
                 } @else {
                   Save
+                }
+              </button>
+            </div>
+          </div>
+        </div>
+      }
+
+      <!-- Delete Folder Dialog -->
+      @if (deleteDialogOpen()) {
+        <div class="dialog-overlay" (click)="closeDeleteDialog()">
+          <div class="delete-dialog glass-card-static" (click)="$event.stopPropagation()">
+            <div class="dialog-header">
+              <h3>Delete Folder</h3>
+              <button mat-icon-button (click)="closeDeleteDialog()">
+                <mat-icon>close</mat-icon>
+              </button>
+            </div>
+            <div class="dialog-body">
+              <div class="delete-warning">
+                <mat-icon class="warning-icon">warning</mat-icon>
+                <div class="warning-text">
+                  @if (deleteTargetCameraCount() === 0) {
+                    <p>Are you sure you want to delete folder "<strong>{{ deleteTarget()?.displayName }}</strong>"?</p>
+                    <p class="subtext">This folder is empty and can be deleted safely.</p>
+                  } @else {
+                    <p>Folder "<strong>{{ deleteTarget()?.displayName }}</strong>" contains <strong>{{ deleteTargetCameraCount() }} cameras</strong>.</p>
+                    <p class="subtext">Please move the cameras to another folder first, or select a target folder below to move them automatically.</p>
+                  }
+                </div>
+              </div>
+
+              @if (deleteTargetCameraCount() > 0) {
+                <mat-form-field appearance="outline" class="full-width">
+                  <mat-label>Move cameras to folder</mat-label>
+                  <mat-select [(ngModel)]="moveToGroupId">
+                    <mat-option value="">-- Leave ungrouped --</mat-option>
+                    @for (group of getOtherGroups(); track group.id) {
+                      <mat-option [value]="group.id">{{ group.displayName }}</mat-option>
+                    }
+                  </mat-select>
+                </mat-form-field>
+              }
+            </div>
+            <div class="dialog-actions">
+              <button mat-button (click)="closeDeleteDialog()">Cancel</button>
+              <button mat-flat-button color="warn" (click)="confirmDeleteGroup()" [disabled]="deleting()">
+                @if (deleting()) {
+                  <mat-spinner diameter="16"></mat-spinner>
+                } @else {
+                  Delete
+                }
+              </button>
+            </div>
+          </div>
+        </div>
+      }
+
+      <!-- Create Folder Dialog -->
+      @if (createFolderDialogOpen()) {
+        <div class="dialog-overlay" (click)="closeCreateFolderDialog()">
+          <div class="rename-dialog glass-card-static" (click)="$event.stopPropagation()">
+            <div class="dialog-header">
+              <h3>Create New Folder</h3>
+              <button mat-icon-button (click)="closeCreateFolderDialog()">
+                <mat-icon>close</mat-icon>
+              </button>
+            </div>
+            <div class="dialog-body">
+              <mat-form-field appearance="outline" class="full-width">
+                <mat-label>Folder Name</mat-label>
+                <input matInput [(ngModel)]="newFolderName" placeholder="Enter folder name">
+              </mat-form-field>
+              <mat-form-field appearance="outline" class="full-width">
+                <mat-label>Display Name (optional)</mat-label>
+                <input matInput [(ngModel)]="newFolderDisplayName" placeholder="Enter display name">
+              </mat-form-field>
+            </div>
+            <div class="dialog-actions">
+              <button mat-button (click)="closeCreateFolderDialog()">Cancel</button>
+              <button mat-flat-button color="primary" (click)="createFolder()" [disabled]="!newFolderName || creatingFolder()">
+                @if (creatingFolder()) {
+                  <mat-spinner diameter="16"></mat-spinner>
+                } @else {
+                  Create
                 }
               </button>
             </div>
@@ -415,6 +522,28 @@ interface CameraGroup {
         margin: 0;
       }
 
+      .header-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .add-folder-btn {
+        width: 28px;
+        height: 28px;
+        color: var(--text-secondary);
+
+        mat-icon {
+          font-size: 18px;
+          width: 18px;
+          height: 18px;
+        }
+
+        &:hover {
+          color: var(--accent-primary);
+        }
+      }
+
       ::ng-deep .mat-mdc-checkbox-label {
         font-size: 12px;
         color: var(--text-secondary);
@@ -456,9 +585,16 @@ interface CameraGroup {
       padding: 8px 10px;
       border-radius: var(--radius-sm);
       cursor: pointer;
+      transition: all 0.2s ease;
+      min-height: 32px;
 
       &:hover {
         background: var(--glass-bg-hover);
+      }
+
+      &.drag-over {
+        background: rgba(0, 212, 255, 0.2);
+        border: 2px dashed var(--accent-primary);
       }
     }
 
@@ -528,6 +664,19 @@ interface CameraGroup {
       &.selected {
         background: rgba(0, 212, 255, 0.15);
         border: 1px solid var(--accent-primary);
+      }
+
+      &.dragging {
+        opacity: 0.4;
+        transform: scale(0.95);
+      }
+
+      &[draggable="true"] {
+        cursor: grab;
+
+        &:active {
+          cursor: grabbing;
+        }
       }
     }
 
@@ -827,24 +976,48 @@ interface CameraGroup {
       color: var(--text-tertiary);
     }
 
-    .rename-btn {
-      width: 24px;
-      height: 24px;
-      min-width: 24px;
+    .folder-actions {
+      display: inline-flex;
+      align-items: center;
+      gap: 0;
+      margin-left: 4px;
+      flex-shrink: 0;
       visibility: hidden;
       opacity: 0;
       transition: opacity 0.2s, visibility 0.2s;
-      margin-left: auto;
+      height: 24px;
+      vertical-align: middle;
+    }
+
+    .folder-action-btn {
+      width: 24px !important;
+      height: 24px !important;
+      min-width: 24px !important;
+      padding: 0 !important;
+      line-height: 24px !important;
       flex-shrink: 0;
+      display: inline-flex !important;
+      align-items: center;
+      justify-content: center;
+
+      ::ng-deep .mat-mdc-button-touch-target {
+        width: 24px !important;
+        height: 24px !important;
+      }
 
       mat-icon {
-        font-size: 14px;
-        width: 14px;
-        height: 14px;
+        font-size: 16px;
+        width: 16px;
+        height: 16px;
+        line-height: 16px;
+      }
+
+      &.delete-btn {
+        color: var(--error);
       }
     }
 
-    .node-header:hover .rename-btn {
+    .node-header:hover .folder-actions {
       visibility: visible;
       opacity: 1;
     }
@@ -916,6 +1089,55 @@ interface CameraGroup {
       background: var(--glass-bg);
     }
 
+    // Delete Dialog
+    .delete-dialog {
+      width: 450px;
+      max-width: 90vw;
+      padding: 0;
+      overflow: hidden;
+    }
+
+    .delete-warning {
+      display: flex;
+      gap: 16px;
+      padding: 16px;
+      background: rgba(239, 68, 68, 0.1);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      border-radius: var(--radius-sm);
+      margin-bottom: 16px;
+
+      .warning-icon {
+        font-size: 24px;
+        width: 24px;
+        height: 24px;
+        color: var(--error);
+        flex-shrink: 0;
+      }
+
+      .warning-text {
+        flex: 1;
+
+        p {
+          margin: 0 0 8px 0;
+          color: var(--text-primary);
+          font-size: 14px;
+
+          &:last-child {
+            margin-bottom: 0;
+          }
+
+          strong {
+            color: var(--error);
+          }
+        }
+
+        .subtext {
+          font-size: 13px;
+          color: var(--text-secondary);
+        }
+      }
+    }
+
     @media (max-width: 900px) {
       .main-content {
         grid-template-columns: 1fr;
@@ -965,13 +1187,41 @@ export class MonitorComponent implements OnInit {
   newDisplayName = '';
   renaming = signal(false);
 
-  // Check if user can rename (superadmin or manager)
-  canRenameGroups = this.authService.isManager;
+  // Delete dialog state
+  deleteDialogOpen = signal(false);
+  deleteTarget = signal<CameraGroup | null>(null);
+  deleteTargetCameraCount = signal(0);
+  moveToGroupId = '';
+  deleting = signal(false);
 
-  constructor(private videoSourceService: VideoSourceService) {}
+  // Create folder dialog state
+  createFolderDialogOpen = signal(false);
+  newFolderName = '';
+  newFolderDisplayName = '';
+  creatingFolder = signal(false);
+
+  // Drag and drop state
+  draggingCamera: VideoSource | null = null;
+  draggingFromGroup: CameraGroup | null = null;
+  dragOverGroup: string | null = null;
+
+  // All users can manage their own personal folders
+  canRenameGroups = computed(() => !!this.authService.currentUser());
+
+  constructor(private videoSourceService: VideoSourceService) {
+    // Re-build camera groups when assignments or groups change (fixes race condition)
+    effect(() => {
+      const assignments = this.cameraGroupsService.assignments();
+      const groups = this.cameraGroupsService.groups();
+      const sources = this.videoSources();
+      if (sources.length > 0) {
+        this.buildCameraGroups(sources);
+      }
+    });
+  }
 
   ngOnInit() {
-    // Load camera groups from backend first
+    // Load camera groups + assignments from backend first
     this.cameraGroupsService.loadGroups();
     this.loadVideoSources();
     // Pre-load AI tasks for BM-APP mode (avoid race condition)
@@ -1045,49 +1295,76 @@ export class MonitorComponent implements OnInit {
   }
 
   /**
-   * Build camera groups from video sources
-   * Simple grouping by first word: "H8C-1" → "H8C", "BWC SALATIGA 1" → "BWC"
+   * Build camera groups from video sources using per-user assignments
+   * Uses assignments signal from CameraGroupsService (not source.group_id)
    */
   buildCameraGroups(sources: VideoSource[]) {
+    const backendGroups = this.cameraGroupsService.groups();
+    const assignments = this.cameraGroupsService.assignments();
     const groupMap = new Map<string, VideoSource[]>();
+    const ungroupedCameras: VideoSource[] = [];
 
+    // Group cameras by per-user assignment
     for (const source of sources) {
-      // Simple: take first word (split by space or dash)
-      const firstWord = source.name.split(/[\s-]/)[0] || 'Other';
-      const groupName = firstWord.toUpperCase();
-
-      if (!groupMap.has(groupName)) {
-        groupMap.set(groupName, []);
+      const assignedGroupId = assignments[source.id];
+      if (assignedGroupId) {
+        if (!groupMap.has(assignedGroupId)) {
+          groupMap.set(assignedGroupId, []);
+        }
+        groupMap.get(assignedGroupId)!.push(source);
+      } else {
+        ungroupedCameras.push(source);
       }
-      groupMap.get(groupName)!.push(source);
     }
 
-    // Convert to array and sort
     const groups: CameraGroup[] = [];
-    groupMap.forEach((cameras, name) => {
-      // Get display name from service (custom name set by user)
-      const displayName = this.cameraGroupsService.getDisplayName(name);
-      groups.push({
-        id: name.toLowerCase(),
-        name: name,  // Original name for grouping
-        displayName: displayName,  // Custom display name
-        expanded: true,
-        cameras: cameras.sort((a, b) => a.name.localeCompare(b.name))
-      });
+
+    // Add groups that have cameras
+    groupMap.forEach((cameras, groupId) => {
+      const backendGroup = backendGroups.find(g => g.id === groupId);
+      if (backendGroup) {
+        groups.push({
+          id: backendGroup.id,
+          name: backendGroup.name,
+          displayName: backendGroup.display_name || backendGroup.name,
+          expanded: true,
+          cameras: cameras.sort((a, b) => a.name.localeCompare(b.name))
+        });
+      }
     });
 
-    // Sort groups alphabetically by display name, but put "Other" at the end
+    // Add empty groups from backend (user-created folders without cameras)
+    for (const bg of backendGroups) {
+      if (!groupMap.has(bg.id)) {
+        groups.push({
+          id: bg.id,
+          name: bg.name,
+          displayName: bg.display_name || bg.name,
+          expanded: true,
+          cameras: []
+        });
+      }
+    }
+
+    // Add ungrouped cameras (only if there are any)
+    if (ungroupedCameras.length > 0) {
+      groups.push({
+        id: 'ungrouped',
+        name: 'Ungrouped',
+        displayName: 'Ungrouped',
+        expanded: true,
+        cameras: ungroupedCameras.sort((a, b) => a.name.localeCompare(b.name))
+      });
+    }
+
+    // Sort groups alphabetically, put "Ungrouped" at the end
     groups.sort((a, b) => {
-      if (a.name === 'OTHER') return 1;
-      if (b.name === 'OTHER') return -1;
+      if (a.id === 'ungrouped') return 1;
+      if (b.id === 'ungrouped') return -1;
       return a.displayName.localeCompare(b.displayName);
     });
 
     this.cameraGroups.set(groups);
-
-    // Sync group names to backend (creates any missing groups)
-    const groupNames = Array.from(groupMap.keys());
-    this.cameraGroupsService.syncGroups(groupNames);
   }
 
   toggleGroup(group: CameraGroup) {
@@ -1317,18 +1594,190 @@ export class MonitorComponent implements OnInit {
 
     this.renaming.set(true);
     try {
-      await this.cameraGroupsService.renameGroup(group.name, this.newDisplayName);
+      await this.cameraGroupsService.renameGroup(group.id, this.newDisplayName);
 
       // Update local state
+      const newName = this.newDisplayName;
       this.cameraGroups.update(groups =>
-        groups.map(g => g.name === group.name ? { ...g, displayName: this.newDisplayName } : g)
+        groups.map(g => g.id === group.id ? { ...g, displayName: newName } : g)
       );
 
       this.closeRenameDialog();
-    } catch (error) {
-      console.error('Failed to rename group:', error);
+    } catch (error: any) {
+      console.error('[Monitor] Failed to rename group:', error);
+      alert(error?.error?.detail || error?.message || 'Failed to rename folder. Please try again.');
     } finally {
       this.renaming.set(false);
     }
+  }
+
+  // Delete group methods
+  openDeleteDialog(group: CameraGroup) {
+    this.deleteTarget.set(group);
+    this.deleteTargetCameraCount.set(group.cameras.length);
+    this.moveToGroupId = '';
+    this.deleteDialogOpen.set(true);
+  }
+
+  closeDeleteDialog() {
+    this.deleteDialogOpen.set(false);
+    this.deleteTarget.set(null);
+    this.deleteTargetCameraCount.set(0);
+    this.moveToGroupId = '';
+  }
+
+  getOtherGroups(): CameraGroup[] {
+    const deleteTarget = this.deleteTarget();
+    // Include "ungrouped" as an option for moving cameras, exclude current folder
+    return this.cameraGroups().filter(g => g.id !== deleteTarget?.id);
+  }
+
+  async confirmDeleteGroup() {
+    const group = this.deleteTarget();
+    if (!group) return;
+
+    if (group.id === 'ungrouped') {
+      alert('Cannot delete the Ungrouped folder');
+      return;
+    }
+
+    this.deleting.set(true);
+    try {
+      // If cameras need to be moved to another folder first
+      if (this.deleteTargetCameraCount() > 0 && this.moveToGroupId && this.moveToGroupId !== '') {
+        const cameraIds = group.cameras.map(c => c.id);
+        if (this.moveToGroupId === 'ungrouped') {
+          await this.cameraGroupsService.unassignCameras(cameraIds);
+        } else {
+          await this.cameraGroupsService.assignCamerasToGroup(this.moveToGroupId, cameraIds);
+        }
+      }
+
+      // Delete the personal folder (backend also removes its assignments)
+      await this.cameraGroupsService.deleteGroup(group.id);
+
+      // Reload to refresh
+      this.cameraGroupsService.loadGroups();
+      this.loadVideoSources();
+
+      this.closeDeleteDialog();
+    } catch (error: any) {
+      console.error('Failed to delete group:', error);
+      alert(error?.error?.detail || 'Failed to delete folder');
+    } finally {
+      this.deleting.set(false);
+    }
+  }
+
+  // Create folder methods
+  openCreateFolderDialog() {
+    this.newFolderName = '';
+    this.newFolderDisplayName = '';
+    this.createFolderDialogOpen.set(true);
+  }
+
+  closeCreateFolderDialog() {
+    this.createFolderDialogOpen.set(false);
+    this.newFolderName = '';
+    this.newFolderDisplayName = '';
+  }
+
+  async createFolder() {
+    if (!this.newFolderName) return;
+
+    this.creatingFolder.set(true);
+    try {
+      const result = await this.cameraGroupsService.createGroup(
+        this.newFolderName,
+        this.newFolderDisplayName || this.newFolderName
+      );
+
+      // Add to local state with the backend ID
+      this.cameraGroups.update(groups => [...groups, {
+        id: result.id,
+        name: result.name,
+        displayName: result.display_name || result.name,
+        expanded: true,
+        cameras: []
+      }]);
+
+      this.closeCreateFolderDialog();
+    } catch (error) {
+      console.error('Failed to create folder:', error);
+      alert('Failed to create folder');
+    } finally {
+      this.creatingFolder.set(false);
+    }
+  }
+
+  // Drag and drop methods for moving cameras between folders
+  onCameraDragStart(event: DragEvent, camera: VideoSource, fromGroup: CameraGroup) {
+    this.draggingCamera = camera;
+    this.draggingFromGroup = fromGroup;
+    event.dataTransfer?.setData('text/plain', camera.id);
+    if (event.dataTransfer) {
+      event.dataTransfer.effectAllowed = 'move';
+    }
+  }
+
+  onCameraDragEnd(event: DragEvent) {
+    this.draggingCamera = null;
+    this.draggingFromGroup = null;
+    this.dragOverGroup = null;
+  }
+
+  onFolderDragOver(event: DragEvent, group: CameraGroup) {
+    event.preventDefault();
+    // Don't allow dropping on the same folder
+    if (this.draggingFromGroup?.id === group.id) return;
+    this.dragOverGroup = group.id;
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = 'move';
+    }
+  }
+
+  onFolderDragLeave(event: DragEvent) {
+    this.dragOverGroup = null;
+  }
+
+  async onFolderDrop(event: DragEvent, targetGroup: CameraGroup) {
+    event.preventDefault();
+    this.dragOverGroup = null;
+
+    if (!this.draggingCamera || !this.draggingFromGroup) return;
+    if (this.draggingFromGroup.id === targetGroup.id) return;
+
+    const camera = this.draggingCamera;
+    const fromGroup = this.draggingFromGroup;
+
+    try {
+      // Per-user assignment: assign or unassign camera
+      if (targetGroup.id === 'ungrouped') {
+        await this.cameraGroupsService.unassignCameras([camera.id]);
+      } else {
+        await this.cameraGroupsService.assignCamerasToGroup(targetGroup.id, [camera.id]);
+      }
+
+      // Update local state
+      this.cameraGroups.update(groups => {
+        return groups.map(g => {
+          if (g.id === fromGroup.id) {
+            return { ...g, cameras: g.cameras.filter(c => c.id !== camera.id) };
+          }
+          if (g.id === targetGroup.id) {
+            return { ...g, cameras: [...g.cameras, camera] };
+          }
+          return g;
+        });
+      });
+
+      console.log(`[Monitor] Moved camera ${camera.name} from ${fromGroup.displayName} to ${targetGroup.displayName}`);
+    } catch (error) {
+      console.error('Failed to move camera:', error);
+      alert('Failed to move camera to folder');
+    }
+
+    this.draggingCamera = null;
+    this.draggingFromGroup = null;
   }
 }

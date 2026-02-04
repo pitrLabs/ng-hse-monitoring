@@ -11,6 +11,7 @@ export interface VideoSource {
   source_type: 'rtsp' | 'http' | 'file';
   description?: string;
   location?: string;
+  group_id?: string | null;  // Reference to CameraGroup
   is_active: boolean;
   sound_alert: boolean;
   is_synced_bmapp: boolean;

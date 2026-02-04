@@ -1,7 +1,7 @@
-import { Component, signal } from '@angular/core';
+import { Component, signal, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormBuilder, FormGroup, Validators, ReactiveFormsModule } from '@angular/forms';
-import { Router } from '@angular/router';
+import { Router, ActivatedRoute } from '@angular/router';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
 import { MatButtonModule } from '@angular/material/button';
@@ -61,6 +61,13 @@ import { AuthService } from '../../core/services/auth.service';
               }
             </mat-form-field>
           </div>
+
+          @if (infoMessage()) {
+            <div class="info-message animate-fade-in">
+              <mat-icon>info</mat-icon>
+              <span>{{ infoMessage() }}</span>
+            </div>
+          }
 
           @if (errorMessage()) {
             <div class="error-message animate-fade-in">
@@ -177,6 +184,25 @@ import { AuthService } from '../../core/services/auth.service';
       width: 100%;
     }
 
+    .info-message {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 16px;
+      background: rgba(59, 130, 246, 0.1);
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      border-radius: var(--radius-sm);
+      color: #3b82f6;
+      font-size: 14px;
+      margin-bottom: 8px;
+
+      mat-icon {
+        font-size: 20px;
+        width: 20px;
+        height: 20px;
+      }
+    }
+
     .error-message {
       display: flex;
       align-items: center;
@@ -264,20 +290,37 @@ import { AuthService } from '../../core/services/auth.service';
     }
   `]
 })
-export class LoginComponent {
+export class LoginComponent implements OnInit {
   loginForm: FormGroup;
   hidePassword = signal(true);
   isLoading = signal(false);
   errorMessage = signal('');
+  infoMessage = signal('');
 
   constructor(
     private fb: FormBuilder,
     private authService: AuthService,
-    private router: Router
+    private router: Router,
+    private route: ActivatedRoute
   ) {
     this.loginForm = this.fb.group({
       username: ['', Validators.required],
       password: ['', Validators.required]
+    });
+  }
+
+  ngOnInit(): void {
+    // Check for message from query params (e.g., session invalidation)
+    this.route.queryParams.subscribe(params => {
+      if (params['message']) {
+        this.infoMessage.set(params['message']);
+        // Clear the query param from URL without navigation
+        this.router.navigate([], {
+          relativeTo: this.route,
+          queryParams: {},
+          replaceUrl: true
+        });
+      }
     });
   }
 
@@ -286,6 +329,7 @@ export class LoginComponent {
 
     this.isLoading.set(true);
     this.errorMessage.set('');
+    this.infoMessage.set('');
 
     const { username, password } = this.loginForm.value;
     this.authService.login(username, password).subscribe({

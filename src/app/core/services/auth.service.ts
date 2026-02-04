@@ -38,8 +38,22 @@ export class AuthService {
   });
 
   readonly isSuperadmin = computed(() => this.currentUserSignal()?.is_superuser === true);
-  readonly isManager = computed(() => this.primaryRole() === 'manager' || this.isSuperadmin());
+  readonly isManager = computed(() => {
+    const role = this.primaryRole();
+    return role === 'manager' || role === 'admin' || this.isSuperadmin();
+  });
   readonly isOperator = computed(() => this.primaryRole() === 'operator' || this.isManager());
+
+  // Can manage folders/groups - managers and above
+  readonly canManageGroups = computed(() => {
+    const user = this.currentUserSignal();
+    if (!user) return false;
+    if (user.is_superuser) return true;
+    // Check for manager, admin, superadmin roles
+    return user.roles.some(r =>
+      ['manager', 'admin', 'superadmin'].includes(r.name.toLowerCase())
+    );
+  });
   // P3 is the minimum access level - any authenticated user should have at least this level
   readonly isP3 = computed(() => {
     const user = this.currentUserSignal();
@@ -162,6 +176,25 @@ export class AuthService {
     this.isInitialized.set(false);
 
     this.router.navigate(['/login']);
+  }
+
+  /**
+   * Force logout with a specific message (e.g., when session is invalidated by another login)
+   */
+  forceLogout(message: string): void {
+    // Emit logout event so other services can cleanup
+    this.logoutSubject.next();
+
+    // Clear all auth state
+    this.removeToken();
+    this.currentUserSignal.set(null);
+    this.initPromise = null;
+    this.isInitialized.set(false);
+
+    // Navigate to login with message
+    this.router.navigate(['/login'], {
+      queryParams: { message: message }
+    });
   }
 
   getToken(): string | null {

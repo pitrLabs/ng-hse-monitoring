@@ -1,17 +1,38 @@
-import { Component, OnInit, signal, inject } from '@angular/core';
+import { Component, OnInit, signal, inject, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MatIconModule } from '@angular/material/icon';
 import { MatButtonModule } from '@angular/material/button';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatTooltipModule } from '@angular/material/tooltip';
+import { MatCheckboxModule } from '@angular/material/checkbox';
+import { MatSelectModule } from '@angular/material/select';
+import { MatFormFieldModule } from '@angular/material/form-field';
+import { MatInputModule } from '@angular/material/input';
 import { HttpClient } from '@angular/common/http';
 import { environment } from '../../../../environments/environment';
+import { VideoSourceService, VideoSource } from '../../../core/services/video-source.service';
+
+interface Role {
+  id: string;
+  name: string;
+  description?: string;
+}
+
+interface UserFormData {
+  username: string;
+  email: string;
+  full_name: string;
+  password: string;
+  user_level: number;
+  is_active: boolean;
+  role_ids: string[];
+}
 
 @Component({
   standalone: true,
   selector: 'app-admin-users',
-  imports: [CommonModule, FormsModule, MatIconModule, MatButtonModule, MatProgressSpinnerModule, MatTooltipModule],
+  imports: [CommonModule, FormsModule, MatIconModule, MatButtonModule, MatProgressSpinnerModule, MatTooltipModule, MatCheckboxModule, MatSelectModule, MatFormFieldModule, MatInputModule],
   template: `
     <div class="admin-users">
       <div class="page-header">
@@ -41,6 +62,7 @@ import { environment } from '../../../../environments/environment';
             <div class="col-user">User</div>
             <div class="col-email">Email</div>
             <div class="col-role">Role</div>
+            <div class="col-cameras">Cameras</div>
             <div class="col-status">Status</div>
             <div class="col-actions">Actions</div>
           </div>
@@ -59,12 +81,26 @@ import { environment } from '../../../../environments/environment';
                   {{ user.is_superuser ? 'Admin' : (user.roles?.[0]?.name || 'User') }}
                 </span>
               </div>
+              <div class="col-cameras">
+                @if (user.is_superuser || isManagerOrAbove(user)) {
+                  <span class="cameras-badge all">All</span>
+                } @else {
+                  <span class="cameras-badge" [class.none]="!user.assigned_video_sources?.length">
+                    {{ user.assigned_video_sources?.length || 0 }} assigned
+                  </span>
+                }
+              </div>
               <div class="col-status">
                 <span class="status-badge" [class.active]="user.is_active">
                   {{ user.is_active ? 'Active' : 'Inactive' }}
                 </span>
               </div>
               <div class="col-actions">
+                @if (!user.is_superuser && !isManagerOrAbove(user)) {
+                  <button mat-icon-button matTooltip="Assign Cameras" (click)="openCameraAssignment(user)">
+                    <mat-icon>videocam</mat-icon>
+                  </button>
+                }
                 <button mat-icon-button matTooltip="Edit" (click)="editUser(user)">
                   <mat-icon>edit</mat-icon>
                 </button>
@@ -82,6 +118,145 @@ import { environment } from '../../../../environments/environment';
         </div>
       }
     </div>
+
+    <!-- Camera Assignment Modal -->
+    @if (showCameraModal()) {
+      <div class="modal-overlay" (click)="closeCameraModal()">
+        <div class="modal-content" (click)="$event.stopPropagation()">
+          <div class="modal-header">
+            <h3>Assign Cameras to {{ selectedUser()?.full_name || selectedUser()?.username }}</h3>
+            <button mat-icon-button (click)="closeCameraModal()">
+              <mat-icon>close</mat-icon>
+            </button>
+          </div>
+          <div class="modal-body">
+            @if (loadingCameras()) {
+              <div class="loading-container small">
+                <mat-spinner diameter="30"></mat-spinner>
+              </div>
+            } @else {
+              <div class="camera-list">
+                <div class="select-all">
+                  <mat-checkbox
+                    [checked]="allCamerasSelected()"
+                    [indeterminate]="someCamerasSelected()"
+                    (change)="toggleAllCameras($event.checked)">
+                    Select All ({{ allCameras().length }} cameras)
+                  </mat-checkbox>
+                </div>
+                @for (camera of allCameras(); track camera.id) {
+                  <div class="camera-item">
+                    <mat-checkbox
+                      [checked]="isCameraSelected(camera.id)"
+                      (change)="toggleCamera(camera.id, $event.checked)">
+                      <div class="camera-info">
+                        <span class="camera-name">{{ camera.name }}</span>
+                        <span class="camera-stream">{{ camera.stream_name }}</span>
+                      </div>
+                    </mat-checkbox>
+                  </div>
+                }
+              </div>
+            }
+          </div>
+          <div class="modal-footer">
+            <span class="selected-count">{{ selectedCameraIds().length }} cameras selected</span>
+            <div class="modal-actions">
+              <button mat-button (click)="closeCameraModal()">Cancel</button>
+              <button mat-raised-button class="btn-primary" (click)="saveCameraAssignment()" [disabled]="savingAssignment()">
+                @if (savingAssignment()) {
+                  <mat-spinner diameter="18"></mat-spinner>
+                } @else {
+                  Save
+                }
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    }
+
+    <!-- User Form Modal (Create/Edit) -->
+    @if (showUserModal()) {
+      <div class="modal-overlay" (click)="closeUserModal()">
+        <div class="modal-content user-form-modal" (click)="$event.stopPropagation()">
+          <div class="modal-header">
+            <h3>{{ isEditMode() ? 'Edit User' : 'Create New User' }}</h3>
+            <button mat-icon-button (click)="closeUserModal()">
+              <mat-icon>close</mat-icon>
+            </button>
+          </div>
+          <div class="modal-body">
+            <form class="user-form">
+              <mat-form-field appearance="outline" class="full-width">
+                <mat-label>Username</mat-label>
+                <input matInput [(ngModel)]="userForm.username" name="username" [disabled]="isEditMode()" required>
+              </mat-form-field>
+
+              <mat-form-field appearance="outline" class="full-width">
+                <mat-label>Email</mat-label>
+                <input matInput type="email" [(ngModel)]="userForm.email" name="email" required>
+              </mat-form-field>
+
+              <mat-form-field appearance="outline" class="full-width">
+                <mat-label>Full Name</mat-label>
+                <input matInput [(ngModel)]="userForm.full_name" name="full_name">
+              </mat-form-field>
+
+              <mat-form-field appearance="outline" class="full-width">
+                <mat-label>{{ isEditMode() ? 'New Password (leave blank to keep)' : 'Password' }}</mat-label>
+                <input matInput type="password" [(ngModel)]="userForm.password" name="password" [required]="!isEditMode()">
+              </mat-form-field>
+
+              <mat-form-field appearance="outline" class="full-width">
+                <mat-label>Role</mat-label>
+                <mat-select [(ngModel)]="userForm.role_ids" name="role_ids" multiple>
+                  @for (role of roles(); track role.id) {
+                    <mat-option [value]="role.id">{{ role.name }}</mat-option>
+                  }
+                </mat-select>
+              </mat-form-field>
+
+              <mat-form-field appearance="outline" class="full-width">
+                <mat-label>User Level</mat-label>
+                <mat-select [(ngModel)]="userForm.user_level" name="user_level">
+                  @for (level of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]; track level) {
+                    <mat-option [value]="level">Level {{ level }}</mat-option>
+                  }
+                </mat-select>
+              </mat-form-field>
+
+              @if (isEditMode()) {
+                <div class="status-toggle">
+                  <mat-checkbox [(ngModel)]="userForm.is_active" name="is_active">
+                    Active
+                  </mat-checkbox>
+                </div>
+              }
+
+              @if (formError()) {
+                <div class="form-error">
+                  <mat-icon>error</mat-icon>
+                  {{ formError() }}
+                </div>
+              }
+            </form>
+          </div>
+          <div class="modal-footer">
+            <div class="modal-actions">
+              <button mat-button (click)="closeUserModal()">Cancel</button>
+              <button mat-raised-button class="btn-primary" (click)="saveUser()" [disabled]="savingUser()">
+                @if (savingUser()) {
+                  <mat-spinner diameter="18"></mat-spinner>
+                } @else {
+                  {{ isEditMode() ? 'Update' : 'Create' }}
+                }
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    }
   `,
   styles: [`
     .admin-users { display: flex; flex-direction: column; gap: 24px; }
@@ -140,7 +315,7 @@ import { environment } from '../../../../environments/environment';
 
     .table-header, .table-row {
       display: grid;
-      grid-template-columns: 2fr 2fr 1fr 1fr 100px;
+      grid-template-columns: 2fr 2fr 1fr 1fr 1fr 120px;
       gap: 16px;
       padding: 16px 20px;
       align-items: center;
@@ -211,10 +386,170 @@ import { environment } from '../../../../environments/environment';
       padding: 60px 20px; color: var(--text-tertiary);
       mat-icon { font-size: 48px; width: 48px; height: 48px; }
     }
+
+    .cameras-badge {
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 500;
+      background: rgba(59, 130, 246, 0.2);
+      color: #3b82f6;
+
+      &.all { background: rgba(34, 197, 94, 0.2); color: #22c55e; }
+      &.none { background: rgba(107, 114, 128, 0.2); color: #6b7280; }
+    }
+
+    /* Modal Styles */
+    .modal-overlay {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0, 0, 0, 0.7);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      padding: 20px;
+    }
+
+    .modal-content {
+      background: var(--bg-secondary);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius-lg);
+      width: 100%;
+      max-width: 500px;
+      max-height: 80vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 20px;
+      border-bottom: 1px solid var(--glass-border);
+
+      h3 { margin: 0; font-size: 18px; color: var(--text-primary); }
+      button { color: var(--text-secondary); }
+    }
+
+    .modal-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px 20px;
+    }
+
+    .loading-container.small {
+      min-height: 150px;
+    }
+
+    .camera-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .select-all {
+      padding: 12px;
+      background: var(--glass-bg);
+      border-radius: var(--radius-sm);
+      margin-bottom: 8px;
+    }
+
+    .camera-item {
+      padding: 12px;
+      background: var(--glass-bg);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius-sm);
+      transition: all 0.2s;
+
+      &:hover { background: var(--glass-bg-hover); }
+    }
+
+    .camera-info {
+      display: flex;
+      flex-direction: column;
+      margin-left: 8px;
+
+      .camera-name { color: var(--text-primary); font-weight: 500; }
+      .camera-stream { font-size: 12px; color: var(--text-tertiary); }
+    }
+
+    .modal-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 16px 20px;
+      border-top: 1px solid var(--glass-border);
+
+      .selected-count { font-size: 13px; color: var(--text-secondary); }
+      .modal-actions { display: flex; gap: 12px; }
+    }
+
+    /* User Form Modal */
+    .user-form-modal {
+      max-width: 480px;
+    }
+
+    .user-form {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .full-width {
+      width: 100%;
+    }
+
+    .status-toggle {
+      margin-top: 8px;
+    }
+
+    .form-error {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px;
+      background: rgba(239, 68, 68, 0.1);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      border-radius: var(--radius-sm);
+      color: #ef4444;
+      font-size: 13px;
+      margin-top: 8px;
+
+      mat-icon {
+        font-size: 18px;
+        width: 18px;
+        height: 18px;
+      }
+    }
+
+    ::ng-deep {
+      .user-form-modal .mat-mdc-form-field {
+        .mdc-notched-outline__leading,
+        .mdc-notched-outline__notch,
+        .mdc-notched-outline__trailing {
+          border-color: var(--glass-border) !important;
+        }
+      }
+
+      .user-form-modal .mat-mdc-form-field:hover .mdc-notched-outline__leading,
+      .user-form-modal .mat-mdc-form-field:hover .mdc-notched-outline__notch,
+      .user-form-modal .mat-mdc-form-field:hover .mdc-notched-outline__trailing {
+        border-color: var(--glass-border-hover) !important;
+      }
+
+      .user-form-modal .mat-mdc-form-field.mat-focused .mdc-notched-outline__leading,
+      .user-form-modal .mat-mdc-form-field.mat-focused .mdc-notched-outline__notch,
+      .user-form-modal .mat-mdc-form-field.mat-focused .mdc-notched-outline__trailing {
+        border-color: var(--accent-primary) !important;
+      }
+    }
   `]
 })
 export class AdminUsersComponent implements OnInit {
   private http = inject(HttpClient);
+  private videoSourceService = inject(VideoSourceService);
   private apiUrl = environment.apiUrl;
 
   loading = signal(true);
@@ -222,8 +557,57 @@ export class AdminUsersComponent implements OnInit {
   filteredUsers = signal<any[]>([]);
   searchTerm = '';
 
+  // Camera assignment modal
+  showCameraModal = signal(false);
+  selectedUser = signal<any>(null);
+  allCameras = signal<VideoSource[]>([]);
+  selectedCameraIds = signal<string[]>([]);
+  loadingCameras = signal(false);
+  savingAssignment = signal(false);
+
+  // User form modal
+  showUserModal = signal(false);
+  isEditMode = signal(false);
+  roles = signal<Role[]>([]);
+  savingUser = signal(false);
+  formError = signal('');
+  userForm: UserFormData = this.getEmptyUserForm();
+
+  // Computed for checkbox states
+  allCamerasSelected = computed(() => {
+    const all = this.allCameras();
+    const selected = this.selectedCameraIds();
+    return all.length > 0 && selected.length === all.length;
+  });
+
+  someCamerasSelected = computed(() => {
+    const all = this.allCameras();
+    const selected = this.selectedCameraIds();
+    return selected.length > 0 && selected.length < all.length;
+  });
+
   ngOnInit() {
     this.loadUsers();
+    this.loadRoles();
+  }
+
+  getEmptyUserForm(): UserFormData {
+    return {
+      username: '',
+      email: '',
+      full_name: '',
+      password: '',
+      user_level: 1,
+      is_active: true,
+      role_ids: []
+    };
+  }
+
+  loadRoles() {
+    this.http.get<Role[]>(`${this.apiUrl}/roles`).subscribe({
+      next: (res) => this.roles.set(res),
+      error: () => console.error('Failed to load roles')
+    });
   }
 
   loadUsers() {
@@ -254,18 +638,190 @@ export class AdminUsersComponent implements OnInit {
     return name.split(' ').map((n: string) => n[0]).join('').substring(0, 2).toUpperCase();
   }
 
+  isManagerOrAbove(user: any): boolean {
+    if (user.is_superuser) return true;
+    const managerRoles = ['manager', 'superadmin', 'admin'];
+    return user.roles?.some((r: any) => managerRoles.includes(r.name?.toLowerCase()));
+  }
+
   openCreateDialog() {
-    // TODO: Implement dialog
-    console.log('Create user');
+    this.isEditMode.set(false);
+    this.userForm = this.getEmptyUserForm();
+    this.formError.set('');
+    this.showUserModal.set(true);
   }
 
   editUser(user: any) {
-    console.log('Edit user', user);
+    this.isEditMode.set(true);
+    this.selectedUser.set(user);
+    this.userForm = {
+      username: user.username,
+      email: user.email,
+      full_name: user.full_name || '',
+      password: '',
+      user_level: user.user_level || 1,
+      is_active: user.is_active,
+      role_ids: user.roles?.map((r: Role) => r.id) || []
+    };
+    this.formError.set('');
+    this.showUserModal.set(true);
+  }
+
+  closeUserModal() {
+    this.showUserModal.set(false);
+    this.selectedUser.set(null);
+    this.userForm = this.getEmptyUserForm();
+    this.formError.set('');
+  }
+
+  saveUser() {
+    this.formError.set('');
+
+    // Validation
+    if (!this.userForm.username.trim()) {
+      this.formError.set('Username is required');
+      return;
+    }
+    if (!this.userForm.email.trim()) {
+      this.formError.set('Email is required');
+      return;
+    }
+    if (!this.isEditMode() && !this.userForm.password) {
+      this.formError.set('Password is required');
+      return;
+    }
+
+    this.savingUser.set(true);
+
+    if (this.isEditMode()) {
+      // Update existing user
+      const user = this.selectedUser();
+      const updatePayload: any = {
+        email: this.userForm.email,
+        full_name: this.userForm.full_name || null,
+        user_level: this.userForm.user_level,
+        is_active: this.userForm.is_active,
+        role_ids: this.userForm.role_ids
+      };
+
+      if (this.userForm.password) {
+        updatePayload.password = this.userForm.password;
+      }
+
+      this.http.put<any>(`${this.apiUrl}/users/${user.id}`, updatePayload).subscribe({
+        next: () => {
+          this.savingUser.set(false);
+          this.closeUserModal();
+          this.loadUsers();
+        },
+        error: (err) => {
+          this.savingUser.set(false);
+          this.formError.set(err.error?.detail || 'Failed to update user');
+        }
+      });
+    } else {
+      // Create new user
+      const createPayload = {
+        username: this.userForm.username,
+        email: this.userForm.email,
+        full_name: this.userForm.full_name || null,
+        password: this.userForm.password,
+        user_level: this.userForm.user_level,
+        role_ids: this.userForm.role_ids
+      };
+
+      this.http.post<any>(`${this.apiUrl}/users`, createPayload).subscribe({
+        next: () => {
+          this.savingUser.set(false);
+          this.closeUserModal();
+          this.loadUsers();
+        },
+        error: (err) => {
+          this.savingUser.set(false);
+          this.formError.set(err.error?.detail || 'Failed to create user');
+        }
+      });
+    }
   }
 
   deleteUser(user: any) {
     if (confirm(`Delete user "${user.username}"?`)) {
       this.http.delete(`${this.apiUrl}/users/${user.id}`).subscribe(() => this.loadUsers());
     }
+  }
+
+  // Camera Assignment Methods
+  openCameraAssignment(user: any) {
+    this.selectedUser.set(user);
+    this.showCameraModal.set(true);
+    this.loadingCameras.set(true);
+
+    // Load all cameras (admin sees all)
+    this.http.get<VideoSource[]>(`${this.apiUrl}/video-sources`).subscribe({
+      next: (cameras) => {
+        this.allCameras.set(cameras);
+        // Set currently assigned cameras
+        const assignedIds = user.assigned_video_sources?.map((vs: any) => vs.id) || [];
+        this.selectedCameraIds.set(assignedIds);
+        this.loadingCameras.set(false);
+      },
+      error: () => this.loadingCameras.set(false)
+    });
+  }
+
+  closeCameraModal() {
+    this.showCameraModal.set(false);
+    this.selectedUser.set(null);
+    this.selectedCameraIds.set([]);
+  }
+
+  isCameraSelected(cameraId: string): boolean {
+    return this.selectedCameraIds().includes(cameraId);
+  }
+
+  toggleCamera(cameraId: string, checked: boolean) {
+    const current = this.selectedCameraIds();
+    if (checked) {
+      this.selectedCameraIds.set([...current, cameraId]);
+    } else {
+      this.selectedCameraIds.set(current.filter(id => id !== cameraId));
+    }
+  }
+
+  toggleAllCameras(checked: boolean) {
+    if (checked) {
+      this.selectedCameraIds.set(this.allCameras().map(c => c.id));
+    } else {
+      this.selectedCameraIds.set([]);
+    }
+  }
+
+  saveCameraAssignment() {
+    const user = this.selectedUser();
+    if (!user) return;
+
+    this.savingAssignment.set(true);
+
+    this.http.put<any>(`${this.apiUrl}/users/${user.id}/cameras`, {
+      video_source_ids: this.selectedCameraIds()
+    }).subscribe({
+      next: (updatedUser) => {
+        // Update user in list
+        const users = this.users();
+        const index = users.findIndex(u => u.id === user.id);
+        if (index !== -1) {
+          users[index] = { ...users[index], assigned_video_sources: updatedUser.assigned_video_sources };
+          this.users.set([...users]);
+          this.filterUsers();
+        }
+        this.savingAssignment.set(false);
+        this.closeCameraModal();
+      },
+      error: (err) => {
+        console.error('Failed to save camera assignment:', err);
+        this.savingAssignment.set(false);
+        alert('Failed to save camera assignment');
+      }
+    });
   }
 }

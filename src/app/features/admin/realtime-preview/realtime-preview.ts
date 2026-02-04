@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy, ElementRef, ViewChild, inject, signal } from '@angular/core';
+import { Component, OnInit, OnDestroy, ElementRef, ViewChild, inject, signal, computed, effect } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
@@ -8,6 +8,7 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatInputModule } from '@angular/material/input';
 import { MatFormFieldModule } from '@angular/material/form-field';
+import { MatSelectModule } from '@angular/material/select';
 import { BmappVideoPlayerComponent } from '../../../shared/components/bmapp-video-player/bmapp-video-player.component';
 import { WsVideoPlayerComponent } from '../../../shared/components/ws-video-player/ws-video-player.component';
 import { VideoSourceService, VideoSource } from '../../../core/services/video-source.service';
@@ -26,6 +27,9 @@ interface VideoChannel {
   app: string;
   taskIdx?: number; // BM-APP TaskIdx for individual camera view (e.g., 0, 1, 7)
   previewChn?: string; // Channel identifier from app_preview_channel API
+  // Backend VideoSource info for folder assignment
+  backendId?: string; // Backend VideoSource ID for API calls
+  groupId?: string | null; // group_id from backend VideoSource
 }
 
 interface ChannelGroup {
@@ -39,7 +43,7 @@ interface ChannelGroup {
 @Component({
   standalone: true,
   selector: 'app-admin-realtime-preview',
-  imports: [CommonModule, FormsModule, MatIconModule, MatButtonModule, MatTooltipModule, MatProgressSpinnerModule, MatInputModule, MatFormFieldModule, BmappVideoPlayerComponent, WsVideoPlayerComponent],
+  imports: [CommonModule, FormsModule, MatIconModule, MatButtonModule, MatTooltipModule, MatProgressSpinnerModule, MatInputModule, MatFormFieldModule, MatSelectModule, BmappVideoPlayerComponent, WsVideoPlayerComponent],
   template: `
     <div class="realtime-preview" #previewContainer>
       <!-- Toolbar -->
@@ -103,6 +107,11 @@ interface ChannelGroup {
           <div class="sidebar-header">
             <mat-icon>{{ sourceMode === 'direct' ? 'cast_connected' : sourceMode === 'bmapp' ? 'smart_display' : 'videocam' }}</mat-icon>
             <span>{{ sourceMode === 'direct' ? 'AI Streams' : sourceMode === 'bmapp' ? 'Backend Tasks' : 'Local Devices' }}</span>
+            @if (canRenameGroups()) {
+              <button mat-icon-button class="add-folder-btn" matTooltip="Create folder" (click)="openCreateFolderDialog()">
+                <mat-icon>create_new_folder</mat-icon>
+              </button>
+            }
           </div>
           <div class="device-list">
             @if (loading) {
@@ -118,15 +127,25 @@ interface ChannelGroup {
             } @else {
               @for (group of channelGroups; track group.id) {
                 <div class="tree-node">
-                  <div class="node-header" (click)="toggleGroup(group)">
+                  <div class="node-header"
+                       [class.drag-over]="dragOverGroup === group.id"
+                       (click)="toggleGroup(group)"
+                       (dragover)="onFolderDragOver($event, group)"
+                       (dragleave)="onFolderDragLeave($event)"
+                       (drop)="onFolderDrop($event, group)">
                     <mat-icon class="expand-icon" [class.expanded]="group.expanded">chevron_right</mat-icon>
                     <mat-icon class="folder-icon">folder</mat-icon>
                     <span class="node-name">{{ group.displayName }}</span>
                     <span class="node-count">({{ group.channels.length }})</span>
                     @if (canRenameGroups()) {
-                      <button mat-icon-button class="rename-btn" matTooltip="Rename folder" (click)="openRenameDialog(group); $event.stopPropagation()">
-                        <mat-icon>edit</mat-icon>
-                      </button>
+                      <div class="folder-actions">
+                        <button mat-icon-button class="folder-action-btn" matTooltip="Rename folder" (click)="openRenameDialog(group); $event.stopPropagation()">
+                          <mat-icon>edit</mat-icon>
+                        </button>
+                        <button mat-icon-button class="folder-action-btn delete-btn" matTooltip="Delete folder" (click)="openDeleteDialog(group); $event.stopPropagation()">
+                          <mat-icon>delete</mat-icon>
+                        </button>
+                      </div>
                     }
                   </div>
                   @if (group.expanded) {
@@ -135,6 +154,10 @@ interface ChannelGroup {
                         <div class="device-item"
                              [class.online]="channel.status === 'online'"
                              [class.connecting]="channel.isConnecting"
+                             [class.dragging]="draggingChannel?.id === channel.id"
+                             draggable="true"
+                             (dragstart)="onChannelDragStart($event, channel, group)"
+                             (dragend)="onChannelDragEnd($event)"
                              (click)="selectChannel(channel)"
                              [matTooltip]="channel.statusLabel || ''">
                           <mat-icon>{{ channel.status === 'online' ? 'videocam' : channel.isConnecting ? 'sync' : 'videocam_off' }}</mat-icon>
@@ -244,6 +267,90 @@ interface ChannelGroup {
                   <mat-spinner diameter="16"></mat-spinner>
                 } @else {
                   Save
+                }
+              </button>
+            </div>
+          </div>
+        </div>
+      }
+
+      <!-- Delete Folder Dialog -->
+      @if (deleteDialogOpen) {
+        <div class="dialog-overlay" (click)="closeDeleteDialog()">
+          <div class="delete-dialog" (click)="$event.stopPropagation()">
+            <div class="dialog-header">
+              <h3>Delete Folder</h3>
+              <button mat-icon-button (click)="closeDeleteDialog()">
+                <mat-icon>close</mat-icon>
+              </button>
+            </div>
+            <div class="dialog-body">
+              <div class="delete-warning">
+                <mat-icon class="warning-icon">warning</mat-icon>
+                <div class="warning-text">
+                  @if (deleteTargetCameraCount === 0) {
+                    <p>Are you sure you want to delete folder "<strong>{{ deleteTarget?.displayName }}</strong>"?</p>
+                    <p class="subtext">This folder is empty and can be deleted safely.</p>
+                  } @else {
+                    <p>Folder "<strong>{{ deleteTarget?.displayName }}</strong>" contains <strong>{{ deleteTargetCameraCount }} cameras</strong>.</p>
+                    <p class="subtext">Please move the cameras to another folder first, or select a target folder below.</p>
+                  }
+                </div>
+              </div>
+
+              @if (deleteTargetCameraCount > 0) {
+                <mat-form-field appearance="outline" class="full-width">
+                  <mat-label>Move cameras to folder</mat-label>
+                  <mat-select [(ngModel)]="moveToGroupId">
+                    <mat-option value="">-- Leave ungrouped --</mat-option>
+                    @for (group of getOtherGroups(); track group.id) {
+                      <mat-option [value]="group.id">{{ group.displayName }}</mat-option>
+                    }
+                  </mat-select>
+                </mat-form-field>
+              }
+            </div>
+            <div class="dialog-actions">
+              <button mat-button (click)="closeDeleteDialog()">Cancel</button>
+              <button mat-flat-button color="warn" (click)="confirmDeleteGroup()" [disabled]="deleting">
+                @if (deleting) {
+                  <mat-spinner diameter="16"></mat-spinner>
+                } @else {
+                  Delete
+                }
+              </button>
+            </div>
+          </div>
+        </div>
+      }
+
+      <!-- Create Folder Dialog -->
+      @if (createFolderDialogOpen) {
+        <div class="dialog-overlay" (click)="closeCreateFolderDialog()">
+          <div class="rename-dialog" (click)="$event.stopPropagation()">
+            <div class="dialog-header">
+              <h3>Create New Folder</h3>
+              <button mat-icon-button (click)="closeCreateFolderDialog()">
+                <mat-icon>close</mat-icon>
+              </button>
+            </div>
+            <div class="dialog-body">
+              <mat-form-field appearance="outline" class="full-width">
+                <mat-label>Folder Name</mat-label>
+                <input matInput [(ngModel)]="newFolderName" placeholder="Enter folder name">
+              </mat-form-field>
+              <mat-form-field appearance="outline" class="full-width">
+                <mat-label>Display Name (optional)</mat-label>
+                <input matInput [(ngModel)]="newFolderDisplayName" placeholder="Enter display name">
+              </mat-form-field>
+            </div>
+            <div class="dialog-actions">
+              <button mat-button (click)="closeCreateFolderDialog()">Cancel</button>
+              <button mat-flat-button color="primary" (click)="createFolder()" [disabled]="!newFolderName || creatingFolder">
+                @if (creatingFolder) {
+                  <mat-spinner diameter="16"></mat-spinner>
+                } @else {
+                  Create
                 }
               </button>
             </div>
@@ -475,7 +582,7 @@ interface ChannelGroup {
       display: flex;
       align-items: center;
       gap: 10px;
-      padding: 16px;
+      padding: 12px 16px;
       border-bottom: 1px solid var(--glass-border);
       background: rgba(0, 0, 0, 0.1);
 
@@ -484,9 +591,26 @@ interface ChannelGroup {
       }
 
       span {
+        flex: 1;
         font-size: 14px;
         font-weight: 600;
         color: var(--text-primary);
+      }
+
+      .add-folder-btn {
+        width: 28px;
+        height: 28px;
+        color: var(--text-secondary);
+
+        mat-icon {
+          font-size: 18px;
+          width: 18px;
+          height: 18px;
+        }
+
+        &:hover {
+          color: var(--accent-primary);
+        }
       }
     }
 
@@ -507,9 +631,16 @@ interface ChannelGroup {
       padding: 8px 10px;
       border-radius: 8px;
       cursor: pointer;
+      min-height: 32px;
+      transition: all 0.2s ease;
 
       &:hover {
         background: rgba(0, 212, 255, 0.1);
+      }
+
+      &.drag-over {
+        background: rgba(0, 212, 255, 0.2);
+        border: 2px dashed var(--accent-primary, #00d4ff);
       }
     }
 
@@ -582,8 +713,17 @@ interface ChannelGroup {
       border-radius: 10px;
       margin-bottom: 8px;
       background: rgba(0, 0, 0, 0.1);
-      cursor: pointer;
+      cursor: grab;
       transition: all 0.2s ease;
+
+      &:active {
+        cursor: grabbing;
+      }
+
+      &.dragging {
+        opacity: 0.4;
+        transform: scale(0.95);
+      }
 
       mat-icon {
         font-size: 20px;
@@ -815,24 +955,48 @@ interface ChannelGroup {
       color: var(--text-tertiary);
     }
 
-    .rename-btn {
-      width: 24px;
-      height: 24px;
-      min-width: 24px;
+    .folder-actions {
+      display: inline-flex;
+      align-items: center;
+      gap: 0;
+      margin-left: 4px;
+      flex-shrink: 0;
       visibility: hidden;
       opacity: 0;
       transition: opacity 0.2s, visibility 0.2s;
-      margin-left: auto;
+      height: 24px;
+      vertical-align: middle;
+    }
+
+    .folder-action-btn {
+      width: 24px !important;
+      height: 24px !important;
+      min-width: 24px !important;
+      padding: 0 !important;
+      line-height: 24px !important;
       flex-shrink: 0;
+      display: inline-flex !important;
+      align-items: center;
+      justify-content: center;
+
+      ::ng-deep .mat-mdc-button-touch-target {
+        width: 24px !important;
+        height: 24px !important;
+      }
 
       mat-icon {
-        font-size: 14px;
-        width: 14px;
-        height: 14px;
+        font-size: 16px;
+        width: 16px;
+        height: 16px;
+        line-height: 16px;
+      }
+
+      &.delete-btn {
+        color: var(--error, #ef4444);
       }
     }
 
-    .node-header:hover .rename-btn {
+    .node-header:hover .folder-actions {
       visibility: visible;
       opacity: 1;
     }
@@ -905,6 +1069,56 @@ interface ChannelGroup {
       border-top: 1px solid var(--glass-border);
       background: var(--glass-bg);
     }
+
+    .delete-dialog {
+      width: 450px;
+      max-width: 90vw;
+      background: var(--glass-bg, rgba(20, 20, 35, 0.95));
+      border: 1px solid var(--glass-border);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+
+    .delete-warning {
+      display: flex;
+      gap: 16px;
+      padding: 16px;
+      background: rgba(239, 68, 68, 0.1);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      border-radius: 8px;
+      margin-bottom: 16px;
+
+      .warning-icon {
+        font-size: 24px;
+        width: 24px;
+        height: 24px;
+        color: var(--error, #ef4444);
+        flex-shrink: 0;
+      }
+
+      .warning-text {
+        flex: 1;
+
+        p {
+          margin: 0 0 8px 0;
+          color: var(--text-primary);
+          font-size: 14px;
+
+          &:last-child {
+            margin-bottom: 0;
+          }
+
+          strong {
+            color: var(--error, #ef4444);
+          }
+        }
+
+        .subtext {
+          font-size: 13px;
+          color: var(--text-secondary);
+        }
+      }
+    }
   `]
 })
 export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
@@ -929,8 +1143,26 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
   newDisplayName = '';
   renaming = false;
 
-  // Check if user can rename (superadmin or manager)
-  canRenameGroups = this.authService.isManager;
+  // Delete dialog state
+  deleteDialogOpen = false;
+  deleteTarget: ChannelGroup | null = null;
+  deleteTargetCameraCount = 0;
+  moveToGroupId = '';
+  deleting = false;
+
+  // Create folder dialog state
+  createFolderDialogOpen = false;
+  newFolderName = '';
+  newFolderDisplayName = '';
+  creatingFolder = false;
+
+  // Drag and drop state
+  draggingChannel: VideoChannel | null = null;
+  draggingFromGroup: ChannelGroup | null = null;
+  dragOverGroup: string | null = null;
+
+  // All users can manage their own personal folders
+  canRenameGroups = computed(() => !!this.authService.currentUser());
 
   private fullscreenChangeHandler = () => this.onFullscreenChange();
 
@@ -950,10 +1182,19 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
     private http: HttpClient,
     private videoSourceService: VideoSourceService,
     private aiTaskService: AITaskService
-  ) {}
+  ) {
+    // Re-build channel groups when assignments or groups change (fixes race condition)
+    effect(() => {
+      const assignments = this.cameraGroupsService.assignments();
+      const groups = this.cameraGroupsService.groups();
+      if (this.videoChannels.length > 0) {
+        this.buildChannelGroups();
+      }
+    });
+  }
 
   ngOnInit() {
-    // Load camera groups from backend first
+    // Load camera groups + assignments from backend first
     this.cameraGroupsService.loadGroups();
     this.loadVideoSources();
     document.addEventListener('fullscreenchange', this.fullscreenChangeHandler);
@@ -978,12 +1219,57 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
   // Store preview channel mapping (task name -> url for WebSocket)
   private previewChannelMap = new Map<string, string>();
 
+  // Store allowed camera names for filtering (based on user assignment)
+  private allowedCameraNames = new Set<string>();
+  // Track if we successfully got camera assignments from backend
+  // If true + empty allowedCameraNames = user has no cameras assigned (show nothing)
+  // If false = backend failed, don't filter (superuser/admin sees all)
+  private hasAssignmentData = false;
+
+  // Store backend VideoSource records for group_id mapping
+  // Key: camera name (stream_name or name), Value: VideoSource with group_id
+  private backendVideoSourceMap = new Map<string, VideoSource>();
+
   // Direct query to BM-APP API via proxy
   // BM-APP nginx routes: /api/ -> port 10002 (backend API)
   loadDirectFromBmapp() {
     console.log('Loading from BM-APP via proxy...');
 
-    // First fetch preview channels to get proper channel identifiers
+    // First, load user's assigned cameras from backend to filter BM-APP results
+    // Also store full VideoSource records to get group_id for folder assignment
+    this.videoSourceService.getAll(true).subscribe({
+      next: (sources) => {
+        // Build set of allowed camera names (stream_name matches MediaName in BM-APP)
+        this.allowedCameraNames.clear();
+        this.backendVideoSourceMap.clear();
+        this.hasAssignmentData = true; // Backend responded successfully
+        sources.forEach(s => {
+          this.allowedCameraNames.add(s.stream_name);
+          this.allowedCameraNames.add(s.name);
+          // Store VideoSource by both stream_name and name for matching
+          this.backendVideoSourceMap.set(s.stream_name, s);
+          this.backendVideoSourceMap.set(s.name, s);
+        });
+        console.log('Allowed cameras for user:', Array.from(this.allowedCameraNames));
+        console.log('Has assignment data:', this.hasAssignmentData, 'Count:', this.allowedCameraNames.size);
+        console.log('Backend VideoSource map size:', this.backendVideoSourceMap.size);
+
+        // Now fetch preview channels from BM-APP
+        this.fetchPreviewChannels();
+      },
+      error: (err) => {
+        console.error('Failed to load assigned cameras:', err);
+        // If backend fails, proceed without filtering (for superusers/admins)
+        this.allowedCameraNames.clear();
+        this.backendVideoSourceMap.clear();
+        this.hasAssignmentData = false;
+        this.fetchPreviewChannels();
+      }
+    });
+  }
+
+  // Fetch preview channels from BM-APP
+  private fetchPreviewChannels() {
     const previewUrl = `${this.bmappProxyUrl}/api/app_preview_channel`;
     this.http.post<any>(previewUrl, {}).subscribe({
       next: (res) => {
@@ -1035,7 +1321,35 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
       next: (res) => {
         console.log('Task fetch response:', res);
         if (res.Result?.Code === 0 && res.Content) {
-          this.videoChannels = res.Content.map((t: any, index: number) => {
+          let tasks = res.Content;
+
+          // Filter tasks based on user's assigned cameras
+          // hasAssignmentData=true means backend responded (apply filtering)
+          // hasAssignmentData=false means backend failed (don't filter, user might be superuser)
+          if (this.hasAssignmentData) {
+            // If user has no cameras assigned, show empty list
+            if (this.allowedCameraNames.size === 0) {
+              console.log('User has no cameras assigned - showing empty list');
+              tasks = [];
+            } else {
+              tasks = tasks.filter((t: any) => {
+                const mediaName = t.MediaName?.trim();
+                const session = t.AlgTaskSession?.trim();
+                // Check if either MediaName or AlgTaskSession is in allowed list
+                const isAllowed = this.allowedCameraNames.has(mediaName) ||
+                                 this.allowedCameraNames.has(session);
+                if (!isAllowed) {
+                  console.log(`Filtered out task: ${mediaName} (not in assigned cameras)`);
+                }
+                return isAllowed;
+              });
+              console.log(`Filtered to ${tasks.length} tasks based on user assignment`);
+            }
+          } else {
+            console.log('No assignment data - showing all cameras (superuser/admin mode)');
+          }
+
+          this.videoChannels = tasks.map((t: any, index: number) => {
             // Status types: 0=Stopped, 1=Connecting, 2=Warning/Error, 4=Healthy/Running
             const statusType = t.AlgTaskStatus?.type;
             const isOnline = statusType === 4; // Only "Healthy" is truly online
@@ -1058,19 +1372,26 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
               console.log(`Constructed previewChn for ${sessionTrimmed}: ${previewChn}`);
             }
 
+            // Match with backend VideoSource by MediaName or AlgTaskSession for group_id
+            const mediaName = t.MediaName?.trim();
+            const backendSource = this.backendVideoSourceMap.get(mediaName) ||
+                                  this.backendVideoSourceMap.get(sessionTrimmed);
+
             // Debug: log TaskIdx and preview channel for each task
-            console.log(`Task[${index}]: ${t.MediaName}, TaskIdx=${t.TaskIdx}, Session=${t.AlgTaskSession}, previewChn=${previewChn}`);
+            console.log(`Task[${index}]: ${mediaName}, TaskIdx=${t.TaskIdx}, Session=${t.AlgTaskSession}, previewChn=${previewChn}, groupId=${backendSource?.group_id || 'none'}`);
 
             return {
               id: sessionTrimmed || t.AlgTaskSession,
-              name: t.MediaName?.trim() || sessionTrimmed || t.AlgTaskSession,
+              name: mediaName || sessionTrimmed || t.AlgTaskSession,
               status: isOnline ? 'online' : 'offline',
               statusLabel: t.AlgTaskStatus?.label || 'Unknown',
               isConnecting,
               stream: sessionTrimmed || t.AlgTaskSession?.trim(), // Task session (trimmed) is the stream name for AI output
               app: 'live',
               taskIdx: t.TaskIdx, // For WebSocket video streaming (individual camera view)
-              previewChn: previewChn // Channel URL from preview API: "task/<AlgTaskSession>"
+              previewChn: previewChn, // Channel URL from preview API: "task/<AlgTaskSession>"
+              backendId: backendSource?.id || undefined,
+              groupId: backendSource?.group_id || null
             };
           });
           console.log('Loaded tasks with previewChn:', this.videoChannels.map(c => ({
@@ -1101,18 +1422,44 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
       next: (res) => {
         console.log('Media fetch response:', res);
         if (res.Result?.Code === 0 && res.Content) {
-          this.videoChannels = res.Content.map((m: any) => {
+          let mediaList = res.Content;
+
+          // Filter media based on user's assigned cameras
+          if (this.hasAssignmentData) {
+            if (this.allowedCameraNames.size === 0) {
+              console.log('User has no cameras assigned - showing empty list');
+              mediaList = [];
+            } else {
+              mediaList = mediaList.filter((m: any) => {
+                const mediaName = m.MediaName?.trim();
+                const isAllowed = this.allowedCameraNames.has(mediaName);
+                if (!isAllowed) {
+                  console.log(`Filtered out media: ${mediaName} (not in assigned cameras)`);
+                }
+                return isAllowed;
+              });
+              console.log(`Filtered to ${mediaList.length} media based on user assignment`);
+            }
+          } else {
+            console.log('No assignment data - showing all media (superuser/admin mode)');
+          }
+
+          this.videoChannels = mediaList.map((m: any) => {
             // MediaStatus types: 0=Offline, 2=Online
             const statusType = m.MediaStatus?.type;
             const isOnline = statusType === 2; // For media, type 2 means online
+            const mediaName = m.MediaName?.trim();
+            const backendSource = this.backendVideoSourceMap.get(mediaName);
 
             return {
               id: m.MediaName,
-              name: m.MediaName,
+              name: mediaName || m.MediaName,
               status: isOnline ? 'online' : 'offline',
               statusLabel: m.MediaStatus?.label || 'Unknown',
               stream: m.MediaName,
-              app: 'live'
+              app: 'live',
+              backendId: backendSource?.id || undefined,
+              groupId: backendSource?.group_id || null
             };
           });
           console.log('Loaded media:', this.videoChannels);
@@ -1133,23 +1480,47 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
   }
 
   loadFromBackend() {
-    // Via backend (needs BMAPP_ENABLED=true on backend)
-    this.aiTaskService.getTasks().subscribe({
-      next: (tasks) => {
-        this.aiTaskService.getAvailableStreams().subscribe({
-          next: (streams) => {
-            this.processBmappData(tasks, streams);
+    // First load backend video sources for group_id mapping
+    this.videoSourceService.getAll(true).subscribe({
+      next: (sources) => {
+        this.backendVideoSourceMap.clear();
+        sources.forEach(s => {
+          this.backendVideoSourceMap.set(s.stream_name, s);
+          this.backendVideoSourceMap.set(s.name, s);
+        });
+
+        // Via backend (needs BMAPP_ENABLED=true on backend)
+        this.aiTaskService.getTasks().subscribe({
+          next: (tasks) => {
+            this.aiTaskService.getAvailableStreams().subscribe({
+              next: (streams) => {
+                this.processBmappData(tasks, streams);
+              },
+              error: () => {
+                console.warn('Streams endpoint unavailable, using tasks only');
+                this.processBmappData(tasks, []);
+              }
+            });
           },
-          error: () => {
-            console.warn('Streams endpoint unavailable, using tasks only');
-            this.processBmappData(tasks, []);
+          error: (err) => {
+            console.error('Failed to load from backend:', err);
+            this.sourceMode = 'local';
+            this.loadFromLocal();
           }
         });
       },
-      error: (err) => {
-        console.error('Failed to load from backend:', err);
-        this.sourceMode = 'local';
-        this.loadFromLocal();
+      error: () => {
+        // Proceed without group mapping
+        this.aiTaskService.getTasks().subscribe({
+          next: (tasks) => {
+            this.processBmappData(tasks, []);
+          },
+          error: (err) => {
+            console.error('Failed to load from backend:', err);
+            this.sourceMode = 'local';
+            this.loadFromLocal();
+          }
+        });
       }
     });
   }
@@ -1173,6 +1544,11 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
 
       const streamAvailable = streams.length === 0 ? isHealthy : availableStreams.has(streamName);
 
+      // Try to match with backend VideoSource for group_id
+      const mediaName = t.MediaName?.trim();
+      const backendSource = this.backendVideoSourceMap.get(mediaName) ||
+                            this.backendVideoSourceMap.get(t.AlgTaskSession?.trim());
+
       return {
         id: t.AlgTaskSession,
         name: t.MediaName,
@@ -1181,19 +1557,24 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
         isConnecting,
         stream: streamName,
         app: 'live',
-        taskIdx: t.TaskIdx
+        taskIdx: t.TaskIdx,
+        backendId: backendSource?.id || undefined,
+        groupId: backendSource?.group_id || null
       };
     });
 
     streams.forEach(s => {
       const hasTask = tasks.some(t => t.MediaName === s.stream || t.AlgTaskSession === s.stream);
       if (!hasTask && s.app === 'live') {
+        const backendSource = this.backendVideoSourceMap.get(s.stream);
         this.videoChannels.push({
           id: s.stream,
           name: `${s.stream} (raw)`,
           status: 'online',
           stream: s.stream,
-          app: s.app
+          app: s.app,
+          backendId: backendSource?.id || undefined,
+          groupId: backendSource?.group_id || null
         });
       }
     });
@@ -1210,7 +1591,9 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
           name: s.name,
           status: s.is_active ? 'online' : 'offline',
           stream: s.stream_name,
-          app: 'live'
+          app: 'live',
+          backendId: s.id,
+          groupId: s.group_id || null
         }));
         this.initializeGrid();
         this.loading = false;
@@ -1240,49 +1623,76 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
   }
 
   /**
-   * Build channel groups from video channels
-   * Simple grouping by first word: "H8C-1" → "H8C", "BWC SALATIGA 1" → "BWC"
+   * Build channel groups from video channels using backend group assignments
+   * Matches BM-APP channels with backend VideoSource records by name to get group_id
    */
   buildChannelGroups() {
-    const groupMap = new Map<string, VideoChannel[]>();
+    const backendGroups = this.cameraGroupsService.groups();
+    const assignments = this.cameraGroupsService.assignments();
+    const groupChannelsMap = new Map<string, VideoChannel[]>();
+    const ungroupedChannels: VideoChannel[] = [];
 
+    // Group channels by per-user assignments (using backendId to look up assignment)
     for (const channel of this.videoChannels) {
-      // Simple: take first word (split by space or dash)
-      const firstWord = channel.name.split(/[\s-]/)[0] || 'Other';
-      const groupName = firstWord.toUpperCase();
-
-      if (!groupMap.has(groupName)) {
-        groupMap.set(groupName, []);
+      const assignedGroupId = channel.backendId ? assignments[channel.backendId] : null;
+      if (assignedGroupId) {
+        if (!groupChannelsMap.has(assignedGroupId)) {
+          groupChannelsMap.set(assignedGroupId, []);
+        }
+        groupChannelsMap.get(assignedGroupId)!.push(channel);
+      } else {
+        ungroupedChannels.push(channel);
       }
-      groupMap.get(groupName)!.push(channel);
     }
 
-    // Convert to array and sort
     const groups: ChannelGroup[] = [];
-    groupMap.forEach((channels, name) => {
-      // Get display name from service (custom name set by user)
-      const displayName = this.cameraGroupsService.getDisplayName(name);
-      groups.push({
-        id: name.toLowerCase(),
-        name: name,  // Original name for grouping
-        displayName: displayName,  // Custom display name
-        expanded: true,
-        channels: channels.sort((a, b) => a.name.localeCompare(b.name))
-      });
+
+    // Add groups that have channels
+    groupChannelsMap.forEach((channels, groupId) => {
+      const backendGroup = backendGroups.find(g => g.id === groupId);
+      if (backendGroup) {
+        groups.push({
+          id: backendGroup.id,
+          name: backendGroup.name,
+          displayName: backendGroup.display_name || backendGroup.name,
+          expanded: true,
+          channels: channels.sort((a, b) => a.name.localeCompare(b.name))
+        });
+      }
     });
 
-    // Sort groups alphabetically by display name, but put "Other" at the end
+    // Add empty groups from backend (user-created folders without channels)
+    for (const bg of backendGroups) {
+      if (!groupChannelsMap.has(bg.id)) {
+        groups.push({
+          id: bg.id,
+          name: bg.name,
+          displayName: bg.display_name || bg.name,
+          expanded: true,
+          channels: []
+        });
+      }
+    }
+
+    // Add ungrouped channels (only if there are any)
+    if (ungroupedChannels.length > 0) {
+      groups.push({
+        id: 'ungrouped',
+        name: 'Ungrouped',
+        displayName: 'Ungrouped',
+        expanded: true,
+        channels: ungroupedChannels.sort((a, b) => a.name.localeCompare(b.name))
+      });
+    }
+
+    // Sort groups alphabetically, put "Ungrouped" at the end
     groups.sort((a, b) => {
-      if (a.name === 'OTHER') return 1;
-      if (b.name === 'OTHER') return -1;
+      if (a.id === 'ungrouped') return 1;
+      if (b.id === 'ungrouped') return -1;
       return a.displayName.localeCompare(b.displayName);
     });
 
     this.channelGroups = groups;
-
-    // Sync group names to backend (creates any missing groups)
-    const groupNames = Array.from(groupMap.keys());
-    this.cameraGroupsService.syncGroups(groupNames);
   }
 
   toggleGroup(group: ChannelGroup) {
@@ -1473,19 +1883,189 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
 
     this.renaming = true;
     try {
-      await this.cameraGroupsService.renameGroup(this.renameTarget.name, this.newDisplayName);
+      await this.cameraGroupsService.renameGroup(this.renameTarget.id, this.newDisplayName);
 
       // Update local state
-      const group = this.channelGroups.find(g => g.name === this.renameTarget!.name);
+      const newName = this.newDisplayName;
+      const group = this.channelGroups.find(g => g.id === this.renameTarget!.id);
       if (group) {
-        group.displayName = this.newDisplayName;
+        group.displayName = newName;
       }
 
       this.closeRenameDialog();
-    } catch (error) {
-      console.error('Failed to rename group:', error);
+    } catch (error: any) {
+      console.error('[RealtimePreview] Failed to rename group:', error);
+      alert(error?.error?.detail || error?.message || 'Failed to rename folder. Please try again.');
     } finally {
       this.renaming = false;
     }
+  }
+
+  // Delete group methods
+  openDeleteDialog(group: ChannelGroup) {
+    this.deleteTarget = group;
+    this.deleteTargetCameraCount = group.channels.length;
+    this.moveToGroupId = '';
+    this.deleteDialogOpen = true;
+  }
+
+  closeDeleteDialog() {
+    this.deleteDialogOpen = false;
+    this.deleteTarget = null;
+    this.deleteTargetCameraCount = 0;
+    this.moveToGroupId = '';
+  }
+
+  getOtherGroups(): ChannelGroup[] {
+    return this.channelGroups.filter(g => g.id !== this.deleteTarget?.id);
+  }
+
+  async confirmDeleteGroup() {
+    if (!this.deleteTarget) return;
+
+    if (this.deleteTarget.id === 'ungrouped') {
+      alert('Cannot delete the Ungrouped folder');
+      return;
+    }
+
+    this.deleting = true;
+    try {
+      // If cameras need to be moved to another folder first
+      if (this.deleteTargetCameraCount > 0 && this.moveToGroupId && this.moveToGroupId !== '') {
+        const cameraIds = this.deleteTarget.channels
+          .filter(c => c.backendId)
+          .map(c => c.backendId!);
+        if (cameraIds.length > 0) {
+          if (this.moveToGroupId === 'ungrouped') {
+            await this.cameraGroupsService.unassignCameras(cameraIds);
+          } else {
+            await this.cameraGroupsService.assignCamerasToGroup(this.moveToGroupId, cameraIds);
+          }
+        }
+      }
+
+      // Delete personal folder (backend also removes its assignments)
+      await this.cameraGroupsService.deleteGroup(this.deleteTarget.id);
+
+      // Reload groups and refresh
+      this.cameraGroupsService.loadGroups();
+      this.channelGroups = this.channelGroups.filter(g => g.id !== this.deleteTarget!.id);
+
+      this.closeDeleteDialog();
+    } catch (error: any) {
+      console.error('Failed to delete group:', error);
+      alert(error?.error?.detail || 'Failed to delete folder');
+    } finally {
+      this.deleting = false;
+    }
+  }
+
+  // Create folder methods
+  openCreateFolderDialog() {
+    this.newFolderName = '';
+    this.newFolderDisplayName = '';
+    this.createFolderDialogOpen = true;
+  }
+
+  closeCreateFolderDialog() {
+    this.createFolderDialogOpen = false;
+    this.newFolderName = '';
+    this.newFolderDisplayName = '';
+  }
+
+  async createFolder() {
+    if (!this.newFolderName) return;
+
+    this.creatingFolder = true;
+    try {
+      const result = await this.cameraGroupsService.createGroup(
+        this.newFolderName,
+        this.newFolderDisplayName || this.newFolderName
+      );
+
+      // Add to local state with the backend ID
+      this.channelGroups.push({
+        id: result.id,
+        name: result.name,
+        displayName: result.display_name || result.name,
+        expanded: true,
+        channels: []
+      });
+
+      this.closeCreateFolderDialog();
+    } catch (error) {
+      console.error('Failed to create folder:', error);
+      alert('Failed to create folder');
+    } finally {
+      this.creatingFolder = false;
+    }
+  }
+
+  // Drag and drop methods for moving channels between folders
+  onChannelDragStart(event: DragEvent, channel: VideoChannel, fromGroup: ChannelGroup) {
+    this.draggingChannel = channel;
+    this.draggingFromGroup = fromGroup;
+    event.dataTransfer?.setData('text/plain', channel.id);
+    if (event.dataTransfer) {
+      event.dataTransfer.effectAllowed = 'move';
+    }
+  }
+
+  onChannelDragEnd(event: DragEvent) {
+    this.draggingChannel = null;
+    this.draggingFromGroup = null;
+    this.dragOverGroup = null;
+  }
+
+  onFolderDragOver(event: DragEvent, group: ChannelGroup) {
+    event.preventDefault();
+    // Don't allow dropping on the same folder
+    if (this.draggingFromGroup?.id === group.id) return;
+    this.dragOverGroup = group.id;
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = 'move';
+    }
+  }
+
+  onFolderDragLeave(event: DragEvent) {
+    this.dragOverGroup = null;
+  }
+
+  async onFolderDrop(event: DragEvent, targetGroup: ChannelGroup) {
+    event.preventDefault();
+    this.dragOverGroup = null;
+
+    if (!this.draggingChannel || !this.draggingFromGroup) return;
+    if (this.draggingFromGroup.id === targetGroup.id) return;
+
+    const channel = this.draggingChannel;
+    const fromGroup = this.draggingFromGroup;
+
+    try {
+      // Per-user assignment via backendId
+      if (channel.backendId) {
+        if (targetGroup.id === 'ungrouped') {
+          await this.cameraGroupsService.unassignCameras([channel.backendId]);
+        } else {
+          await this.cameraGroupsService.assignCamerasToGroup(targetGroup.id, [channel.backendId]);
+        }
+      }
+
+      // Update local state
+      const fromIdx = this.channelGroups.findIndex(g => g.id === fromGroup.id);
+      const toIdx = this.channelGroups.findIndex(g => g.id === targetGroup.id);
+
+      if (fromIdx >= 0 && toIdx >= 0) {
+        this.channelGroups[fromIdx].channels = this.channelGroups[fromIdx].channels.filter(c => c.id !== channel.id);
+        this.channelGroups[toIdx].channels = [...this.channelGroups[toIdx].channels, channel];
+        console.log(`[RealtimePreview] Moved channel ${channel.name} from ${fromGroup.displayName} to ${targetGroup.displayName}`);
+      }
+    } catch (error) {
+      console.error('Failed to move channel:', error);
+      alert('Failed to move camera to folder');
+    }
+
+    this.draggingChannel = null;
+    this.draggingFromGroup = null;
   }
 }

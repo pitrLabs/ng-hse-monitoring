@@ -162,6 +162,7 @@ interface ChannelGroup {
                     @if (playerMode === 'ws') {
                       <app-ws-video-player
                         [stream]="getWsStreamId(channel)"
+                        [mediaName]="channel.name"
                         [showControls]="true"
                         [showFps]="true"
                         [useSharedService]="useSharedServiceMode()">

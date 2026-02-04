@@ -236,6 +236,7 @@ import { VideoStreamService } from '../../../core/services/video-stream.service'
 })
 export class WsVideoPlayerComponent implements OnInit, OnDestroy, OnChanges {
   @Input() stream = ''; // BM-APP channel URL: "task/<AlgTaskSession>" for individual, "group/<n>" for mosaic
+  @Input() mediaName = ''; // MediaName for matching with data.task from BM-APP response
   @Input() showControls = true;
   @Input() showFps = false;
   @Input() autoConnect = true;
@@ -342,9 +343,9 @@ export class WsVideoPlayerComponent implements OnInit, OnDestroy, OnChanges {
 
     // BM-APP expects the channel identifier in format "task/AlgTaskSession" or "group/X"
     const streamUrl = this.stream;
-    console.log(`[${this.sessionId}] Subscribing to shared service for: ${streamUrl}`);
+    console.log(`[${this.sessionId}] Subscribing to shared service for: ${streamUrl}, mediaName: ${this.mediaName}`);
 
-    // Subscribe using stream URL - matching is done via AlgTaskSession (data.task from WebSocket)
+    // Subscribe using stream URL and mediaName for matching with data.task from BM-APP
     this.videoStreamService.subscribe(this.sessionId, streamUrl, (frame: string) => {
       this.frameUrl.set(frame);
       this.frameCount++;
@@ -354,7 +355,7 @@ export class WsVideoPlayerComponent implements OnInit, OnDestroy, OnChanges {
         this.status.set('playing');
         this.resetRetry();
       }
-    });
+    }, this.mediaName || undefined);
   }
 
   private unsubscribeFromService() {

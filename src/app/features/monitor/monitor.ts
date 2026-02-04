@@ -179,6 +179,7 @@ interface CameraGroup {
                     } @else {
                       <app-ws-video-player
                         [stream]="getWsStreamId(cell.source)"
+                        [mediaName]="cell.source.name"
                         [showControls]="true"
                         [showFps]="true">
                       </app-ws-video-player>

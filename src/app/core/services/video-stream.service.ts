@@ -4,7 +4,8 @@ import { Subject, BehaviorSubject } from 'rxjs';
 interface StreamSubscription {
   id: string;
   stream: string;           // Full stream ID: "task/AlgTaskSession" or "group/X"
-  streamKey: string;        // Normalized key for matching: AlgTaskSession (what BM-APP returns in data.task)
+  streamKey: string;        // Normalized key for matching: AlgTaskSession
+  mediaName: string;        // MediaName for matching with data.task from BM-APP response
   callback: (frame: string) => void;
 }
 
@@ -55,12 +56,14 @@ export class VideoStreamService {
    * @param id Unique subscriber ID
    * @param stream Stream identifier (e.g., "task/AlgTaskSession")
    * @param callback Function to receive frame data
+   * @param mediaName Optional MediaName for matching with data.task from BM-APP
    */
-  subscribe(id: string, stream: string, callback: (frame: string) => void): void {
+  subscribe(id: string, stream: string, callback: (frame: string) => void, mediaName?: string): void {
     const streamKey = this.extractStreamKey(stream);
-    console.log(`[VideoStreamService] Subscribing: ${id} -> ${stream} (streamKey: ${streamKey})`);
+    const resolvedMediaName = mediaName?.trim() || streamKey;
+    console.log(`[VideoStreamService] Subscribing: ${id} -> ${stream} (streamKey: ${streamKey}, mediaName: ${resolvedMediaName})`);
 
-    this.subscriptions.set(id, { id, stream, streamKey, callback });
+    this.subscriptions.set(id, { id, stream, streamKey, mediaName: resolvedMediaName, callback });
     this.updateStreamQueue();
 
     if (!this.isConnected) {
@@ -230,17 +233,18 @@ export class VideoStreamService {
 
         if (frameTask) {
           // Normalize the frame task for matching (lowercase, trim whitespace)
-          // BM-APP returns data.task = AlgTaskSession (e.g., "BWC SALATIGA 1")
+          // BM-APP returns data.task = MediaName (e.g., "KOPER02", "BWC SALATIGA 1")
           const frameTaskNormalized = frameTask.toLowerCase();
 
-          // Match frame to subscribers based on the actual task in the frame
-          // streamKey is derived from AlgTaskSession, data.task is also AlgTaskSession
+          // Match frame to subscribers based on mediaName (which matches data.task from BM-APP)
           let delivered = false;
           this.subscriptions.forEach(sub => {
-            const subKeyNormalized = sub.streamKey.toLowerCase();
+            const mediaNameNormalized = sub.mediaName.toLowerCase();
+            const streamKeyNormalized = sub.streamKey.toLowerCase();
 
-            // Exact match with streamKey (both are AlgTaskSession)
-            if (subKeyNormalized === frameTaskNormalized) {
+            // Match by mediaName (primary) or streamKey (fallback)
+            // BM-APP data.task is MediaName, so mediaName should match
+            if (mediaNameNormalized === frameTaskNormalized || streamKeyNormalized === frameTaskNormalized) {
               sub.callback(frameUrl);
               delivered = true;
             }
@@ -248,8 +252,11 @@ export class VideoStreamService {
 
           if (!delivered && this.subscriptions.size > 0) {
             // Log for debugging - show what we're trying to match
-            const subKeys = Array.from(this.subscriptions.values()).map(s => s.streamKey);
-            console.log(`[VideoStreamService] Frame discarded - task "${frameTask}" doesn't match any subscriber. Subscribers:`, subKeys);
+            const subInfo = Array.from(this.subscriptions.values()).map(s => ({
+              mediaName: s.mediaName,
+              streamKey: s.streamKey
+            }));
+            console.log(`[VideoStreamService] Frame discarded - task "${frameTask}" doesn't match any subscriber:`, subInfo);
           }
         } else {
           // Fallback: if no task info in response, use currentStream (legacy behavior)

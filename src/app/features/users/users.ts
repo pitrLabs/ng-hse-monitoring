@@ -73,14 +73,6 @@ import { ConfirmDialogComponent } from '../../shared/components/confirm-dialog';
             <td mat-cell *matCellDef="let user">{{ user.email }}</td>
           </ng-container>
 
-          <!-- Level Column -->
-          <ng-container matColumnDef="level">
-            <th mat-header-cell *matHeaderCellDef>Level</th>
-            <td mat-cell *matCellDef="let user">
-              <span class="level-badge">Level {{ user.user_level }}</span>
-            </td>
-          </ng-container>
-
           <!-- Roles Column -->
           <ng-container matColumnDef="roles">
             <th mat-header-cell *matHeaderCellDef>Roles</th>
@@ -272,17 +264,6 @@ import { ConfirmDialogComponent } from '../../shared/components/confirm-dialog';
       color: var(--text-tertiary);
     }
 
-    .level-badge {
-      display: inline-flex;
-      padding: 4px 10px;
-      background: rgba(0, 212, 255, 0.1);
-      border: 1px solid rgba(0, 212, 255, 0.3);
-      border-radius: 20px;
-      font-size: 12px;
-      color: var(--accent-primary);
-      font-weight: 500;
-    }
-
     .roles-cell {
       display: flex;
       align-items: center;
@@ -359,7 +340,7 @@ export class UsersComponent implements OnInit {
 
   users = signal<User[]>([]);
   isLoading = signal(false);
-  displayedColumns = ['user', 'email', 'level', 'roles', 'status', 'actions'];
+  displayedColumns = ['user', 'email', 'roles', 'status', 'actions'];
 
   ngOnInit(): void {
     this.loadUsers();

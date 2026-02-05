@@ -45,7 +45,6 @@ import { AuthService } from '../../core/services/auth.service';
                 <span class="badge" [class.badge-success]="currentUser()?.is_active" [class.badge-error]="!currentUser()?.is_active">
                   {{ currentUser()?.is_active ? 'Active' : 'Inactive' }}
                 </span>
-                <span class="level-badge">Level {{ currentUser()?.user_level }}</span>
               </div>
             </div>
           </div>
@@ -232,17 +231,6 @@ import { AuthService } from '../../core/services/auth.service';
       gap: 8px;
       flex-wrap: wrap;
       justify-content: center;
-    }
-
-    .level-badge {
-      display: inline-flex;
-      padding: 4px 10px;
-      background: rgba(0, 212, 255, 0.1);
-      border: 1px solid rgba(0, 212, 255, 0.3);
-      border-radius: 20px;
-      font-size: 12px;
-      color: var(--accent-primary);
-      font-weight: 500;
     }
 
     .profile-details {

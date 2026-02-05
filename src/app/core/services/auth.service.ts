@@ -40,7 +40,7 @@ export class AuthService {
   readonly isSuperadmin = computed(() => this.currentUserSignal()?.is_superuser === true);
   readonly isManager = computed(() => {
     const role = this.primaryRole();
-    return role === 'manager' || role === 'admin' || this.isSuperadmin();
+    return role === 'manager' || this.isSuperadmin();
   });
   readonly isOperator = computed(() => this.primaryRole() === 'operator' || this.isManager());
 
@@ -49,9 +49,9 @@ export class AuthService {
     const user = this.currentUserSignal();
     if (!user) return false;
     if (user.is_superuser) return true;
-    // Check for manager, admin, superadmin roles
+    // Check for manager or superadmin roles
     return user.roles.some(r =>
-      ['manager', 'admin', 'superadmin'].includes(r.name.toLowerCase())
+      ['manager', 'superadmin'].includes(r.name.toLowerCase())
     );
   });
   // P3 is the minimum access level - any authenticated user should have at least this level

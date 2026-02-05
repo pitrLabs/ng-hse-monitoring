@@ -22,7 +22,6 @@ export interface User {
   full_name?: string;
   is_active: boolean;
   is_superuser: boolean;
-  user_level: number;
   created_at: string;
   updated_at: string;
   roles: Role[];
@@ -33,7 +32,6 @@ export interface UserCreate {
   email: string;
   full_name?: string;
   password: string;
-  user_level?: number;
   role_ids?: number[];
 }
 
@@ -42,7 +40,6 @@ export interface UserUpdate {
   full_name?: string;
   password?: string;
   is_active?: boolean;
-  user_level?: number;
   role_ids?: number[];
 }
 

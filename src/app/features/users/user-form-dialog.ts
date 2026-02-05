@@ -74,15 +74,6 @@ import { RoleService } from '../../core/services/role.service';
         </mat-form-field>
 
         <mat-form-field appearance="outline" class="full-width">
-          <mat-label>User Level</mat-label>
-          <mat-select formControlName="user_level">
-            @for (level of [1,2,3,4,5,6,7,8,9,10]; track level) {
-              <mat-option [value]="level">Level {{ level }}</mat-option>
-            }
-          </mat-select>
-        </mat-form-field>
-
-        <mat-form-field appearance="outline" class="full-width">
           <mat-label>Roles</mat-label>
           <mat-select formControlName="role_ids" multiple>
             @for (role of roles(); track role.id) {
@@ -189,7 +180,6 @@ export class UserFormDialogComponent implements OnInit {
       email: [user?.email || '', [Validators.required, Validators.email]],
       full_name: [user?.full_name || ''],
       password: ['', this.isEditMode ? [Validators.minLength(6)] : [Validators.required, Validators.minLength(6)]],
-      user_level: [user?.user_level || 1],
       role_ids: [user?.roles?.map(r => r.id) || []]
     });
 

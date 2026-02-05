@@ -24,7 +24,6 @@ interface UserFormData {
   email: string;
   full_name: string;
   password: string;
-  user_level: number;
   is_active: boolean;
   role_ids: string[];
 }
@@ -77,8 +76,8 @@ interface UserFormData {
               </div>
               <div class="col-email">{{ user.email || '-' }}</div>
               <div class="col-role">
-                <span class="role-badge" [class.admin]="user.is_superuser">
-                  {{ user.is_superuser ? 'Admin' : (user.roles?.[0]?.name || 'User') }}
+                <span class="role-badge" [class]="'role-badge ' + getRoleBadgeClass(user)">
+                  {{ getRoleDisplayName(user) }}
                 </span>
               </div>
               <div class="col-cameras">
@@ -176,6 +175,41 @@ interface UserFormData {
       </div>
     }
 
+    <!-- Delete Confirmation Modal -->
+    @if (showDeleteModal()) {
+      <div class="modal-overlay" (click)="closeDeleteModal()">
+        <div class="modal-content delete-modal" (click)="$event.stopPropagation()">
+          <div class="modal-header delete-header">
+            <div class="delete-icon-wrapper">
+              <mat-icon>warning</mat-icon>
+            </div>
+            <h3>Delete User</h3>
+            <button mat-icon-button (click)="closeDeleteModal()">
+              <mat-icon>close</mat-icon>
+            </button>
+          </div>
+          <div class="modal-body">
+            <p class="delete-message">
+              Are you sure you want to delete <strong>{{ userToDelete()?.full_name || userToDelete()?.username }}</strong>?
+            </p>
+            <p class="delete-warning">This action cannot be undone.</p>
+          </div>
+          <div class="modal-footer">
+            <div class="modal-actions">
+              <button mat-button (click)="closeDeleteModal()">Cancel</button>
+              <button mat-raised-button class="btn-danger" (click)="confirmDelete()" [disabled]="deletingUser()">
+                @if (deletingUser()) {
+                  <mat-spinner diameter="18"></mat-spinner>
+                } @else {
+                  Delete
+                }
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    }
+
     <!-- User Form Modal (Create/Edit) -->
     @if (showUserModal()) {
       <div class="modal-overlay" (click)="closeUserModal()">
@@ -212,16 +246,7 @@ interface UserFormData {
                 <mat-label>Role</mat-label>
                 <mat-select [(ngModel)]="userForm.role_ids" name="role_ids" multiple>
                   @for (role of roles(); track role.id) {
-                    <mat-option [value]="role.id">{{ role.name }}</mat-option>
-                  }
-                </mat-select>
-              </mat-form-field>
-
-              <mat-form-field appearance="outline" class="full-width">
-                <mat-label>User Level</mat-label>
-                <mat-select [(ngModel)]="userForm.user_level" name="user_level">
-                  @for (level of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]; track level) {
-                    <mat-option [value]="level">Level {{ level }}</mat-option>
+                    <mat-option [value]="role.id">{{ formatRoleName(role.name) }}</mat-option>
                   }
                 </mat-select>
               </mat-form-field>
@@ -362,7 +387,10 @@ interface UserFormData {
       background: var(--glass-border);
       color: var(--text-secondary);
 
-      &.admin { background: rgba(168, 85, 247, 0.2); color: #a855f7; }
+      &.role-superadmin { background: rgba(168, 85, 247, 0.2); color: #a855f7; }
+      &.role-manager { background: rgba(59, 130, 246, 0.2); color: #3b82f6; }
+      &.role-operator { background: rgba(34, 197, 94, 0.2); color: #22c55e; }
+      &.role-p3 { background: rgba(234, 179, 8, 0.2); color: #eab308; }
     }
 
     .status-badge {
@@ -486,6 +514,50 @@ interface UserFormData {
       .modal-actions { display: flex; gap: 12px; }
     }
 
+    /* Delete Modal */
+    .delete-modal {
+      max-width: 400px;
+    }
+
+    .delete-header {
+      gap: 12px;
+
+      .delete-icon-wrapper {
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        background: rgba(239, 68, 68, 0.15);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+
+        mat-icon { color: #ef4444; font-size: 22px; width: 22px; height: 22px; }
+      }
+
+      h3 { flex: 1; }
+    }
+
+    .delete-message {
+      color: var(--text-primary);
+      font-size: 14px;
+      margin: 0 0 8px 0;
+
+      strong { font-weight: 600; }
+    }
+
+    .delete-warning {
+      color: var(--text-tertiary);
+      font-size: 13px;
+      margin: 0;
+    }
+
+    .btn-danger {
+      background: #ef4444 !important;
+      color: white !important;
+
+      &:hover { background: #dc2626 !important; }
+    }
+
     /* User Form Modal */
     .user-form-modal {
       max-width: 480px;
@@ -565,6 +637,11 @@ export class AdminUsersComponent implements OnInit {
   loadingCameras = signal(false);
   savingAssignment = signal(false);
 
+  // Delete confirmation modal
+  showDeleteModal = signal(false);
+  userToDelete = signal<any>(null);
+  deletingUser = signal(false);
+
   // User form modal
   showUserModal = signal(false);
   isEditMode = signal(false);
@@ -597,7 +674,6 @@ export class AdminUsersComponent implements OnInit {
       email: '',
       full_name: '',
       password: '',
-      user_level: 1,
       is_active: true,
       role_ids: []
     };
@@ -640,8 +716,35 @@ export class AdminUsersComponent implements OnInit {
 
   isManagerOrAbove(user: any): boolean {
     if (user.is_superuser) return true;
-    const managerRoles = ['manager', 'superadmin', 'admin'];
+    const managerRoles = ['manager', 'superadmin'];
     return user.roles?.some((r: any) => managerRoles.includes(r.name?.toLowerCase()));
+  }
+
+  /**
+   * Map role name from DB to proper display name
+   */
+  formatRoleName(name: string): string {
+    const map: Record<string, string> = {
+      'superadmin': 'Super Admin',
+      'manager': 'Manager',
+      'operator': 'Operator',
+      'p3': 'P3',
+    };
+    return map[name?.toLowerCase()] || name;
+  }
+
+  getRoleDisplayName(user: any): string {
+    if (user.is_superuser) return 'Super Admin';
+    const role = user.roles?.[0]?.name;
+    if (!role) return 'No Role';
+    return this.formatRoleName(role);
+  }
+
+  getRoleBadgeClass(user: any): string {
+    if (user.is_superuser) return 'role-superadmin';
+    const role = user.roles?.[0]?.name?.toLowerCase();
+    if (role) return 'role-' + role;
+    return '';
   }
 
   openCreateDialog() {
@@ -659,7 +762,6 @@ export class AdminUsersComponent implements OnInit {
       email: user.email,
       full_name: user.full_name || '',
       password: '',
-      user_level: user.user_level || 1,
       is_active: user.is_active,
       role_ids: user.roles?.map((r: Role) => r.id) || []
     };
@@ -699,7 +801,6 @@ export class AdminUsersComponent implements OnInit {
       const updatePayload: any = {
         email: this.userForm.email,
         full_name: this.userForm.full_name || null,
-        user_level: this.userForm.user_level,
         is_active: this.userForm.is_active,
         role_ids: this.userForm.role_ids
       };
@@ -726,7 +827,6 @@ export class AdminUsersComponent implements OnInit {
         email: this.userForm.email,
         full_name: this.userForm.full_name || null,
         password: this.userForm.password,
-        user_level: this.userForm.user_level,
         role_ids: this.userForm.role_ids
       };
 
@@ -745,9 +845,32 @@ export class AdminUsersComponent implements OnInit {
   }
 
   deleteUser(user: any) {
-    if (confirm(`Delete user "${user.username}"?`)) {
-      this.http.delete(`${this.apiUrl}/users/${user.id}`).subscribe(() => this.loadUsers());
-    }
+    this.userToDelete.set(user);
+    this.showDeleteModal.set(true);
+  }
+
+  closeDeleteModal() {
+    this.showDeleteModal.set(false);
+    this.userToDelete.set(null);
+  }
+
+  confirmDelete() {
+    const user = this.userToDelete();
+    if (!user) return;
+
+    this.deletingUser.set(true);
+    this.http.delete(`${this.apiUrl}/users/${user.id}`).subscribe({
+      next: () => {
+        this.deletingUser.set(false);
+        this.closeDeleteModal();
+        this.loadUsers();
+      },
+      error: (err) => {
+        this.deletingUser.set(false);
+        this.closeDeleteModal();
+        console.error('Failed to delete user:', err);
+      }
+    });
   }
 
   // Camera Assignment Methods

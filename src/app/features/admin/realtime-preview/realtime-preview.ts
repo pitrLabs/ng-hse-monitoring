@@ -746,21 +746,22 @@ interface ChannelGroup {
         width: 8px;
         height: 8px;
         border-radius: 50%;
-        background: #6b7280;
+        background: #6b7280; /* Gray - offline */
 
         &.online {
-          background: #22c55e;
+          background: #22c55e; /* Green - healthy/streaming */
           box-shadow: 0 0 6px rgba(34, 197, 94, 0.5);
         }
 
         &.connecting {
-          background: #f59e0b;
+          background: #3b82f6; /* Blue - connecting */
+          box-shadow: 0 0 6px rgba(59, 130, 246, 0.5);
           animation: pulse-connecting 1.5s infinite;
         }
 
         &.error {
-          background: #ef4444;
-          box-shadow: 0 0 6px rgba(239, 68, 68, 0.5);
+          background: #f59e0b; /* Orange - connection error */
+          box-shadow: 0 0 6px rgba(245, 158, 11, 0.5);
         }
       }
 
@@ -770,7 +771,7 @@ interface ChannelGroup {
       }
 
       .device-item.connecting mat-icon {
-        color: #f59e0b;
+        color: #3b82f6; /* Blue - connecting */
         animation: spin 2s linear infinite;
       }
 

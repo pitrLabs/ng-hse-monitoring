@@ -45,6 +45,7 @@ export class AlarmService implements OnDestroy {
   private _alarms = signal<Alarm[]>([]);
   private _recentAlarms = signal<Alarm[]>([]);
   private _stats = signal<AlarmStats | null>(null);
+  private _unreadNotificationCount = signal<number>(0); // Badge count for topbar
 
   // Public computed signals
   readonly connectionStatus = this._connectionStatus.asReadonly();
@@ -57,10 +58,8 @@ export class AlarmService implements OnDestroy {
     return this._recentAlarms().slice(0, 10).map(alarm => this.alarmToNotification(alarm));
   });
 
-  // Count of new alarms
-  readonly newAlarmsCount = computed(() => {
-    return this._alarms().filter(a => a.status === 'new').length;
-  });
+  // Count of new alarms (for badge - resets when viewed)
+  readonly newAlarmsCount = this._unreadNotificationCount.asReadonly();
 
   constructor() {
     this.connect();
@@ -186,6 +185,9 @@ export class AlarmService implements OnDestroy {
     // Show toast notification popup
     this.toastService.showAlarmToast(alarm);
 
+    // Increment unread notification count (for badge)
+    this._unreadNotificationCount.update(count => count + 1);
+
     // Add to alarms list
     this._alarms.update(alarms => [alarm, ...alarms]);
 
@@ -218,6 +220,14 @@ export class AlarmService implements OnDestroy {
 
   setSoundEnabled(enabled: boolean): void {
     this._soundEnabled.set(enabled);
+  }
+
+  /**
+   * Mark notifications as viewed - clears the badge count
+   * Call this when user opens the notification dropdown
+   */
+  markNotificationsViewed(): void {
+    this._unreadNotificationCount.set(0);
   }
 
   private async playNotificationSound(alarmType?: string): Promise<void> {

@@ -32,6 +32,10 @@ export class VideoStreamService {
   private cycleInterval = 2000; // 2 seconds per stream
   private isConnected = false;
 
+  // Channel switch settling - ignore frames briefly after switching to avoid stale frames
+  private lastChannelSwitch = 0;
+  private settlingPeriod = 300; // ms to ignore frames after channel switch
+
   // Observable for connection status
   connectionStatus = signal<'disconnected' | 'connecting' | 'connected'>('disconnected');
 
@@ -197,16 +201,25 @@ export class VideoStreamService {
     // BM-APP expects just the channel identifier (TaskIdx number or "group/X")
     // Don't prepend "task/" - the stream value should already be in the correct format
     this.currentStream = stream;
+    this.lastChannelSwitch = Date.now(); // Record switch time for settling
 
     const message = JSON.stringify({ chn: stream });
     console.log(`[VideoStreamService] Selecting stream:`, {
       stream: stream,
-      message: message
+      message: message,
+      timestamp: this.lastChannelSwitch
     });
     this.websocket.send(message);
   }
 
   private handleMessage(event: MessageEvent) {
+    // Check settling period - ignore frames briefly after channel switch
+    const timeSinceSwitch = Date.now() - this.lastChannelSwitch;
+    if (timeSinceSwitch < this.settlingPeriod) {
+      // Still settling after channel switch, ignore frame to avoid stale data
+      return;
+    }
+
     // Handle binary data (Blob or ArrayBuffer)
     if (event.data instanceof Blob) {
       this.handleBinaryFrame(event.data);
@@ -256,20 +269,18 @@ export class VideoStreamService {
               mediaName: s.mediaName,
               streamKey: s.streamKey
             }));
-            console.log(`[VideoStreamService] Frame discarded - task "${frameTask}" doesn't match any subscriber:`, subInfo);
+            console.warn(`[VideoStreamService] Frame discarded - task "${frameTask}" doesn't match any subscriber:`, subInfo);
           }
         } else {
-          // Fallback: if no task info in response, use currentStream (legacy behavior)
-          // This shouldn't happen with BM-APP but kept for safety
-          console.warn('[VideoStreamService] No task in frame data, using currentStream fallback');
-          if (this.currentStream) {
-            const currentKey = this.extractStreamKey(this.currentStream);
-            const currentKeyNormalized = currentKey.toLowerCase();
-            this.subscriptions.forEach(sub => {
-              if (sub.streamKey.toLowerCase() === currentKeyNormalized) {
-                sub.callback(frameUrl);
-              }
-            });
+          // No task info in response - this is problematic for multi-stream
+          // Only deliver if we have exactly 1 subscription (no ambiguity)
+          if (this.subscriptions.size === 1) {
+            const sub = this.subscriptions.values().next().value;
+            if (sub) {
+              sub.callback(frameUrl);
+            }
+          } else {
+            console.warn('[VideoStreamService] No task in frame data and multiple subscribers - discarding frame');
           }
         }
       }
@@ -291,17 +302,23 @@ export class VideoStreamService {
   }
 
   private handleBinaryFrame(blob: Blob) {
-    // Binary frames don't have task info, deliver to currentStream subscriber
-    if (this.currentStream) {
-      const frameUrl = URL.createObjectURL(blob);
-      const currentKey = this.extractStreamKey(this.currentStream);
-      const currentKeyNormalized = currentKey.toLowerCase();
+    // Check settling period
+    const timeSinceSwitch = Date.now() - this.lastChannelSwitch;
+    if (timeSinceSwitch < this.settlingPeriod) {
+      return; // Still settling, ignore frame
+    }
 
-      this.subscriptions.forEach(sub => {
-        if (sub.streamKey.toLowerCase() === currentKeyNormalized) {
-          sub.callback(frameUrl);
-        }
-      });
+    // Binary frames don't have task info - only safe to deliver if 1 subscriber
+    if (this.subscriptions.size === 1) {
+      const frameUrl = URL.createObjectURL(blob);
+      const sub = this.subscriptions.values().next().value;
+      if (sub) {
+        sub.callback(frameUrl);
+      }
+    } else if (this.subscriptions.size > 1) {
+      // Multiple subscribers - binary frames are ambiguous, discard
+      // This prevents wrong-stream delivery
+      console.warn('[VideoStreamService] Binary frame discarded - multiple subscribers and no task info');
     }
   }
 

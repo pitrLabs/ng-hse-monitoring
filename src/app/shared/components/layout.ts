@@ -217,7 +217,8 @@ interface NavItem {
 
             <!-- Notifications -->
             <button mat-icon-button class="header-icon-btn" [matMenuTriggerFor]="notifMenu" matTooltip="Notifications"
-              [matBadge]="alarmCount()" matBadgeColor="warn" [matBadgeHidden]="alarmCount() === 0">
+              [matBadge]="alarmCount()" matBadgeColor="warn" [matBadgeHidden]="alarmCount() === 0"
+              (click)="onNotificationMenuOpen()">
               <mat-icon>notifications</mat-icon>
             </button>
             <mat-menu #notifMenu="matMenu" class="notification-dropdown">
@@ -1130,6 +1131,11 @@ export class LayoutComponent implements OnInit, OnDestroy {
 
   toggleAlarmSound(): void {
     this.alarmService.toggleSound();
+  }
+
+  onNotificationMenuOpen(): void {
+    // Clear the badge when user opens the notification dropdown
+    this.alarmService.markNotificationsViewed();
   }
 
   // Sidebar resize methods

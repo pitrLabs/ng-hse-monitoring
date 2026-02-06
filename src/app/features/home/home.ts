@@ -6,12 +6,15 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatMenuModule } from '@angular/material/menu';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatDividerModule } from '@angular/material/divider';
+import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { AlarmService } from '../../core/services/alarm.service';
 import { AlarmNotification, getAlarmImageUrl } from '../../core/models/alarm.model';
 import { LocationsService, CameraLocation } from '../../core/services/locations.service';
 import { AuthService } from '../../core/services/auth.service';
-import { VideoSourceService } from '../../core/services/video-source.service';
+import { VideoSourceService, VideoSource } from '../../core/services/video-source.service';
+import { AITaskService, BmappTask } from '../../core/services/ai-task.service';
 import { LeafletMapComponent, MapMarker } from '../../shared/components/leaflet-map/leaflet-map';
+import { WsVideoPlayerComponent } from '../../shared/components/ws-video-player/ws-video-player.component';
 
 interface DeviceStatus {
   online: number;
@@ -40,7 +43,9 @@ interface DeviceClass {
     MatMenuModule,
     MatTooltipModule,
     MatDividerModule,
-    LeafletMapComponent
+    MatProgressSpinnerModule,
+    LeafletMapComponent,
+    WsVideoPlayerComponent
   ],
   template: `
     <div class="home-container">
@@ -218,20 +223,42 @@ interface DeviceClass {
 
         <!-- Video Preview Panel -->
         <div class="video-panel glass-card-static">
+          <div class="video-panel-header">
+            <span class="video-panel-title">
+              <mat-icon>smart_display</mat-icon>
+              Live Cameras
+            </span>
+            <span class="video-panel-count">{{ onlineTasks().length }} online</span>
+          </div>
           <div class="video-grid">
-            @for (i of [1, 2, 3, 4]; track i) {
-              <div class="video-cell">
-                <div class="video-placeholder">
-                  <mat-icon>videocam</mat-icon>
-                  <span>Camera {{ i }}</span>
-                </div>
-                <div class="video-controls">
-                  <button mat-icon-button class="video-ctrl-btn" matTooltip="Close">
-                    <mat-icon>close</mat-icon>
-                  </button>
-                  <span class="video-empty-label">Empty</span>
-                </div>
+            @if (loadingCameras()) {
+              <div class="video-loading">
+                <mat-spinner diameter="32"></mat-spinner>
+                <span>Loading cameras...</span>
               </div>
+            } @else {
+              @for (task of cameraSlots(); track $index; let i = $index) {
+                <div class="video-cell" [class.has-video]="task">
+                  @if (task) {
+                    <app-ws-video-player
+                      [stream]="getStreamId(task)"
+                      [mediaName]="task.MediaName"
+                      [showControls]="false"
+                      [showFps]="false"
+                      [useSharedService]="onlineTasks().length > 1">
+                    </app-ws-video-player>
+                    <div class="video-info-overlay">
+                      <span class="video-status online"></span>
+                      <span class="video-name">{{ task.MediaName }}</span>
+                    </div>
+                  } @else {
+                    <div class="video-placeholder">
+                      <mat-icon>videocam_off</mat-icon>
+                      <span>Slot {{ i + 1 }}</span>
+                    </div>
+                  }
+                </div>
+              }
             }
           </div>
         </div>
@@ -685,15 +712,52 @@ interface DeviceClass {
 
     // Video Panel
     .video-panel {
-      height: 200px;
-      padding: 8px;
+      height: 220px;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .video-panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--glass-border);
+
+      .video-panel-title {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--text-primary);
+
+        mat-icon {
+          font-size: 16px;
+          width: 16px;
+          height: 16px;
+          color: var(--accent-primary);
+        }
+      }
+
+      .video-panel-count {
+        font-size: 11px;
+        color: var(--text-tertiary);
+        padding: 2px 8px;
+        background: rgba(34, 197, 94, 0.1);
+        color: #22c55e;
+        border-radius: 10px;
+      }
     }
 
     .video-grid {
+      flex: 1;
       display: grid;
       grid-template-columns: repeat(4, 1fr);
       gap: 8px;
-      height: 100%;
+      padding: 8px;
+      min-height: 0;
     }
 
     .video-cell {
@@ -701,6 +765,16 @@ interface DeviceClass {
       border-radius: var(--radius-sm);
       position: relative;
       overflow: hidden;
+      min-height: 100px;
+
+      &.has-video {
+        background: #000;
+      }
+
+      app-ws-video-player {
+        position: absolute;
+        inset: 0;
+      }
     }
 
     .video-placeholder {
@@ -710,47 +784,105 @@ interface DeviceClass {
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      gap: 8px;
+      gap: 6px;
       color: var(--text-tertiary);
 
       mat-icon {
-        font-size: 32px;
-        width: 32px;
-        height: 32px;
+        font-size: 28px;
+        width: 28px;
+        height: 28px;
+        opacity: 0.5;
       }
 
       span {
-        font-size: 11px;
+        font-size: 10px;
       }
     }
 
-    .video-controls {
+    .video-info-overlay {
       position: absolute;
       bottom: 0;
       left: 0;
       right: 0;
       display: flex;
-      justify-content: space-between;
       align-items: center;
-      padding: 4px 8px;
-      background: linear-gradient(transparent, rgba(0, 0, 0, 0.7));
-    }
+      gap: 6px;
+      padding: 6px 10px;
+      background: linear-gradient(transparent, rgba(0, 0, 0, 0.8));
 
-    .video-ctrl-btn {
-      width: 24px;
-      height: 24px;
-      color: var(--text-secondary);
+      .video-status {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: #6b7280; /* Gray - offline */
 
-      mat-icon {
-        font-size: 14px;
-        width: 14px;
-        height: 14px;
+        &.online {
+          background: #22c55e; /* Green - streaming */
+          box-shadow: 0 0 6px rgba(34, 197, 94, 0.5);
+        }
+
+        &.connecting {
+          background: #3b82f6; /* Blue - connecting */
+          box-shadow: 0 0 6px rgba(59, 130, 246, 0.5);
+          animation: pulse-status 1.5s infinite;
+        }
+
+        &.error {
+          background: #f59e0b; /* Orange - error */
+          box-shadow: 0 0 6px rgba(245, 158, 11, 0.5);
+        }
+      }
+
+      @keyframes pulse-status {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
+      }
+
+      .video-name {
+        flex: 1;
+        font-size: 10px;
+        color: #fff;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
     }
 
-    .video-empty-label {
-      font-size: 10px;
+    .video-loading {
+      grid-column: 1 / -1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
       color: var(--text-tertiary);
+      font-size: 12px;
+    }
+
+    .video-empty-state {
+      grid-column: 1 / -1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      color: var(--text-tertiary);
+
+      mat-icon {
+        font-size: 36px;
+        width: 36px;
+        height: 36px;
+        opacity: 0.5;
+      }
+
+      span {
+        font-size: 12px;
+      }
+
+      .video-hint {
+        font-size: 11px;
+        opacity: 0.7;
+      }
     }
 
     // Notify Widget
@@ -991,13 +1123,42 @@ export class HomeComponent implements OnInit, OnDestroy {
   locationsService = inject(LocationsService);
   authService = inject(AuthService);
   videoSourceService = inject(VideoSourceService);
+  aiTaskService = inject(AITaskService);
+
+  // BM-APP tasks for video panel
+  bmappTasks = signal<BmappTask[]>([]);
+  loadingCameras = signal(true);
+
+  // Computed: Get only "Healthy" tasks (AlgTaskStatus.type === 4)
+  onlineTasks = computed(() => {
+    return this.bmappTasks().filter(task => {
+      const statusType = task.AlgTaskStatus?.type;
+      return statusType === 4; // 4 = Healthy
+    });
+  });
+
+  // Computed: Get 4 slots - online tasks first, rest empty
+  cameraSlots = computed(() => {
+    const online = this.onlineTasks();
+    const slots: (BmappTask | null)[] = [];
+    for (let i = 0; i < 4; i++) {
+      slots.push(online[i] || null);
+    }
+    return slots;
+  });
+
+  // Get stream ID for BM-APP WebSocket
+  getStreamId(task: BmappTask): string {
+    const session = task.AlgTaskSession?.trim() || '';
+    return `task/${session}`;
+  }
 
   // Computed device status from real camera data
   deviceStatus = computed<DeviceStatus>(() => {
-    const cameras = this.videoSourceService.videoSources();
+    const tasks = this.bmappTasks();
     return {
-      online: cameras.filter(c => c.is_active).length,
-      offline: cameras.filter(c => !c.is_active).length
+      online: tasks.filter(t => t.AlgTaskStatus?.type === 4).length,  // Healthy
+      offline: tasks.filter(t => t.AlgTaskStatus?.type !== 4).length  // Others
     };
   });
 
@@ -1024,13 +1185,14 @@ export class HomeComponent implements OnInit, OnDestroy {
 
   // Computed device classes from real camera groups
   deviceClasses = computed<DeviceClass[]>(() => {
-    const cameras = this.videoSourceService.videoSources();
+    const tasks = this.bmappTasks();
 
-    // Group cameras by first word of name (e.g., "BWC", "H8C")
+    // Group tasks by first word of MediaName (e.g., "BWC", "H8C")
     const groups = new Map<string, { online: number; offline: number }>();
 
-    cameras.forEach(cam => {
-      const firstWord = cam.name.split(/[\s-]/)[0] || 'Other';
+    tasks.forEach(task => {
+      const mediaName = task.MediaName || 'Other';
+      const firstWord = mediaName.split(/[\s-]/)[0] || 'Other';
       const groupName = firstWord.toUpperCase();
 
       if (!groups.has(groupName)) {
@@ -1038,7 +1200,7 @@ export class HomeComponent implements OnInit, OnDestroy {
       }
 
       const group = groups.get(groupName)!;
-      if (cam.is_active) {
+      if (task.AlgTaskStatus?.type === 4) {  // Healthy
         group.online++;
       } else {
         group.offline++;
@@ -1067,6 +1229,29 @@ export class HomeComponent implements OnInit, OnDestroy {
 
     // Load camera locations
     this.loadLocations();
+
+    // Load BM-APP tasks for video panel
+    this.loadBmappTasks();
+  }
+
+  loadBmappTasks(): void {
+    this.loadingCameras.set(true);
+    this.aiTaskService.getBmappTasks().subscribe({
+      next: (tasks) => {
+        console.log('[Home] Loaded BM-APP tasks:', tasks.map(t => ({
+          MediaName: t.MediaName,
+          AlgTaskSession: t.AlgTaskSession,
+          status: t.AlgTaskStatus?.type
+        })));
+        this.bmappTasks.set(tasks);
+        this.loadingCameras.set(false);
+      },
+      error: (err) => {
+        console.error('Failed to load BM-APP tasks:', err);
+        this.bmappTasks.set([]);
+        this.loadingCameras.set(false);
+      }
+    });
   }
 
   async loadLocations(): Promise<void> {

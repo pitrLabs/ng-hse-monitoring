@@ -380,13 +380,13 @@ interface BmAppMedia {
       font-size: 12px; font-weight: 500;
       background: rgba(156, 163, 175, 0.2); color: #9ca3af;
 
-      &.online { background: rgba(34, 197, 94, 0.2); color: #22c55e; }
-      &.offline { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
+      &.online { background: rgba(34, 197, 94, 0.2); color: #22c55e; } /* Green - healthy/streaming */
+      &.offline { background: rgba(107, 114, 128, 0.2); color: #6b7280; } /* Gray - not active */
       &.connecting {
-        background: rgba(245, 158, 11, 0.2); color: #f59e0b;
+        background: rgba(59, 130, 246, 0.2); color: #3b82f6; /* Blue - connecting */
         animation: pulse-badge 1.5s ease-in-out infinite;
       }
-      &.error { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
+      &.error { background: rgba(245, 158, 11, 0.2); color: #f59e0b; } /* Orange - connection error */
     }
 
     @keyframes pulse-badge {

@@ -25,6 +25,7 @@ interface UserFormData {
   full_name: string;
   password: string;
   is_active: boolean;
+  is_superuser: boolean;
   role_ids: string[];
 }
 
@@ -250,6 +251,16 @@ interface UserFormData {
                   }
                 </mat-select>
               </mat-form-field>
+
+              <div class="checkbox-group">
+                <mat-checkbox [(ngModel)]="userForm.is_superuser" name="is_superuser" class="superuser-checkbox">
+                  <span class="checkbox-label-content">
+                    <mat-icon class="superuser-icon">verified_user</mat-icon>
+                    Super Admin
+                  </span>
+                </mat-checkbox>
+                <span class="checkbox-hint">Super Admin has full access to all features and cameras</span>
+              </div>
 
               @if (isEditMode()) {
                 <div class="status-toggle">
@@ -577,6 +588,36 @@ interface UserFormData {
       margin-top: 8px;
     }
 
+    .checkbox-group {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 12px;
+      background: rgba(168, 85, 247, 0.05);
+      border: 1px solid rgba(168, 85, 247, 0.2);
+      border-radius: var(--radius-sm);
+      margin-top: 8px;
+
+      .checkbox-hint {
+        font-size: 12px;
+        color: var(--text-tertiary);
+        margin-left: 28px;
+      }
+    }
+
+    .checkbox-label-content {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+
+      .superuser-icon {
+        font-size: 18px;
+        width: 18px;
+        height: 18px;
+        color: #a855f7;
+      }
+    }
+
     .form-error {
       display: flex;
       align-items: center;
@@ -675,6 +716,7 @@ export class AdminUsersComponent implements OnInit {
       full_name: '',
       password: '',
       is_active: true,
+      is_superuser: false,
       role_ids: []
     };
   }
@@ -763,6 +805,7 @@ export class AdminUsersComponent implements OnInit {
       full_name: user.full_name || '',
       password: '',
       is_active: user.is_active,
+      is_superuser: user.is_superuser || false,
       role_ids: user.roles?.map((r: Role) => r.id) || []
     };
     this.formError.set('');
@@ -802,6 +845,7 @@ export class AdminUsersComponent implements OnInit {
         email: this.userForm.email,
         full_name: this.userForm.full_name || null,
         is_active: this.userForm.is_active,
+        is_superuser: this.userForm.is_superuser,
         role_ids: this.userForm.role_ids
       };
 
@@ -827,6 +871,7 @@ export class AdminUsersComponent implements OnInit {
         email: this.userForm.email,
         full_name: this.userForm.full_name || null,
         password: this.userForm.password,
+        is_superuser: this.userForm.is_superuser,
         role_ids: this.userForm.role_ids
       };
 

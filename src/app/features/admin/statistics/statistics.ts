@@ -7,6 +7,8 @@ import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { AlarmService } from '../../../core/services/alarm.service';
 import { VideoSourceService } from '../../../core/services/video-source.service';
 import { AITaskService } from '../../../core/services/ai-task.service';
+import { AnalyticsService } from '../../../core/services/analytics.service';
+import { PeopleCount, ZoneOccupancy, StoreCount } from '../../../core/models/analytics.model';
 import { HttpClient } from '@angular/common/http';
 import { environment } from '../../../../environments/environment';
 
@@ -112,6 +114,86 @@ import { environment } from '../../../../environments/environment';
           </div>
         </div>
       </div>
+
+      <!-- Analytics Section -->
+      <div class="charts-grid">
+        <!-- People Count -->
+        <div class="chart-card">
+          <div class="chart-header">
+            <h3>People Count</h3>
+            <span class="chart-subtitle">Entry/exit counting</span>
+          </div>
+          <div class="chart-body">
+            @if (peopleCountData().length === 0) {
+              <div class="no-data">
+                <mat-icon>people_outline</mat-icon>
+                <span>No people count data yet</span>
+              </div>
+            }
+            @for (item of peopleCountData().slice(0, 8); track item.id) {
+              <div class="bar-item">
+                <span class="bar-label">{{ item.camera_name || 'Unknown' }}</span>
+                <div class="bar-container">
+                  <div class="bar-fill" [style.width.%]="getPeopleCountPercent(item)" style="background: linear-gradient(90deg, #3b82f6, #06b6d4)"></div>
+                </div>
+                <span class="bar-value">
+                  <span class="count-in">{{ item.count_in }}↑</span>
+                  <span class="count-out">{{ item.count_out }}↓</span>
+                </span>
+              </div>
+            }
+          </div>
+        </div>
+
+        <!-- Zone Occupancy -->
+        <div class="chart-card">
+          <div class="chart-header">
+            <h3>Zone Occupancy</h3>
+            <span class="chart-subtitle">People in zones (current)</span>
+          </div>
+          <div class="chart-body">
+            @if (zoneOccupancyData().length === 0) {
+              <div class="no-data">
+                <mat-icon>location_on</mat-icon>
+                <span>No zone occupancy data yet</span>
+              </div>
+            }
+            @for (item of zoneOccupancyData().slice(0, 8); track item.id) {
+              <div class="bar-item">
+                <span class="bar-label">{{ item.zone_name || item.camera_name || 'Zone' }}</span>
+                <div class="bar-container">
+                  <div class="bar-fill" [style.width.%]="getZonePercent(item)" style="background: linear-gradient(90deg, #a855f7, #ec4899)"></div>
+                </div>
+                <span class="bar-value">{{ item.people_count }}</span>
+              </div>
+            }
+          </div>
+        </div>
+      </div>
+
+      <!-- Store Count -->
+      @if (storeCountData().length > 0) {
+        <div class="chart-card full-width">
+          <div class="chart-header">
+            <h3>Store Traffic</h3>
+            <span class="chart-subtitle">Daily entry/exit counts</span>
+          </div>
+          <div class="chart-body">
+            @for (item of storeCountData().slice(0, 10); track item.id) {
+              <div class="bar-item">
+                <span class="bar-label">{{ item.record_date | date:'shortDate' }}</span>
+                <div class="bar-container">
+                  <div class="bar-fill" [style.width.%]="getStorePercent(item)" style="background: linear-gradient(90deg, #22c55e, #10b981)"></div>
+                </div>
+                <span class="bar-value">
+                  <span class="count-in">{{ item.entry_count }}↑</span>
+                  <span class="count-out">{{ item.exit_count }}↓</span>
+                </span>
+              </div>
+            }
+          </div>
+        </div>
+      }
 
       <!-- Recent Activity -->
       <div class="activity-card">
@@ -235,12 +317,27 @@ import { environment } from '../../../../environments/environment';
     .activity-title { font-size: 14px; color: var(--text-primary); }
     .activity-desc { font-size: 12px; color: var(--text-tertiary); }
     .activity-time { font-size: 12px; color: var(--text-tertiary); }
+
+    .chart-subtitle { font-size: 12px; color: var(--text-tertiary); }
+    .chart-header { display: flex; align-items: baseline; gap: 8px; }
+    .full-width { grid-column: 1 / -1; }
+
+    .no-data {
+      display: flex; flex-direction: column; align-items: center; gap: 8px;
+      padding: 24px; color: var(--text-tertiary);
+      mat-icon { font-size: 32px; width: 32px; height: 32px; opacity: 0.5; }
+      span { font-size: 13px; }
+    }
+
+    .count-in { color: #22c55e; font-size: 12px; margin-right: 4px; }
+    .count-out { color: #ef4444; font-size: 12px; }
   `]
 })
 export class AdminStatisticsComponent implements OnInit {
   private alarmService = inject(AlarmService);
   private videoSourceService = inject(VideoSourceService);
   private aiTaskService = inject(AITaskService);
+  private analyticsService = inject(AnalyticsService);
   private http = inject(HttpClient);
   private apiUrl = environment.apiUrl;
 
@@ -306,6 +403,11 @@ export class AdminStatisticsComponent implements OnInit {
   // Alarms by camera from real data
   alarmsByCamera = signal<{ camera: string; count: number; percentage: number }[]>([]);
 
+  // Analytics data
+  peopleCountData = signal<PeopleCount[]>([]);
+  zoneOccupancyData = signal<ZoneOccupancy[]>([]);
+  storeCountData = signal<StoreCount[]>([]);
+
   // Recent activity from real alarms
   recentActivity = computed(() => {
     return this.alarmService.notifications().slice(0, 5).map((notif, idx) => ({
@@ -322,6 +424,7 @@ export class AdminStatisticsComponent implements OnInit {
     this.loadStats();
     this.loadAiTasks();
     this.loadAlarmsByCamera();
+    this.loadAnalyticsData();
 
     // Load video sources for camera stats
     this.videoSourceService.loadVideoSources();
@@ -398,6 +501,36 @@ export class AdminStatisticsComponent implements OnInit {
     });
   }
 
+  loadAnalyticsData(): void {
+    this.analyticsService.getPeopleCount({ limit: 50 }).subscribe({
+      next: (data) => this.peopleCountData.set(data),
+      error: () => {}
+    });
+    this.analyticsService.getZoneOccupancy({ limit: 50 }).subscribe({
+      next: (data) => this.zoneOccupancyData.set(data),
+      error: () => {}
+    });
+    this.analyticsService.getStoreCount({ limit: 50 }).subscribe({
+      next: (data) => this.storeCountData.set(data),
+      error: () => {}
+    });
+  }
+
+  getPeopleCountPercent(item: PeopleCount): number {
+    const max = Math.max(...this.peopleCountData().map(d => d.total), 1);
+    return Math.round((item.total / max) * 100);
+  }
+
+  getZonePercent(item: ZoneOccupancy): number {
+    const max = Math.max(...this.zoneOccupancyData().map(d => d.people_count), 1);
+    return Math.round((item.people_count / max) * 100);
+  }
+
+  getStorePercent(item: StoreCount): number {
+    const max = Math.max(...this.storeCountData().map(d => d.entry_count + d.exit_count), 1);
+    return Math.round(((item.entry_count + item.exit_count) / max) * 100);
+  }
+
   private formatAlarmType(type: string): string {
     // Convert camelCase/PascalCase to readable format
     return type
@@ -431,6 +564,22 @@ export class AdminStatisticsComponent implements OnInit {
     csv += 'Alarms by Camera\n';
     csv += 'Camera,Count\n';
     cameras.forEach(c => csv += `${c.camera},${c.count}\n`);
+    csv += '\n';
+
+    const peopleCounts = this.peopleCountData();
+    if (peopleCounts.length > 0) {
+      csv += 'People Count\n';
+      csv += 'Camera,In,Out,Total,Time\n';
+      peopleCounts.forEach(p => csv += `${p.camera_name},${p.count_in},${p.count_out},${p.total},${p.record_time}\n`);
+      csv += '\n';
+    }
+
+    const storeData = this.storeCountData();
+    if (storeData.length > 0) {
+      csv += 'Store Traffic\n';
+      csv += 'Camera,Entry,Exit,Date\n';
+      storeData.forEach(s => csv += `${s.camera_name},${s.entry_count},${s.exit_count},${s.record_date}\n`);
+    }
 
     // Download
     const blob = new Blob([csv], { type: 'text/csv' });

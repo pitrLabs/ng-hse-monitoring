@@ -15,6 +15,7 @@ import { VideoSourceService, VideoSource } from '../../../core/services/video-so
 import { AITaskService, AITask, ZLMStream } from '../../../core/services/ai-task.service';
 import { CameraGroupsService } from '../../../core/services/camera-groups.service';
 import { AuthService } from '../../../core/services/auth.service';
+import { CameraStatusService } from '../../../core/services/camera-status.service';
 import { environment } from '../../../../environments/environment';
 
 interface VideoChannel {
@@ -756,6 +757,11 @@ interface ChannelGroup {
           background: #f59e0b;
           animation: pulse-connecting 1.5s infinite;
         }
+
+        &.error {
+          background: #ef4444;
+          box-shadow: 0 0 6px rgba(239, 68, 68, 0.5);
+        }
       }
 
       @keyframes pulse-connecting {
@@ -1124,6 +1130,7 @@ interface ChannelGroup {
 export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
   private cameraGroupsService = inject(CameraGroupsService);
   private authService = inject(AuthService);
+  private cameraStatusService = inject(CameraStatusService);
 
   @ViewChild('previewContainer') previewContainer!: ElementRef<HTMLElement>;
 
@@ -1586,15 +1593,20 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
   loadFromLocal() {
     this.videoSourceService.getAll(true).subscribe({
       next: (sources) => {
-        this.videoChannels = sources.map(s => ({
-          id: s.id,
-          name: s.name,
-          status: s.is_active ? 'online' : 'offline',
-          stream: s.stream_name,
-          app: 'live',
-          backendId: s.id,
-          groupId: s.group_id || null
-        }));
+        this.videoChannels = sources.map(s => {
+          // Use real-time status from CameraStatusService if available, fallback to is_active
+          const realStatus = this.cameraStatusService.getStatus(s.stream_name);
+          return {
+            id: s.id,
+            name: s.name,
+            status: realStatus === 'online' ? 'online' : (s.is_active ? 'online' : 'offline'),
+            isConnecting: realStatus === 'connecting',
+            stream: s.stream_name,
+            app: 'live',
+            backendId: s.id,
+            groupId: s.group_id || null
+          };
+        });
         this.initializeGrid();
         this.loading = false;
       },

@@ -1,66 +1,187 @@
-import { Component, signal } from '@angular/core';
+import { Component, OnInit, signal, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { FormsModule } from '@angular/forms';
 import { MatIconModule } from '@angular/material/icon';
 import { MatButtonModule } from '@angular/material/button';
+import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
+import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
+import { MatDialogModule, MatDialog } from '@angular/material/dialog';
+import { MatFormFieldModule } from '@angular/material/form-field';
+import { MatInputModule } from '@angular/material/input';
+import { AnalyticsService } from '../../../core/services/analytics.service';
+import { BmappSchedule } from '../../../core/models/analytics.model';
 
 @Component({
   standalone: true,
   selector: 'app-admin-schedule',
-  imports: [CommonModule, MatIconModule, MatButtonModule],
+  imports: [
+    CommonModule, FormsModule, MatIconModule, MatButtonModule,
+    MatProgressSpinnerModule, MatSnackBarModule, MatDialogModule,
+    MatFormFieldModule, MatInputModule
+  ],
   template: `
     <div class="admin-schedule">
       <div class="page-header">
-        <h2>Schedule Management</h2>
-        <button mat-raised-button class="btn-primary" (click)="createSchedule()">
-          <mat-icon>add</mat-icon>
-          Add Schedule
-        </button>
+        <div class="header-left">
+          <h2>Schedule Management</h2>
+          <p class="subtitle">Manage AI task schedules on BM-APP</p>
+        </div>
+        <div class="header-actions">
+          <button class="action-btn primary" (click)="openCreateDialog()">
+            <mat-icon>add</mat-icon>
+            Add Schedule
+          </button>
+          <button class="action-btn" (click)="loadSchedules()" [disabled]="loading()">
+            <mat-icon>refresh</mat-icon>
+            Refresh
+          </button>
+        </div>
       </div>
 
-      <div class="schedule-grid">
-        @for (schedule of schedules(); track schedule.id) {
-          <div class="schedule-card">
-            <div class="schedule-header">
-              <div class="schedule-icon" [class]="schedule.type">
-                <mat-icon>{{ schedule.icon }}</mat-icon>
-              </div>
-              <div class="schedule-info">
-                <h3>{{ schedule.name }}</h3>
-                <span class="schedule-time">{{ schedule.time }}</span>
-              </div>
-              <div class="schedule-toggle">
-                <button mat-icon-button (click)="toggleSchedule(schedule)">
-                  <mat-icon>{{ schedule.enabled ? 'toggle_on' : 'toggle_off' }}</mat-icon>
-                </button>
-              </div>
-            </div>
-            <div class="schedule-body">
-              <div class="schedule-days">
-                @for (day of days; track day) {
-                  <span class="day-badge" [class.active]="schedule.days.includes(day)">{{ day }}</span>
+      @if (loading()) {
+        <div class="loading-state">
+          <mat-spinner diameter="40"></mat-spinner>
+          <span>Loading schedules from BM-APP...</span>
+        </div>
+      } @else {
+        <div class="schedule-grid">
+          @for (schedule of schedules(); track schedule.Id) {
+            <div class="schedule-card" [class.default]="schedule.Id === -1">
+              <div class="schedule-header">
+                <div class="schedule-icon" [class]="getScheduleClass(schedule)">
+                  <mat-icon>{{ getScheduleIcon(schedule) }}</mat-icon>
+                </div>
+                <div class="schedule-info">
+                  <h3>{{ schedule.Name }}</h3>
+                  <span class="schedule-summary">{{ schedule.Summary || 'No description' }}</span>
+                </div>
+                @if (schedule.Id !== -1) {
+                  <button class="delete-btn" (click)="confirmDelete(schedule)" [disabled]="deleting()">
+                    <mat-icon>delete</mat-icon>
+                  </button>
                 }
               </div>
-              <p class="schedule-desc">{{ schedule.description }}</p>
+              <div class="schedule-body">
+                <div class="schedule-value">
+                  <mat-icon>access_time</mat-icon>
+                  <span>{{ schedule.Value || 'All time (24/7)' }}</span>
+                </div>
+                @if (schedule.Id === -1) {
+                  <span class="default-badge">Default Schedule</span>
+                }
+              </div>
+            </div>
+          } @empty {
+            <div class="empty-state">
+              <mat-icon>schedule</mat-icon>
+              <span>No schedules found</span>
+              <button class="action-btn primary" (click)="openCreateDialog()">
+                <mat-icon>add</mat-icon>
+                Create First Schedule
+              </button>
+            </div>
+          }
+        </div>
+      }
+
+      <!-- Create Dialog -->
+      @if (showCreateDialog()) {
+        <div class="dialog-overlay" (click)="closeCreateDialog()">
+          <div class="dialog-content" (click)="$event.stopPropagation()">
+            <div class="dialog-header">
+              <h3>Create New Schedule</h3>
+              <button class="close-btn" (click)="closeCreateDialog()">
+                <mat-icon>close</mat-icon>
+              </button>
+            </div>
+            <div class="dialog-body">
+              <mat-form-field appearance="outline">
+                <mat-label>Schedule Name</mat-label>
+                <input matInput [(ngModel)]="newSchedule.name" placeholder="e.g., Work Hours">
+              </mat-form-field>
+
+              <mat-form-field appearance="outline">
+                <mat-label>Description</mat-label>
+                <input matInput [(ngModel)]="newSchedule.summary" placeholder="e.g., Monday to Friday working hours">
+              </mat-form-field>
+
+              <mat-form-field appearance="outline">
+                <mat-label>Time Range</mat-label>
+                <input matInput [(ngModel)]="newSchedule.value" placeholder="e.g., 08:00-17:00">
+                <mat-hint>Format: HH:MM-HH:MM (leave empty for all time)</mat-hint>
+              </mat-form-field>
+            </div>
+            <div class="dialog-actions">
+              <button class="action-btn" (click)="closeCreateDialog()">Cancel</button>
+              <button class="action-btn primary" (click)="createSchedule()" [disabled]="creating() || !newSchedule.name">
+                @if (creating()) {
+                  <mat-spinner diameter="18"></mat-spinner>
+                } @else {
+                  <mat-icon>add</mat-icon>
+                }
+                Create
+              </button>
             </div>
           </div>
-        } @empty {
-          <div class="empty-state">
-            <mat-icon>schedule</mat-icon>
-            <span>No schedules configured</span>
+        </div>
+      }
+
+      <!-- Delete Confirmation Dialog -->
+      @if (scheduleToDelete()) {
+        <div class="dialog-overlay" (click)="cancelDelete()">
+          <div class="dialog-content small" (click)="$event.stopPropagation()">
+            <div class="dialog-header">
+              <h3>Delete Schedule</h3>
+            </div>
+            <div class="dialog-body">
+              <p>Are you sure you want to delete <strong>{{ scheduleToDelete()?.Name }}</strong>?</p>
+              <p class="warning">This action cannot be undone.</p>
+            </div>
+            <div class="dialog-actions">
+              <button class="action-btn" (click)="cancelDelete()">Cancel</button>
+              <button class="action-btn danger" (click)="deleteSchedule()" [disabled]="deleting()">
+                @if (deleting()) {
+                  <mat-spinner diameter="18"></mat-spinner>
+                } @else {
+                  <mat-icon>delete</mat-icon>
+                }
+                Delete
+              </button>
+            </div>
           </div>
-        }
-      </div>
+        </div>
+      }
     </div>
   `,
   styles: [`
     .admin-schedule { display: flex; flex-direction: column; gap: 24px; }
 
     .page-header {
-      display: flex; justify-content: space-between; align-items: center;
-      h2 { margin: 0; font-size: 20px; color: var(--text-primary); }
+      display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 16px;
     }
+    .header-left h2 { margin: 0; font-size: 24px; color: var(--text-primary); }
+    .subtitle { margin: 4px 0 0; color: var(--text-secondary); font-size: 14px; }
 
-    .btn-primary { background: var(--accent-gradient) !important; color: white !important; }
+    .header-actions { display: flex; gap: 8px; align-items: center; }
+
+    .action-btn {
+      display: flex; align-items: center; gap: 8px; padding: 10px 20px;
+      border: none; border-radius: 8px; font-size: 14px; cursor: pointer;
+      background: var(--glass-bg); color: var(--text-primary);
+      border: 1px solid var(--glass-border); transition: all 0.2s;
+    }
+    .action-btn:hover { background: var(--glass-bg-hover); }
+    .action-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+    .action-btn.primary { background: var(--accent-primary); color: white; border: none; }
+    .action-btn.primary:hover { filter: brightness(1.1); }
+    .action-btn.danger { background: #ef4444; color: white; border: none; }
+    .action-btn mat-icon { font-size: 18px; width: 18px; height: 18px; }
+    .action-btn mat-spinner { display: inline-block; }
+
+    .loading-state {
+      display: flex; flex-direction: column; align-items: center; gap: 16px;
+      padding: 60px 20px; color: var(--text-tertiary);
+    }
 
     .schedule-grid {
       display: grid;
@@ -71,9 +192,12 @@ import { MatButtonModule } from '@angular/material/button';
     .schedule-card {
       background: var(--glass-bg);
       border: 1px solid var(--glass-border);
-      border-radius: var(--radius-md);
+      border-radius: 16px;
       overflow: hidden;
+      transition: all 0.2s;
     }
+    .schedule-card:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.2); }
+    .schedule-card.default { border-left: 4px solid var(--accent-primary); }
 
     .schedule-header {
       display: flex; align-items: center; gap: 12px;
@@ -83,69 +207,205 @@ import { MatButtonModule } from '@angular/material/button';
 
     .schedule-icon {
       width: 48px; height: 48px;
-      border-radius: 8px;
+      border-radius: 12px;
       display: flex; align-items: center; justify-content: center;
-      mat-icon { color: white; }
+      mat-icon { color: white; font-size: 24px; width: 24px; height: 24px; }
 
-      &.task { background: linear-gradient(135deg, #3b82f6, #1d4ed8); }
-      &.backup { background: linear-gradient(135deg, #22c55e, #15803d); }
-      &.cleanup { background: linear-gradient(135deg, #f59e0b, #d97706); }
+      &.default { background: linear-gradient(135deg, #8b5cf6, #6d28d9); }
+      &.custom { background: linear-gradient(135deg, #3b82f6, #1d4ed8); }
     }
 
     .schedule-info {
       flex: 1;
-      h3 { margin: 0 0 4px; font-size: 14px; color: var(--text-primary); }
-      .schedule-time { font-size: 12px; color: var(--accent-primary); }
+      h3 { margin: 0 0 4px; font-size: 16px; color: var(--text-primary); }
+      .schedule-summary { font-size: 13px; color: var(--text-secondary); }
     }
 
-    .schedule-toggle button {
-      color: var(--text-secondary);
-      mat-icon { font-size: 32px; width: 32px; height: 32px; }
+    .delete-btn {
+      width: 36px; height: 36px;
+      border: none; border-radius: 8px;
+      background: rgba(239, 68, 68, 0.1);
+      color: #ef4444;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: all 0.2s;
     }
+    .delete-btn:hover { background: rgba(239, 68, 68, 0.2); }
+    .delete-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .delete-btn mat-icon { font-size: 20px; width: 20px; height: 20px; }
 
     .schedule-body { padding: 16px 20px; }
 
-    .schedule-days {
-      display: flex; gap: 6px; margin-bottom: 12px;
+    .schedule-value {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 14px; color: var(--text-secondary);
+      mat-icon { font-size: 18px; width: 18px; height: 18px; color: var(--accent-primary); }
     }
 
-    .day-badge {
-      width: 32px; height: 32px;
-      border-radius: 50%;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 11px; font-weight: 600;
-      background: var(--glass-bg-hover);
-      color: var(--text-tertiary);
-
-      &.active { background: var(--accent-gradient); color: white; }
+    .default-badge {
+      display: inline-block;
+      margin-top: 12px;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 600;
+      background: rgba(139, 92, 246, 0.1);
+      color: #8b5cf6;
     }
-
-    .schedule-desc { margin: 0; font-size: 13px; color: var(--text-secondary); }
 
     .empty-state {
       grid-column: 1 / -1;
-      display: flex; flex-direction: column; align-items: center; gap: 12px;
+      display: flex; flex-direction: column; align-items: center; gap: 16px;
       padding: 60px 20px; color: var(--text-tertiary);
-      mat-icon { font-size: 48px; width: 48px; height: 48px; }
+      mat-icon { font-size: 64px; width: 64px; height: 64px; opacity: 0.5; }
+    }
+
+    // Dialog styles
+    .dialog-overlay {
+      position: fixed; inset: 0; z-index: 1000;
+      background: rgba(0, 0, 0, 0.6);
+      display: flex; align-items: center; justify-content: center;
+      padding: 20px;
+    }
+
+    .dialog-content {
+      background: var(--glass-bg);
+      border: 1px solid var(--glass-border);
+      border-radius: 16px;
+      width: 100%; max-width: 480px;
+      max-height: 90vh; overflow-y: auto;
+    }
+    .dialog-content.small { max-width: 400px; }
+
+    .dialog-header {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 20px 24px;
+      border-bottom: 1px solid var(--glass-border);
+      h3 { margin: 0; font-size: 18px; color: var(--text-primary); }
+    }
+
+    .close-btn {
+      width: 32px; height: 32px;
+      border: none; border-radius: 8px;
+      background: var(--glass-bg-hover);
+      color: var(--text-secondary);
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+    }
+
+    .dialog-body {
+      padding: 24px;
+      display: flex; flex-direction: column; gap: 16px;
+      p { margin: 0; color: var(--text-secondary); }
+      .warning { color: #ef4444; font-size: 13px; }
+    }
+
+    .dialog-body mat-form-field { width: 100%; }
+
+    .dialog-actions {
+      display: flex; justify-content: flex-end; gap: 12px;
+      padding: 16px 24px;
+      border-top: 1px solid var(--glass-border);
     }
   `]
 })
-export class AdminScheduleComponent {
-  days = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+export class AdminScheduleComponent implements OnInit {
+  private analyticsService = inject(AnalyticsService);
+  private snackBar = inject(MatSnackBar);
 
-  schedules = signal([
-    { id: 1, name: 'Daily Backup', time: '02:00 AM', type: 'backup', icon: 'backup', enabled: true, days: ['M', 'T', 'W', 'T', 'F'], description: 'Automatic database backup' },
-    { id: 2, name: 'Cleanup Old Alarms', time: '03:00 AM', type: 'cleanup', icon: 'delete_sweep', enabled: true, days: ['S'], description: 'Remove alarms older than 30 days' },
-    { id: 3, name: 'AI Task Restart', time: '06:00 AM', type: 'task', icon: 'restart_alt', enabled: false, days: ['M'], description: 'Weekly restart of all AI tasks' }
-  ]);
+  schedules = signal<BmappSchedule[]>([]);
+  loading = signal(true);
+  creating = signal(false);
+  deleting = signal(false);
+  showCreateDialog = signal(false);
+  scheduleToDelete = signal<BmappSchedule | null>(null);
 
-  createSchedule() { console.log('Create schedule'); }
-  toggleSchedule(schedule: any) {
-    const idx = this.schedules().findIndex(s => s.id === schedule.id);
-    if (idx >= 0) {
-      const updated = [...this.schedules()];
-      updated[idx] = { ...updated[idx], enabled: !updated[idx].enabled };
-      this.schedules.set(updated);
-    }
+  newSchedule = { name: '', summary: '', value: '' };
+
+  ngOnInit(): void {
+    this.loadSchedules();
+  }
+
+  loadSchedules(): void {
+    this.loading.set(true);
+    this.analyticsService.getSchedulesBmapp().subscribe({
+      next: (data) => {
+        this.schedules.set(data.schedules || []);
+        this.loading.set(false);
+      },
+      error: (err) => {
+        console.error('Failed to load schedules:', err);
+        this.snackBar.open('Failed to load schedules from BM-APP', 'Close', { duration: 3000 });
+        this.loading.set(false);
+      }
+    });
+  }
+
+  openCreateDialog(): void {
+    this.newSchedule = { name: '', summary: '', value: '' };
+    this.showCreateDialog.set(true);
+  }
+
+  closeCreateDialog(): void {
+    this.showCreateDialog.set(false);
+  }
+
+  createSchedule(): void {
+    if (!this.newSchedule.name) return;
+
+    this.creating.set(true);
+    this.analyticsService.createSchedule(
+      this.newSchedule.name,
+      this.newSchedule.summary,
+      this.newSchedule.value
+    ).subscribe({
+      next: () => {
+        this.snackBar.open('Schedule created successfully', 'Close', { duration: 3000 });
+        this.creating.set(false);
+        this.closeCreateDialog();
+        this.loadSchedules();
+      },
+      error: (err) => {
+        console.error('Failed to create schedule:', err);
+        this.snackBar.open('Failed to create schedule', 'Close', { duration: 3000 });
+        this.creating.set(false);
+      }
+    });
+  }
+
+  confirmDelete(schedule: BmappSchedule): void {
+    this.scheduleToDelete.set(schedule);
+  }
+
+  cancelDelete(): void {
+    this.scheduleToDelete.set(null);
+  }
+
+  deleteSchedule(): void {
+    const schedule = this.scheduleToDelete();
+    if (!schedule) return;
+
+    this.deleting.set(true);
+    this.analyticsService.deleteSchedule(schedule.Id).subscribe({
+      next: () => {
+        this.snackBar.open('Schedule deleted successfully', 'Close', { duration: 3000 });
+        this.deleting.set(false);
+        this.scheduleToDelete.set(null);
+        this.loadSchedules();
+      },
+      error: (err) => {
+        console.error('Failed to delete schedule:', err);
+        this.snackBar.open('Failed to delete schedule', 'Close', { duration: 3000 });
+        this.deleting.set(false);
+      }
+    });
+  }
+
+  getScheduleIcon(schedule: BmappSchedule): string {
+    return schedule.Id === -1 ? 'all_inclusive' : 'schedule';
+  }
+
+  getScheduleClass(schedule: BmappSchedule): string {
+    return schedule.Id === -1 ? 'default' : 'custom';
   }
 }

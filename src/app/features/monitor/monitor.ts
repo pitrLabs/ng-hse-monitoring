@@ -18,6 +18,7 @@ import { WsVideoPlayerComponent } from '../../shared/components/ws-video-player/
 import { CameraGroupsService } from '../../core/services/camera-groups.service';
 import { AuthService } from '../../core/services/auth.service';
 import { AITaskService, BmappTask } from '../../core/services/ai-task.service';
+import { CameraStatusService, CameraStatus } from '../../core/services/camera-status.service';
 
 interface CameraGroup {
   id: string;
@@ -153,7 +154,11 @@ interface CameraGroup {
                             <span class="source-name">{{ source.name }}</span>
                             <span class="source-location">{{ source.location || 'No location' }}</span>
                           </div>
-                          <span class="status-indicator" [class.online]="source.is_active"></span>
+                          <span class="status-indicator"
+                            [class.online]="getCameraStatus(source) === 'online'"
+                            [class.connecting]="getCameraStatus(source) === 'connecting'"
+                            [class.error]="getCameraStatus(source) === 'error'"
+                            [matTooltip]="getCameraStatus(source)"></span>
                         </div>
                       }
                     </div>
@@ -717,11 +722,28 @@ interface CameraGroup {
       height: 8px;
       border-radius: 50%;
       background: var(--text-muted);
+      flex-shrink: 0;
 
       &.online {
         background: var(--success);
         box-shadow: 0 0 8px var(--success);
       }
+
+      &.connecting {
+        background: var(--warning);
+        box-shadow: 0 0 8px var(--warning);
+        animation: pulse-status 1.5s ease-in-out infinite;
+      }
+
+      &.error {
+        background: var(--error);
+        box-shadow: 0 0 8px var(--error);
+      }
+    }
+
+    @keyframes pulse-status {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
     }
 
     // Center Panel
@@ -1153,6 +1175,7 @@ export class MonitorComponent implements OnInit {
   private cameraGroupsService = inject(CameraGroupsService);
   private authService = inject(AuthService);
   private aiTaskService = inject(AITaskService);
+  private cameraStatusService = inject(CameraStatusService);
 
   searchQuery = '';
   showActiveOnly = true;
@@ -1248,6 +1271,23 @@ export class MonitorComponent implements OnInit {
     if (mode === 'bmapp') {
       this.loadAiTasks();
     }
+  }
+
+  getCameraStatus(source: VideoSource): CameraStatus {
+    if (this.sourceMode() === 'bmapp') {
+      // For BM-APP mode, look up by task session
+      const tasks = this.aiTasks();
+      const task = tasks.find(t =>
+        t.MediaName === source.name ||
+        t.MediaName?.includes(source.name) ||
+        source.name?.includes(t.MediaName)
+      );
+      if (task?.AlgTaskSession) {
+        return this.cameraStatusService.getBmappStatus(task.AlgTaskSession.trim());
+      }
+    }
+    // For local mode, look up by stream_name
+    return this.cameraStatusService.getStatus(source.stream_name);
   }
 
   loadAiTasks() {

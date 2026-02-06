@@ -8,6 +8,7 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { HttpClient } from '@angular/common/http';
 import { environment } from '../../../../environments/environment';
+import { CameraStatusService, CameraStatus } from '../../../core/services/camera-status.service';
 
 interface VideoSource {
   id: string;
@@ -114,8 +115,12 @@ interface BmAppMedia {
                 <span class="type-badge">{{ (source.source_type || 'rtsp').toUpperCase() }}</span>
               </div>
               <div class="col-status">
-                <span class="status-badge" [class.active]="source.is_active">
-                  {{ source.is_active ? 'Active' : 'Inactive' }}
+                <span class="status-badge"
+                  [class.online]="getRealStatus(source) === 'online'"
+                  [class.connecting]="getRealStatus(source) === 'connecting'"
+                  [class.error]="getRealStatus(source) === 'error'"
+                  [class.offline]="getRealStatus(source) === 'offline'">
+                  {{ getRealStatus(source) | titlecase }}
                 </span>
               </div>
               <div class="col-sync">
@@ -327,7 +332,7 @@ interface BmAppMedia {
 
     .table-header, .table-row {
       display: grid;
-      grid-template-columns: 2fr 2.5fr 80px 90px 70px 120px;
+      grid-template-columns: 2fr 2.5fr 80px 100px 70px 120px;
       gap: 16px; padding: 16px 20px; align-items: center;
     }
 
@@ -373,8 +378,20 @@ interface BmAppMedia {
     .status-badge {
       padding: 4px 12px; border-radius: 20px;
       font-size: 12px; font-weight: 500;
-      background: rgba(239, 68, 68, 0.2); color: #ef4444;
-      &.active { background: rgba(34, 197, 94, 0.2); color: #22c55e; }
+      background: rgba(156, 163, 175, 0.2); color: #9ca3af;
+
+      &.online { background: rgba(34, 197, 94, 0.2); color: #22c55e; }
+      &.offline { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
+      &.connecting {
+        background: rgba(245, 158, 11, 0.2); color: #f59e0b;
+        animation: pulse-badge 1.5s ease-in-out infinite;
+      }
+      &.error { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
+    }
+
+    @keyframes pulse-badge {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
     }
 
     .col-sync { display: flex; justify-content: center; }
@@ -604,6 +621,7 @@ interface BmAppMedia {
 export class AdminVideoSourcesComponent implements OnInit {
   private http = inject(HttpClient);
   private snackBar = inject(MatSnackBar);
+  private cameraStatusService = inject(CameraStatusService);
   private apiUrl = environment.apiUrl;
 
   loading = signal(true);
@@ -859,6 +877,10 @@ export class AdminVideoSourcesComponent implements OnInit {
         }
       });
     }
+  }
+
+  getRealStatus(source: VideoSource): CameraStatus {
+    return this.cameraStatusService.getStatus(source.stream_name);
   }
 
   truncateUrl(url: string): string {

@@ -1,4 +1,4 @@
-import { Component, signal, computed, inject, OnInit, OnDestroy } from '@angular/core';
+import { Component, signal, computed, inject, OnInit, OnDestroy, HostListener } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterModule, Router, NavigationEnd } from '@angular/router';
 import { MatSidenavModule } from '@angular/material/sidenav';
@@ -41,9 +41,15 @@ interface NavItem {
     NotificationToastComponent
   ],
   template: `
-    <div class="layout-container">
+    <div class="layout-container" [class.resizing]="isResizing()">
       <!-- Sidebar -->
-      <aside class="sidebar glass-card-static" [class.collapsed]="sidebarCollapsed()">
+      <aside class="sidebar glass-card-static"
+             [class.collapsed]="sidebarCollapsed()"
+             [style.width.px]="sidebarCollapsed() ? 72 : sidebarWidth()">
+        <!-- Resize Handle -->
+        <div class="resize-handle"
+             [class.resizing]="isResizing()"
+             (mousedown)="onResizeStart($event)"></div>
         <!-- Logo -->
         <div class="sidebar-header">
           <div class="logo-wrapper">
@@ -175,7 +181,9 @@ interface NavItem {
       </aside>
 
       <!-- Main Content -->
-      <div class="main-wrapper" [class.sidebar-collapsed]="sidebarCollapsed()">
+      <div class="main-wrapper"
+           [class.sidebar-collapsed]="sidebarCollapsed()"
+           [style.margin-left.px]="sidebarCollapsed() ? 72 : sidebarWidth()">
         <!-- Header -->
         <header class="header glass-card-static">
           <div class="header-left">
@@ -294,11 +302,15 @@ interface NavItem {
     .layout-container {
       display: flex;
       min-height: 100vh;
+
+      &.resizing {
+        cursor: col-resize;
+        user-select: none;
+      }
     }
 
     // Sidebar
     .sidebar {
-      width: 260px;
       height: 100vh;
       position: fixed;
       left: 0;
@@ -306,16 +318,33 @@ interface NavItem {
       display: flex;
       flex-direction: column;
       z-index: 100;
-      transition: width 0.3s ease;
+      transition: width 0.15s ease;
       border-radius: 0;
       border-right: 1px solid var(--glass-border);
       border-left: none;
       border-top: none;
       border-bottom: none;
+    }
 
-      &.collapsed {
-        width: 72px;
+    // Resize Handle
+    .resize-handle {
+      position: absolute;
+      right: 0;
+      top: 0;
+      width: 4px;
+      height: 100%;
+      cursor: col-resize;
+      background: transparent;
+      transition: background 0.2s ease;
+      z-index: 10;
+
+      &:hover, &.resizing {
+        background: var(--accent-primary);
       }
+    }
+
+    .sidebar.collapsed .resize-handle {
+      display: none;
     }
 
     .sidebar-header {
@@ -560,15 +589,10 @@ interface NavItem {
     // Main Wrapper
     .main-wrapper {
       flex: 1;
-      margin-left: 260px;
       display: flex;
       flex-direction: column;
       min-height: 100vh;
-      transition: margin-left 0.3s ease;
-
-      &.sidebar-collapsed {
-        margin-left: 72px;
-      }
+      transition: margin-left 0.15s ease;
     }
 
     // Header
@@ -883,19 +907,19 @@ interface NavItem {
     @media (max-width: 768px) {
       .sidebar {
         transform: translateX(-100%);
+      }
 
-        &.collapsed {
-          transform: translateX(0);
-          width: 72px;
-        }
+      .sidebar.collapsed {
+        transform: translateX(0);
+        width: 72px !important;
       }
 
       .main-wrapper {
-        margin-left: 0;
+        margin-left: 0 !important;
+      }
 
-        &.sidebar-collapsed {
-          margin-left: 72px;
-        }
+      .main-wrapper.sidebar-collapsed {
+        margin-left: 72px !important;
       }
 
       .user-info {
@@ -916,9 +940,16 @@ export class LayoutComponent implements OnInit, OnDestroy {
   private timeSubscription?: Subscription;
 
   sidebarCollapsed = signal(false);
+  sidebarWidth = signal(this.loadSidebarWidth());
+  isResizing = signal(false);
   pageTitle = signal('Home');
   currentDateTime = signal('');
   adminExpanded = signal(false);
+
+  private readonly MIN_WIDTH = 200;
+  private readonly MAX_WIDTH = 400;
+  private readonly DEFAULT_WIDTH = 260;
+  private readonly STORAGE_KEY = 'sidebar-width';
 
   // Connect notification toggle to NotificationToastService
   notificationEnabled = this.toastService.enabled;
@@ -985,7 +1016,7 @@ export class LayoutComponent implements OnInit, OnDestroy {
         { label: 'Face Database', icon: 'face', route: '/admin/face-database' },
         { label: 'Modbus Output', icon: 'electrical_services', route: '/admin/modbus-output' },
         { label: 'Image Task Alarm', icon: 'photo_camera', route: '/admin/image-task-alarm' },
-        { label: 'Image Task Mgmt', icon: 'photo_library', route: '/admin/image-task-management' },
+        { label: 'Image Task Management', icon: 'photo_library', route: '/admin/image-task-management' },
         { label: 'Image Task Source', icon: 'add_photo_alternate', route: '/admin/image-task-source' },
       ]
     }
@@ -1099,6 +1130,33 @@ export class LayoutComponent implements OnInit, OnDestroy {
 
   toggleAlarmSound(): void {
     this.alarmService.toggleSound();
+  }
+
+  // Sidebar resize methods
+  private loadSidebarWidth(): number {
+    const stored = localStorage.getItem('sidebar-width');
+    return stored ? parseInt(stored, 10) : 260;
+  }
+
+  onResizeStart(event: MouseEvent): void {
+    event.preventDefault();
+    this.isResizing.set(true);
+  }
+
+  @HostListener('document:mousemove', ['$event'])
+  onResize(event: MouseEvent): void {
+    if (!this.isResizing()) return;
+
+    const newWidth = Math.min(this.MAX_WIDTH, Math.max(this.MIN_WIDTH, event.clientX));
+    this.sidebarWidth.set(newWidth);
+  }
+
+  @HostListener('document:mouseup')
+  onResizeEnd(): void {
+    if (this.isResizing()) {
+      this.isResizing.set(false);
+      localStorage.setItem(this.STORAGE_KEY, String(this.sidebarWidth()));
+    }
   }
 
   logout(): void {

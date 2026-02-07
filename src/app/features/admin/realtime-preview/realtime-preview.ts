@@ -50,36 +50,12 @@ interface ChannelGroup {
       <!-- Toolbar -->
       <div class="preview-toolbar">
         <div class="toolbar-left">
-          <div class="tab-group">
-            <button class="tab-btn" [class.active]="sourceMode === 'direct'" (click)="sourceMode = 'direct'; loadVideoSources()">
-              <mat-icon>cast_connected</mat-icon>
-              <span>Direct AI</span>
-            </button>
-            <button class="tab-btn" [class.active]="sourceMode === 'bmapp'" (click)="sourceMode = 'bmapp'; loadVideoSources()">
-              <mat-icon>smart_display</mat-icon>
-              <span>Via Backend</span>
-            </button>
-            <button class="tab-btn" [class.active]="sourceMode === 'local'" (click)="sourceMode = 'local'; loadVideoSources()">
-              <mat-icon>videocam</mat-icon>
-              <span>Local Sources</span>
-            </button>
-          </div>
           <button class="action-btn refresh-btn" (click)="loadVideoSources()" matTooltip="Refresh">
             <mat-icon>refresh</mat-icon>
           </button>
         </div>
 
         <div class="toolbar-right">
-          <div class="player-mode-toggle">
-            <button class="mode-btn" [class.active]="playerMode === 'ws'" (click)="playerMode = 'ws'" matTooltip="WebSocket JPEG (Recommended)">
-              <mat-icon>image</mat-icon>
-              <span>WS</span>
-            </button>
-            <button class="mode-btn" [class.active]="playerMode === 'webrtc'" (click)="playerMode = 'webrtc'" matTooltip="WebRTC H.264">
-              <mat-icon>videocam</mat-icon>
-              <span>RTC</span>
-            </button>
-          </div>
           <div class="layout-buttons">
             <button class="layout-btn" [class.active]="gridLayout === '1x1'" (click)="setGridLayout('1x1')" matTooltip="1x1">
               <div class="layout-icon grid-1x1"></div>
@@ -106,8 +82,8 @@ interface ChannelGroup {
         <!-- Device List Sidebar -->
         <div class="device-sidebar">
           <div class="sidebar-header">
-            <mat-icon>{{ sourceMode === 'direct' ? 'cast_connected' : sourceMode === 'bmapp' ? 'smart_display' : 'videocam' }}</mat-icon>
-            <span>{{ sourceMode === 'direct' ? 'AI Streams' : sourceMode === 'bmapp' ? 'Backend Tasks' : 'Local Devices' }}</span>
+            <mat-icon>cast_connected</mat-icon>
+            <span>AI Streams</span>
             @if (canRenameGroups()) {
               <button mat-icon-button class="add-folder-btn" matTooltip="Create folder" (click)="openCreateFolderDialog()">
                 <mat-icon>create_new_folder</mat-icon>
@@ -183,21 +159,13 @@ interface ChannelGroup {
               <div class="video-slot">
                 @if (getChannelForSlot(i); as channel) {
                   <div class="video-container">
-                    @if (playerMode === 'ws') {
-                      <app-ws-video-player
-                        [stream]="getWsStreamId(channel)"
-                        [mediaName]="channel.name"
-                        [showControls]="true"
-                        [showFps]="true"
-                        [useSharedService]="useSharedServiceMode()">
-                      </app-ws-video-player>
-                    } @else {
-                      <app-bmapp-video-player
-                        [app]="channel.app"
-                        [stream]="channel.stream"
-                        [showControls]="true">
-                      </app-bmapp-video-player>
-                    }
+                    <app-ws-video-player
+                      [stream]="getWsStreamId(channel)"
+                      [mediaName]="channel.name"
+                      [showControls]="true"
+                      [showFps]="true"
+                      [useSharedService]="useSharedServiceMode()">
+                    </app-ws-video-player>
                     <div class="video-overlay-controls">
                       <button mat-icon-button matTooltip="Close" (click)="removeFromSlot(i)">
                         <mat-icon>close</mat-icon>
@@ -393,6 +361,26 @@ interface ChannelGroup {
       display: flex;
       align-items: center;
       gap: 16px;
+    }
+
+    .source-label, .mode-label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      background: var(--glass-bg);
+      border: 1px solid var(--accent-primary);
+      border-radius: 6px;
+      color: var(--text-primary);
+      font-size: 12px;
+      font-weight: 500;
+
+      mat-icon {
+        font-size: 16px;
+        width: 16px;
+        height: 16px;
+        color: var(--accent-primary);
+      }
     }
 
     .tab-group {
@@ -1137,8 +1125,8 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
 
   gridLayout: '1x1' | '2x2' | '3x3' | '4x4' = '2x2';
   loading = false;
-  sourceMode: 'direct' | 'bmapp' | 'local' = 'direct';
-  playerMode: 'ws' | 'webrtc' = 'ws'; // WebSocket JPEG is more reliable
+  sourceMode = 'direct'; // Always use Direct AI mode
+  playerMode = 'ws'; // Always use WebSocket JPEG
   isFullscreen = false;
 
   // Pagination for 4x4 grid
@@ -1214,14 +1202,7 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
 
   loadVideoSources() {
     this.loading = true;
-
-    if (this.sourceMode === 'direct') {
-      this.loadDirectFromBmapp();
-    } else if (this.sourceMode === 'bmapp') {
-      this.loadFromBackend();
-    } else {
-      this.loadFromLocal();
-    }
+    this.loadDirectFromBmapp();
   }
 
   // Store preview channel mapping (task name -> url for WebSocket)
@@ -1512,8 +1493,7 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
           },
           error: (err) => {
             console.error('Failed to load from backend:', err);
-            this.sourceMode = 'local';
-            this.loadFromLocal();
+            this.loading = false;
           }
         });
       },
@@ -1525,8 +1505,7 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
           },
           error: (err) => {
             console.error('Failed to load from backend:', err);
-            this.sourceMode = 'local';
-            this.loadFromLocal();
+            this.loading = false;
           }
         });
       }

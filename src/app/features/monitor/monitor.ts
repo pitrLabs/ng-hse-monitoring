@@ -62,18 +62,8 @@ interface CameraGroup {
           </button>
         </div>
         <div class="source-count">
-          <mat-icon>videocam</mat-icon>
-          <span>{{ filteredVideoSources().length }} Sources</span>
-        </div>
-        <div class="source-toggle">
-          <button class="source-btn" [class.active]="sourceMode() === 'local'" (click)="setSourceMode('local')" matTooltip="Local Sources (MediaMTX)">
-            <mat-icon>videocam</mat-icon>
-            <span>Local</span>
-          </button>
-          <button class="source-btn" [class.active]="sourceMode() === 'bmapp'" (click)="setSourceMode('bmapp')" matTooltip="BM-APP AI Streams">
-            <mat-icon>smart_display</mat-icon>
-            <span>BM-APP</span>
-          </button>
+          <mat-icon>smart_display</mat-icon>
+          <span>{{ filteredVideoSources().length }} AI Streams</span>
         </div>
         <div class="top-actions">
           <button mat-icon-button matTooltip="Fullscreen" (click)="toggleFullscreen()">
@@ -202,19 +192,15 @@ interface CameraGroup {
               >
                 @if (cell.source) {
                   <div class="video-content">
-                    @if (sourceMode() === 'local') {
-                      <app-video-player [streamName]="cell.source.stream_name" [muted]="true" mode="mediamtx"></app-video-player>
-                    } @else {
-                      <app-ws-video-player
-                        [stream]="getWsStreamId(cell.source)"
-                        [mediaName]="cell.source.name"
-                        [showControls]="true"
-                        [showFps]="true">
-                      </app-ws-video-player>
-                    }
+                    <app-ws-video-player
+                      [stream]="getWsStreamId(cell.source)"
+                      [mediaName]="cell.source.name"
+                      [showControls]="true"
+                      [showFps]="true">
+                    </app-ws-video-player>
                     <div class="video-info">
                       <span class="video-name">{{ cell.source.name }}</span>
-                      <span class="video-type">{{ sourceMode() === 'local' ? (cell.source.source_type | uppercase) : 'AI' }}</span>
+                      <span class="video-type">AI</span>
                     </div>
                   </div>
                   <div class="video-overlay">
@@ -1187,7 +1173,7 @@ export class MonitorComponent implements OnInit {
   cameraGroups = signal<CameraGroup[]>([]);
 
   // Source mode: local (MediaMTX) or bmapp (BM-APP WebSocket)
-  sourceMode = signal<'local' | 'bmapp'>('local');
+  sourceMode = signal<'bmapp'>('bmapp');
 
   // BM-APP tasks for WebSocket streaming
   aiTasks = signal<BmappTask[]>([]);
@@ -1266,27 +1252,17 @@ export class MonitorComponent implements OnInit {
     });
   }
 
-  setSourceMode(mode: 'local' | 'bmapp') {
-    this.sourceMode.set(mode);
-    if (mode === 'bmapp') {
-      this.loadAiTasks();
-    }
-  }
-
   getCameraStatus(source: VideoSource): CameraStatus {
-    if (this.sourceMode() === 'bmapp') {
-      // For BM-APP mode, look up by task session
-      const tasks = this.aiTasks();
-      const task = tasks.find(t =>
-        t.MediaName === source.name ||
-        t.MediaName?.includes(source.name) ||
-        source.name?.includes(t.MediaName)
-      );
-      if (task?.AlgTaskSession) {
-        return this.cameraStatusService.getBmappStatus(task.AlgTaskSession.trim());
-      }
+    // Always use BM-APP mode - look up by task session
+    const tasks = this.aiTasks();
+    const task = tasks.find(t =>
+      t.MediaName === source.name ||
+      t.MediaName?.includes(source.name) ||
+      source.name?.includes(t.MediaName)
+    );
+    if (task?.AlgTaskSession) {
+      return this.cameraStatusService.getBmappStatus(task.AlgTaskSession.trim());
     }
-    // For local mode, look up by stream_name
     return this.cameraStatusService.getStatus(source.stream_name);
   }
 

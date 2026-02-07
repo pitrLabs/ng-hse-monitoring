@@ -982,11 +982,15 @@ export class PictureComponent implements OnInit {
 
   toggleSelection(pic: AlarmPicture) {
     pic.selected = !pic.selected;
+    // Trigger signal update
+    this.allPictures.update(pics => [...pics]);
   }
 
   toggleSelectAll() {
     const pics = this.filteredPictures();
     pics.forEach(p => p.selected = this.selectAll);
+    // Trigger signal update
+    this.allPictures.update(pics => [...pics]);
   }
 
   getSeverityClass(alarmType: string): string {
@@ -1160,7 +1164,7 @@ export class PictureComponent implements OnInit {
       if (this.startDate) params.append('start_date', this.startDate);
       if (this.endDate) params.append('end_date', this.endDate);
 
-      const url = `${this.apiUrl}/alarms/export/excel${params.toString() ? '?' + params.toString() : ''}`;
+      const url = `${this.apiUrl}/alarms/export/excel-images${params.toString() ? '?' + params.toString() : ''}`;
 
       const response = await fetch(url, {
         headers: {

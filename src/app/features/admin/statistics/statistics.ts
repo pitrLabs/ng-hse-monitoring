@@ -546,8 +546,7 @@ export class AdminStatisticsComponent implements OnInit {
     const cameras = this.alarmsByCamera();
 
     let csv = 'HSE Monitoring Statistics Report\n\n';
-    csv += `Period,${this.selectedPeriod}\n`;
-    csv += `Generated,${new Date().toISOString()}\n\n`;
+    csv += `Period,${new Date().toLocaleDateString('id-ID', { day: '2-digit', month: 'long', year: 'numeric' })}\n\n`;
 
     csv += 'Summary\n';
     csv += `Total Alarms,${stats.totalAlarms}\n`;

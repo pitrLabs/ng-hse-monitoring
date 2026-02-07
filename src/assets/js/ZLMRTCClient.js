@@ -16,7 +16,7 @@ var ZLMRTCClient = (function (exports) {
   };
 
   const VERSION$1 = '1.0.1';
-  const BUILD_DATE = 'Mon Mar 27 2023 19:11:59 GMT+0800 (China Standard Time)';
+  const BUILD_DATE = 'Jum Feb 07 2026 20:00:00 GMT+0700 (Western Indonesia Time)';
 
   // Copyright (C) <2018> Intel Corporation
   //

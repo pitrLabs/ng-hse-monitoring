@@ -1081,7 +1081,7 @@ export class PictureComponent implements OnInit {
     try {
       const response = await fetch(`${this.apiUrl}/alarms/${alarm.id}/download-image`, {
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('access_token')}`
+          'Authorization': `Bearer ${localStorage.getItem('hse_access_token')}`
         }
       });
 
@@ -1118,7 +1118,7 @@ export class PictureComponent implements OnInit {
       const response = await fetch(`${this.apiUrl}/alarms/bulk-download`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('access_token')}`,
+          'Authorization': `Bearer ${localStorage.getItem('hse_access_token')}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify(alarmIds)
@@ -1164,7 +1164,7 @@ export class PictureComponent implements OnInit {
 
       const response = await fetch(url, {
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('access_token')}`
+          'Authorization': `Bearer ${localStorage.getItem('hse_access_token')}`
         }
       });
 

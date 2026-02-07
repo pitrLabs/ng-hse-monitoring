@@ -16,6 +16,14 @@ export interface Alarm {
   created_at?: string;
   acknowledged_at?: string;
   resolved_at?: string;
+  // MinIO storage fields
+  minio_image_path?: string;
+  minio_labeled_image_path?: string;
+  minio_video_path?: string;
+  minio_synced_at?: string;
+  minio_image_url?: string;  // Presigned URL for raw image
+  minio_labeled_image_url?: string;  // Presigned URL for labeled image (with detection boxes)
+  minio_video_url?: string;  // Presigned URL for video
 }
 
 export interface AlarmStats {
@@ -69,6 +77,29 @@ export function getAlarmNotificationType(alarmType: string): 'warning' | 'error'
     default:
       return 'info';
   }
+}
+
+/**
+ * Get the best available image URL for an alarm
+ * Priority: 1) MinIO labeled image (with detection boxes)
+ *           2) MinIO raw image
+ *           3) BM-APP image_url (fallback)
+ */
+export function getBestAlarmImageUrl(alarm: Alarm | undefined | null): string | null {
+  if (!alarm) return null;
+
+  // Priority 1: MinIO labeled image (with detection boxes) - this is what we want!
+  if (alarm.minio_labeled_image_url) {
+    return alarm.minio_labeled_image_url;
+  }
+
+  // Priority 2: MinIO raw image
+  if (alarm.minio_image_url) {
+    return alarm.minio_image_url;
+  }
+
+  // Priority 3: Fallback to BM-APP image_url
+  return getAlarmImageUrl(alarm.image_url);
 }
 
 /**

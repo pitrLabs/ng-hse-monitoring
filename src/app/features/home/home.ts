@@ -13,6 +13,7 @@ import { LocationsService, CameraLocation } from '../../core/services/locations.
 import { AuthService } from '../../core/services/auth.service';
 import { VideoSourceService, VideoSource } from '../../core/services/video-source.service';
 import { AITaskService, BmappTask } from '../../core/services/ai-task.service';
+import { RecordingControlService } from '../../core/services/recording-control.service';
 import { LeafletMapComponent, MapMarker } from '../../shared/components/leaflet-map/leaflet-map';
 import { WsVideoPlayerComponent } from '../../shared/components/ws-video-player/ws-video-player.component';
 
@@ -48,6 +49,14 @@ interface DeviceClass {
     WsVideoPlayerComponent
   ],
   template: `
+    <!-- BM-APP Connection Warning -->
+    @if (alarmService.connectionStatus() === 'disconnected') {
+      <div class="connection-warning">
+        <mat-icon>warning</mat-icon>
+        <span>BM-APP connection lost. Trying to reconnect... Some features may be unavailable.</span>
+      </div>
+    }
+
     <div class="home-container">
       <!-- Left Column -->
       <div class="left-column">
@@ -238,7 +247,7 @@ interface DeviceClass {
               </div>
             } @else {
               @for (task of cameraSlots(); track $index; let i = $index) {
-                <div class="video-cell" [class.has-video]="task">
+                <div class="video-cell" [class.has-video]="task" [class.recording]="task && recordingService.isRecording(getStreamId(task))">
                   @if (task) {
                     <app-ws-video-player
                       [stream]="getStreamId(task)"
@@ -250,7 +259,27 @@ interface DeviceClass {
                     <div class="video-info-overlay">
                       <span class="video-status online"></span>
                       <span class="video-name">{{ task.MediaName }}</span>
+                      @if (recordingService.isRecording(getStreamId(task))) {
+                        <span class="recording-indicator">
+                          <span class="rec-dot"></span>
+                          REC
+                        </span>
+                      }
                     </div>
+                    <!-- Recording Controls (only for Operator+) -->
+                    @if (canRecord()) {
+                      <div class="video-record-controls">
+                        @if (recordingService.isRecording(getStreamId(task))) {
+                          <button mat-icon-button class="stop-btn" matTooltip="Stop Recording" (click)="stopRecording(task); $event.stopPropagation()">
+                            <mat-icon>stop</mat-icon>
+                          </button>
+                        } @else {
+                          <button mat-icon-button class="record-btn" matTooltip="Start Recording" (click)="startRecording(task); $event.stopPropagation()">
+                            <mat-icon>fiber_manual_record</mat-icon>
+                          </button>
+                        }
+                      </div>
+                    }
                   } @else {
                     <div class="video-placeholder">
                       <mat-icon>videocam_off</mat-icon>
@@ -364,6 +393,36 @@ interface DeviceClass {
     }
   `,
   styles: [`
+    .connection-warning {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 16px;
+      margin-bottom: 16px;
+      background: linear-gradient(135deg, rgba(245, 158, 11, 0.15), rgba(239, 68, 68, 0.15));
+      border: 1px solid rgba(245, 158, 11, 0.3);
+      border-radius: var(--radius-md);
+      color: #f59e0b;
+      animation: pulse-warning 2s infinite;
+
+      mat-icon {
+        font-size: 24px;
+        width: 24px;
+        height: 24px;
+      }
+
+      span {
+        flex: 1;
+        font-size: 13px;
+        font-weight: 500;
+      }
+    }
+
+    @keyframes pulse-warning {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.7; }
+    }
+
     .home-container {
       display: grid;
       grid-template-columns: 280px 1fr 300px;
@@ -846,6 +905,86 @@ interface DeviceClass {
         overflow: hidden;
         text-overflow: ellipsis;
       }
+
+      .recording-indicator {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        padding: 2px 6px;
+        background: rgba(239, 68, 68, 0.9);
+        border-radius: 4px;
+        font-size: 9px;
+        font-weight: 600;
+        color: #fff;
+        animation: pulse-rec 1s infinite;
+
+        .rec-dot {
+          width: 6px;
+          height: 6px;
+          border-radius: 50%;
+          background: #fff;
+        }
+      }
+
+      @keyframes pulse-rec {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.7; }
+      }
+    }
+
+    .video-cell.recording {
+      border: 2px solid #ef4444;
+      box-shadow: 0 0 8px rgba(239, 68, 68, 0.3);
+    }
+
+    .video-record-controls {
+      position: absolute;
+      top: 4px;
+      right: 4px;
+      display: flex;
+      gap: 4px;
+      opacity: 0;
+      transition: opacity 0.2s;
+
+      button {
+        width: 28px;
+        height: 28px;
+        padding: 0;
+        backdrop-filter: blur(4px);
+
+        mat-icon {
+          font-size: 16px;
+          width: 16px;
+          height: 16px;
+        }
+      }
+
+      .record-btn {
+        background: rgba(239, 68, 68, 0.8);
+        color: #fff;
+
+        &:hover {
+          background: rgba(239, 68, 68, 1);
+        }
+      }
+
+      .stop-btn {
+        background: rgba(239, 68, 68, 0.9);
+        color: #fff;
+        animation: pulse-rec 1s infinite;
+
+        &:hover {
+          background: rgba(239, 68, 68, 1);
+        }
+      }
+    }
+
+    .video-cell:hover .video-record-controls {
+      opacity: 1;
+    }
+
+    .video-cell.recording .video-record-controls {
+      opacity: 1;
     }
 
     .video-loading {
@@ -1124,6 +1263,7 @@ export class HomeComponent implements OnInit, OnDestroy {
   authService = inject(AuthService);
   videoSourceService = inject(VideoSourceService);
   aiTaskService = inject(AITaskService);
+  recordingService = inject(RecordingControlService);
 
   // BM-APP tasks for video panel
   bmappTasks = signal<BmappTask[]>([]);
@@ -1232,6 +1372,9 @@ export class HomeComponent implements OnInit, OnDestroy {
 
     // Load BM-APP tasks for video panel
     this.loadBmappTasks();
+
+    // Load active recordings (for recording indicator)
+    this.recordingService.loadActiveRecordings();
   }
 
   loadBmappTasks(): void {
@@ -1381,6 +1524,37 @@ export class HomeComponent implements OnInit, OnDestroy {
       } catch (err) {
         console.error('Failed to acknowledge alarm:', err);
       }
+    }
+  }
+
+  // Recording controls
+  canRecord(): boolean {
+    // Only Operator and above can record (P3 cannot)
+    const user = this.authService.currentUser();
+    if (!user) return false;
+    const roleNames = user.roles?.map(r => r.name.toLowerCase()) || [];
+    return roleNames.some(r => r === 'operator' || r === 'manager' || r === 'superadmin');
+  }
+
+  async startRecording(task: BmappTask): Promise<void> {
+    const streamId = this.getStreamId(task);
+    try {
+      await this.recordingService.startRecording(streamId, task.MediaName);
+      console.log('[Home] Recording started for:', task.MediaName);
+    } catch (err: any) {
+      console.error('Failed to start recording:', err);
+      alert(err?.error?.detail || 'Failed to start recording');
+    }
+  }
+
+  async stopRecording(task: BmappTask): Promise<void> {
+    const streamId = this.getStreamId(task);
+    try {
+      await this.recordingService.stopRecording(streamId);
+      console.log('[Home] Recording stopped for:', task.MediaName);
+    } catch (err: any) {
+      console.error('Failed to stop recording:', err);
+      alert(err?.error?.detail || 'Failed to stop recording');
     }
   }
 }

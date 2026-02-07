@@ -8,7 +8,7 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatBadgeModule } from '@angular/material/badge';
 import { MatDialogModule, MatDialog } from '@angular/material/dialog';
 import { AlarmService } from '../../../core/services/alarm.service';
-import { Alarm, getAlarmSeverity, getAlarmImageUrl } from '../../../core/models/alarm.model';
+import { Alarm, getAlarmSeverity, getBestAlarmImageUrl } from '../../../core/models/alarm.model';
 
 @Component({
   standalone: true,
@@ -179,9 +179,9 @@ import { Alarm, getAlarmSeverity, getAlarmImageUrl } from '../../../core/models/
               </button>
             </div>
             <div class="dialog-content">
-              @if (selectedAlarm()?.image_url) {
+              @if (getImageUrl(selectedAlarm())) {
                 <div class="alarm-image">
-                  <img [src]="getImageUrl(selectedAlarm()?.image_url)" alt="Alarm Image">
+                  <img [src]="getImageUrl(selectedAlarm())" alt="Alarm Image">
                 </div>
               }
               <div class="alarm-details">
@@ -479,8 +479,8 @@ export class AdminAlarmsComponent implements OnInit, OnDestroy {
     return getAlarmSeverity(alarmType);
   }
 
-  getImageUrl(imageUrl: string | undefined | null): string | null {
-    return getAlarmImageUrl(imageUrl);
+  getImageUrl(alarm: Alarm | undefined | null): string | null {
+    return getBestAlarmImageUrl(alarm);
   }
 
   toggleSelect(id: string) {

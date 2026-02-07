@@ -1,6 +1,7 @@
 import { Component, inject, signal, computed, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import { HttpClient } from '@angular/common/http';
 import { MatIconModule } from '@angular/material/icon';
 import { MatButtonModule } from '@angular/material/button';
 import { MatCheckboxModule } from '@angular/material/checkbox';
@@ -10,7 +11,8 @@ import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { AlarmService } from '../../core/services/alarm.service';
-import { Alarm, getAlarmImageUrl, getAlarmSeverity, AlarmSeverity } from '../../core/models/alarm.model';
+import { Alarm, getBestAlarmImageUrl, getAlarmSeverity, AlarmSeverity } from '../../core/models/alarm.model';
+import { environment } from '../../../environments/environment';
 
 interface AlarmPicture {
   alarm: Alarm;
@@ -118,8 +120,16 @@ interface AlarmPicture {
             <button mat-icon-button matTooltip="List view" [class.active]="viewMode === 'list'" (click)="viewMode = 'list'">
               <mat-icon>view_list</mat-icon>
             </button>
-            <button mat-flat-button class="download-btn" [disabled]="selectedCount() === 0">
-              <mat-icon>download</mat-icon>
+            <button mat-stroked-button class="export-btn" (click)="exportToExcel()" [disabled]="downloading()">
+              <mat-icon>table_chart</mat-icon>
+              Export Excel
+            </button>
+            <button mat-flat-button class="download-btn" [disabled]="selectedCount() === 0 || downloading()" (click)="bulkDownload()">
+              @if (downloading()) {
+                <mat-spinner diameter="18"></mat-spinner>
+              } @else {
+                <mat-icon>download</mat-icon>
+              }
               Download ({{ selectedCount() }})
             </button>
           </div>
@@ -232,6 +242,16 @@ interface AlarmPicture {
                     <span>Confidence: {{ (pic.alarm.confidence * 100).toFixed(1) }}%</span>
                   </div>
                 }
+              </div>
+              <div class="viewer-actions">
+                <button mat-flat-button class="download-single-btn" (click)="downloadSingleImage(pic.alarm)" [disabled]="downloading()">
+                  @if (downloading()) {
+                    <mat-spinner diameter="16"></mat-spinner>
+                  } @else {
+                    <mat-icon>download</mat-icon>
+                  }
+                  Download
+                </button>
               </div>
             </div>
           </div>
@@ -754,6 +774,45 @@ interface AlarmPicture {
       }
     }
 
+    .viewer-actions {
+      margin-top: 16px;
+      padding-top: 12px;
+      border-top: 1px solid var(--glass-border);
+      display: flex;
+      justify-content: center;
+    }
+
+    .download-single-btn {
+      background: var(--accent-primary);
+      color: white;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+
+      mat-icon, mat-spinner {
+        font-size: 18px;
+        width: 18px;
+        height: 18px;
+      }
+    }
+
+    .export-btn {
+      color: var(--text-primary);
+      border-color: var(--glass-border);
+
+      mat-icon {
+        font-size: 18px;
+        width: 18px;
+        height: 18px;
+        margin-right: 4px;
+      }
+
+      &:hover {
+        border-color: var(--accent-primary);
+        color: var(--accent-primary);
+      }
+    }
+
     @media (max-width: 900px) {
       .picture-container {
         grid-template-columns: 1fr;
@@ -793,6 +852,8 @@ interface AlarmPicture {
 })
 export class PictureComponent implements OnInit {
   private alarmService = inject(AlarmService);
+  private http = inject(HttpClient);
+  private apiUrl = environment.apiUrl;
 
   // Filters
   searchQuery = '';
@@ -805,6 +866,7 @@ export class PictureComponent implements OnInit {
 
   // State
   loading = signal(false);
+  downloading = signal(false);
   currentPage = signal(1);
   pageSize = 20;
 
@@ -897,7 +959,8 @@ export class PictureComponent implements OnInit {
       const pictures: AlarmPicture[] = [];
 
       for (const alarm of alarms) {
-        const imageUrl = getAlarmImageUrl(alarm.image_url);
+        // Use getBestAlarmImageUrl to prefer labeled images (with detection boxes)
+        const imageUrl = getBestAlarmImageUrl(alarm);
         if (imageUrl) {
           pictures.push({
             alarm,
@@ -1009,6 +1072,120 @@ export class PictureComponent implements OnInit {
   viewerNext() {
     if (this.canViewerNext()) {
       this.viewerIndex.update(i => i + 1);
+    }
+  }
+
+  // Download single image
+  async downloadSingleImage(alarm: Alarm) {
+    this.downloading.set(true);
+    try {
+      const response = await fetch(`${this.apiUrl}/alarms/${alarm.id}/download-image`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('access_token')}`
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to download image');
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `alarm_${alarm.alarm_type}_${new Date(alarm.alarm_time).toISOString().slice(0, 19).replace(/[:-]/g, '')}.jpg`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Failed to download image:', err);
+      alert('Failed to download image');
+    } finally {
+      this.downloading.set(false);
+    }
+  }
+
+  // Bulk download as ZIP
+  async bulkDownload() {
+    const selectedPics = this.allPictures().filter(p => p.selected);
+    if (selectedPics.length === 0) return;
+
+    this.downloading.set(true);
+    try {
+      const alarmIds = selectedPics.map(p => p.alarm.id);
+
+      const response = await fetch(`${this.apiUrl}/alarms/bulk-download`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('access_token')}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(alarmIds)
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to download images');
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `bukti_foto_${new Date().toISOString().slice(0, 10)}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+
+      // Clear selection after download
+      this.allPictures().forEach(p => p.selected = false);
+      this.selectAll = false;
+    } catch (err) {
+      console.error('Failed to bulk download:', err);
+      alert('Failed to download images');
+    } finally {
+      this.downloading.set(false);
+    }
+  }
+
+  // Export to Excel
+  async exportToExcel() {
+    this.downloading.set(true);
+    try {
+      // Build query params from filters
+      const params = new URLSearchParams();
+      if (this.selectedType) params.append('alarm_type', this.selectedType);
+      if (this.selectedCamera) params.append('camera_id', this.selectedCamera);
+      if (this.startDate) params.append('start_date', this.startDate);
+      if (this.endDate) params.append('end_date', this.endDate);
+
+      const url = `${this.apiUrl}/alarms/export/excel${params.toString() ? '?' + params.toString() : ''}`;
+
+      const response = await fetch(url, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('access_token')}`
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to export');
+      }
+
+      const blob = await response.blob();
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = downloadUrl;
+      a.download = `bukti_foto_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(downloadUrl);
+    } catch (err) {
+      console.error('Failed to export:', err);
+      alert('Failed to export to Excel');
+    } finally {
+      this.downloading.set(false);
     }
   }
 }

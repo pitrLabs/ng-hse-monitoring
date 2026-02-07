@@ -1,4 +1,4 @@
-import { Component, signal } from '@angular/core';
+import { Component, signal, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MatIconModule } from '@angular/material/icon';
@@ -6,6 +6,7 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatCheckboxModule } from '@angular/material/checkbox';
 import { MatMenuModule } from '@angular/material/menu';
 import { MatTooltipModule } from '@angular/material/tooltip';
+import { AlarmService } from '../../core/services/alarm.service';
 
 interface AIDevice {
   id: number;
@@ -35,6 +36,14 @@ interface AIRule {
     MatTooltipModule
   ],
   template: `
+    <!-- BM-APP Connection Warning -->
+    @if (alarmService.connectionStatus() === 'disconnected') {
+      <div class="connection-warning">
+        <mat-icon>warning</mat-icon>
+        <span>BM-APP connection lost. Trying to reconnect... Some AI features may be unavailable.</span>
+      </div>
+    }
+
     <div class="smart-ai-container">
       <!-- Left Panel -->
       <div class="left-panel glass-card-static">
@@ -180,6 +189,36 @@ interface AIRule {
     </div>
   `,
   styles: [`
+    .connection-warning {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 16px;
+      margin-bottom: 16px;
+      background: linear-gradient(135deg, rgba(245, 158, 11, 0.15), rgba(239, 68, 68, 0.15));
+      border: 1px solid rgba(245, 158, 11, 0.3);
+      border-radius: var(--radius-md);
+      color: #f59e0b;
+      animation: pulse-warning 2s infinite;
+
+      mat-icon {
+        font-size: 24px;
+        width: 24px;
+        height: 24px;
+      }
+
+      span {
+        flex: 1;
+        font-size: 13px;
+        font-weight: 500;
+      }
+    }
+
+    @keyframes pulse-warning {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.7; }
+    }
+
     .smart-ai-container {
       display: grid;
       grid-template-columns: 250px 1fr 320px;
@@ -645,6 +684,8 @@ interface AIRule {
   `]
 })
 export class SmartAIComponent {
+  alarmService = inject(AlarmService);
+
   searchQuery = '';
   onlineOnly = false;
   activeTool = signal<string | null>(null);

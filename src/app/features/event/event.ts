@@ -10,8 +10,10 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatSelectModule } from '@angular/material/select';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
+import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { AlarmService } from '../../core/services/alarm.service';
 import { VideoSourceService, VideoSource } from '../../core/services/video-source.service';
+import { environment } from '../../../environments/environment';
 import {
   Alarm,
   AlarmSeverity,
@@ -33,7 +35,8 @@ import {
     MatTooltipModule,
     MatSelectModule,
     MatFormFieldModule,
-    MatInputModule
+    MatInputModule,
+    MatProgressSpinnerModule
   ],
   template: `
     <div class="event-container">
@@ -228,7 +231,17 @@ import {
         <div class="event-table glass-card-static">
           <div class="table-title-row">
             <h3 class="section-title">Alarm Events</h3>
-            <span class="table-count">{{ filteredAlarms().length }} alarms</span>
+            <div class="table-title-actions">
+              <span class="table-count">{{ filteredAlarms().length }} alarms</span>
+              <button mat-stroked-button class="export-btn" (click)="exportToExcel()" [disabled]="exporting()">
+                @if (exporting()) {
+                  <mat-spinner diameter="16"></mat-spinner>
+                } @else {
+                  <mat-icon>table_chart</mat-icon>
+                }
+                Export Excel
+              </button>
+            </div>
           </div>
           <div class="table-header">
             <span class="col-check">
@@ -745,9 +758,41 @@ import {
       margin: 0;
     }
 
+    .table-title-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
     .table-count {
       font-size: 12px;
       color: var(--text-tertiary);
+    }
+
+    .export-btn {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--text-primary);
+      border-color: var(--glass-border);
+      font-size: 12px;
+      padding: 4px 12px;
+      min-height: 32px;
+
+      mat-icon, mat-spinner {
+        font-size: 16px;
+        width: 16px;
+        height: 16px;
+      }
+
+      &:hover:not(:disabled) {
+        border-color: var(--accent-primary);
+        color: var(--accent-primary);
+      }
+
+      &:disabled {
+        opacity: 0.6;
+      }
     }
 
     .table-header {
@@ -960,6 +1005,10 @@ export class EventComponent implements OnInit, OnDestroy {
   private router = inject(Router);
   private alarmService = inject(AlarmService);
   private videoSourceService = inject(VideoSourceService);
+  private apiUrl = environment.apiUrl;
+
+  // State
+  exporting = signal(false);
 
   // Filter state
   searchQuery = '';
@@ -1241,5 +1290,46 @@ export class EventComponent implements OnInit, OnDestroy {
   onImageError(event: Event): void {
     const img = event.target as HTMLImageElement;
     img.style.display = 'none';
+  }
+
+  // Export to Excel
+  async exportToExcel(): Promise<void> {
+    this.exporting.set(true);
+    try {
+      // Build query params from current filters
+      const params = new URLSearchParams();
+      if (this.filterCameraId) params.append('camera_id', this.filterCameraId);
+      if (this.filterAlarmType) params.append('alarm_type', this.filterAlarmType);
+      if (this.filterStatus) params.append('status', this.filterStatus);
+      if (this.filterStartDate) params.append('start_date', this.filterStartDate);
+      if (this.filterEndDate) params.append('end_date', this.filterEndDate);
+
+      const url = `${this.apiUrl}/alarms/export/excel${params.toString() ? '?' + params.toString() : ''}`;
+
+      const response = await fetch(url, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('access_token')}`
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to export');
+      }
+
+      const blob = await response.blob();
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = downloadUrl;
+      a.download = `catatan_pelanggaran_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(downloadUrl);
+    } catch (err) {
+      console.error('Failed to export:', err);
+      alert('Failed to export to Excel');
+    } finally {
+      this.exporting.set(false);
+    }
   }
 }

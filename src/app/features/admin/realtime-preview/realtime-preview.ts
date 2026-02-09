@@ -216,7 +216,7 @@ interface ChannelGroup {
                   <div class="video-container">
                     <app-ws-video-player
                       [stream]="getWsStreamId(channel)"
-                      [mediaName]="channel.name"
+                      [mediaName]="channel.stream || channel.name"
                       [wsBaseUrl]="getChannelWsUrl(channel)"
                       [showControls]="true"
                       [showFps]="false"

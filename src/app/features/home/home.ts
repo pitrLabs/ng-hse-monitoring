@@ -253,7 +253,7 @@ interface DeviceClass {
                       [mediaName]="task.MediaName"
                       [showControls]="false"
                       [showFps]="false"
-                      [useSharedService]="onlineTasks().length > 1">
+                      [useSharedService]="false">
                     </app-ws-video-player>
                     <div class="video-info-overlay">
                       <span class="video-status online"></span>

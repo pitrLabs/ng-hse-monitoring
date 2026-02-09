@@ -9,13 +9,13 @@ import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatInputModule } from '@angular/material/input';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatSelectModule } from '@angular/material/select';
-import { BmappVideoPlayerComponent } from '../../../shared/components/bmapp-video-player/bmapp-video-player.component';
 import { WsVideoPlayerComponent } from '../../../shared/components/ws-video-player/ws-video-player.component';
 import { VideoSourceService, VideoSource } from '../../../core/services/video-source.service';
 import { AITaskService, AITask, ZLMStream } from '../../../core/services/ai-task.service';
 import { CameraGroupsService } from '../../../core/services/camera-groups.service';
 import { AuthService } from '../../../core/services/auth.service';
 import { CameraStatusService } from '../../../core/services/camera-status.service';
+import { AIBoxService, AIBox } from '../../../core/services/aibox.service';
 import { environment } from '../../../../environments/environment';
 
 interface VideoChannel {
@@ -44,12 +44,24 @@ interface ChannelGroup {
 @Component({
   standalone: true,
   selector: 'app-admin-realtime-preview',
-  imports: [CommonModule, FormsModule, MatIconModule, MatButtonModule, MatTooltipModule, MatProgressSpinnerModule, MatInputModule, MatFormFieldModule, MatSelectModule, BmappVideoPlayerComponent, WsVideoPlayerComponent],
+  imports: [CommonModule, FormsModule, MatIconModule, MatButtonModule, MatTooltipModule, MatProgressSpinnerModule, MatInputModule, MatFormFieldModule, MatSelectModule, WsVideoPlayerComponent],
   template: `
     <div class="realtime-preview" #previewContainer>
       <!-- Toolbar -->
       <div class="preview-toolbar">
         <div class="toolbar-left">
+          <!-- AI Box Selector -->
+          <div class="aibox-selector">
+            <mat-icon class="selector-icon">dns</mat-icon>
+            <select [(ngModel)]="selectedAiBoxId" (ngModelChange)="onAiBoxChange($event)" class="aibox-select">
+              @for (box of aiBoxes(); track box.id) {
+                <option [value]="box.id">{{ box.name }} {{ box.is_online ? '(Online)' : '(Offline)' }}</option>
+              }
+              @if (aiBoxes().length === 0) {
+                <option value="">No AI Box configured</option>
+              }
+            </select>
+          </div>
           <button class="action-btn refresh-btn" (click)="loadVideoSources()" matTooltip="Refresh">
             <mat-icon>refresh</mat-icon>
           </button>
@@ -164,7 +176,8 @@ interface ChannelGroup {
                       [mediaName]="channel.name"
                       [showControls]="true"
                       [showFps]="true"
-                      [useSharedService]="useSharedServiceMode()">
+                      [useSharedService]="useSharedServiceMode()"
+                      [wsBaseUrl]="getSelectedStreamWsUrl()">
                     </app-ws-video-player>
                     <div class="video-overlay-controls">
                       <button mat-icon-button matTooltip="Close" (click)="removeFromSlot(i)">
@@ -361,6 +374,41 @@ interface ChannelGroup {
       display: flex;
       align-items: center;
       gap: 16px;
+    }
+
+    .aibox-selector {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      background: var(--glass-bg);
+      border: 1px solid var(--glass-border);
+      border-radius: 8px;
+
+      .selector-icon {
+        font-size: 18px;
+        width: 18px;
+        height: 18px;
+        color: var(--accent-primary);
+      }
+
+      .aibox-select {
+        background: transparent;
+        border: none;
+        color: var(--text-primary);
+        font-size: 13px;
+        font-weight: 500;
+        padding: 4px 8px;
+        cursor: pointer;
+        outline: none;
+        min-width: 150px;
+
+        option {
+          background: var(--bg-secondary, #1a1a2e);
+          color: var(--text-primary);
+          padding: 8px;
+        }
+      }
     }
 
     .source-label, .mode-label {
@@ -1120,6 +1168,7 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
   private cameraGroupsService = inject(CameraGroupsService);
   private authService = inject(AuthService);
   private cameraStatusService = inject(CameraStatusService);
+  private aiBoxService = inject(AIBoxService);
 
   @ViewChild('previewContainer') previewContainer!: ElementRef<HTMLElement>;
 
@@ -1160,6 +1209,10 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
   // All users can manage their own personal folders
   canRenameGroups = computed(() => !!this.authService.currentUser());
 
+  // AI Box selection
+  aiBoxes = this.aiBoxService.aiBoxes;
+  selectedAiBoxId = '';
+
   private fullscreenChangeHandler = () => this.onFullscreenChange();
 
   videoChannels: VideoChannel[] = [];
@@ -1171,8 +1224,40 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
   useSharedServiceMode = signal(false);
 
   private bmappUrl = environment.bmappUrl;
-  // Use proxy in development to bypass CORS
+  // Use proxy in development to bypass CORS (fallback)
   private bmappProxyUrl = '/bmapp-api';
+
+  // Get API base URL from selected AI Box
+  private getApiBaseUrl(): string {
+    const box = this.aiBoxes().find(b => b.id === this.selectedAiBoxId);
+    if (box?.api_url) {
+      // Return the AI Box API URL (e.g., "http://192.168.1.100:2323/api")
+      // Strip trailing /api if present since we add it in the calls
+      let url = box.api_url;
+      if (url.endsWith('/api')) {
+        url = url.slice(0, -4);
+      }
+      if (url.endsWith('/')) {
+        url = url.slice(0, -1);
+      }
+      return url;
+    }
+    // Fallback to proxy
+    return this.bmappProxyUrl;
+  }
+
+  // Get WebSocket URL for video streaming from selected AI Box
+  getSelectedStreamWsUrl(): string {
+    const box = this.aiBoxes().find(b => b.id === this.selectedAiBoxId);
+    return box?.stream_ws_url || '';
+  }
+
+  // Handle AI Box selection change
+  onAiBoxChange(boxId: string) {
+    this.selectedAiBoxId = boxId;
+    // Reload video sources from new AI Box
+    this.loadVideoSources();
+  }
 
   constructor(
     private http: HttpClient,
@@ -1192,7 +1277,21 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
   ngOnInit() {
     // Load camera groups + assignments from backend first
     this.cameraGroupsService.loadGroups();
-    this.loadVideoSources();
+    // Load AI boxes and select first one
+    this.aiBoxService.loadAiBoxes().subscribe({
+      next: (boxes) => {
+        if (boxes.length > 0) {
+          // Auto-select first online box, or first box if none online
+          const onlineBox = boxes.find(b => b.is_active && b.is_online);
+          this.selectedAiBoxId = onlineBox?.id || boxes[0].id;
+        }
+        this.loadVideoSources();
+      },
+      error: () => {
+        // Fallback - load with proxy
+        this.loadVideoSources();
+      }
+    });
     document.addEventListener('fullscreenchange', this.fullscreenChangeHandler);
   }
 
@@ -1259,7 +1358,7 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
 
   // Fetch preview channels from BM-APP
   private fetchPreviewChannels() {
-    const previewUrl = `${this.bmappProxyUrl}/api/app_preview_channel`;
+    const previewUrl = `${this.getApiBaseUrl()}/api/app_preview_channel`;
     this.http.post<any>(previewUrl, {}).subscribe({
       next: (res) => {
         console.log('=== PREVIEW CHANNELS RAW RESPONSE ===');
@@ -1304,7 +1403,7 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
 
   // Load tasks from BM-APP
   private loadTasksFromBmapp() {
-    const taskUrl = `${this.bmappProxyUrl}/api/alg_task_fetch`;
+    const taskUrl = `${this.getApiBaseUrl()}/api/alg_task_fetch`;
 
     this.http.post<any>(taskUrl, {}).subscribe({
       next: (res) => {
@@ -1405,7 +1504,7 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
   // Fallback: Get media/cameras from BM-APP
   loadMediaFromBmapp() {
     console.log('Trying BM-APP media fetch...');
-    const mediaUrl = `${this.bmappProxyUrl}/api/alg_media_fetch`;
+    const mediaUrl = `${this.getApiBaseUrl()}/api/alg_media_fetch`;
 
     this.http.post<any>(mediaUrl, {}).subscribe({
       next: (res) => {

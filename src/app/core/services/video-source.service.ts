@@ -12,6 +12,7 @@ export interface VideoSource {
   description?: string;
   location?: string;
   group_id?: string | null;  // Reference to CameraGroup
+  aibox_id?: string | null;  // Reference to AIBox
   is_active: boolean;
   sound_alert: boolean;
   is_synced_bmapp: boolean;

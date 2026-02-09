@@ -241,6 +241,7 @@ export class WsVideoPlayerComponent implements OnInit, OnDestroy, OnChanges {
   @Input() showFps = false;
   @Input() autoConnect = true;
   @Input() useSharedService = false; // Use shared VideoStreamService (for multiple streams)
+  @Input() wsBaseUrl = ''; // Custom WebSocket base URL (e.g., "ws://192.168.1.100:2323")
 
   private videoStreamService = inject(VideoStreamService);
 
@@ -272,8 +273,16 @@ export class WsVideoPlayerComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   private getWsUrl(): string {
+    // Use custom WebSocket URL if provided (from AI Box configuration)
+    if (this.wsBaseUrl) {
+      // Ensure URL ends with /video/ path
+      let url = this.wsBaseUrl;
+      if (!url.endsWith('/')) url += '/';
+      if (!url.endsWith('video/')) url += 'video/';
+      return url;
+    }
+    // Fallback to proxy URL for development
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    // Base video WebSocket URL - channel selection sent via message after connection
     return `${protocol}//${window.location.host}/bmapp-api/video/`;
   }
 
@@ -291,6 +300,15 @@ export class WsVideoPlayerComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   ngOnChanges(changes: SimpleChanges) {
+    // If WebSocket base URL changed, reconnect
+    if (changes['wsBaseUrl'] && !changes['wsBaseUrl'].firstChange) {
+      this.disconnect();
+      this.resetRetry();
+      if (this.stream && !this.useSharedService) {
+        this.connect();
+      }
+    }
+
     if (changes['stream'] && !changes['stream'].firstChange) {
       this.resetRetry();
 

@@ -13,12 +13,12 @@ import { MatInputModule } from '@angular/material/input';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatSelectModule } from '@angular/material/select';
 import { VideoSourceService, VideoSource } from '../../core/services/video-source.service';
-import { VideoPlayerComponent } from '../../shared/components/video-player';
 import { WsVideoPlayerComponent } from '../../shared/components/ws-video-player/ws-video-player.component';
 import { CameraGroupsService } from '../../core/services/camera-groups.service';
 import { AuthService } from '../../core/services/auth.service';
 import { AITaskService, BmappTask } from '../../core/services/ai-task.service';
 import { CameraStatusService, CameraStatus } from '../../core/services/camera-status.service';
+import { AIBoxService, AIBox } from '../../core/services/aibox.service';
 
 interface CameraGroup {
   id: string;
@@ -45,7 +45,6 @@ interface CameraGroup {
     MatInputModule,
     MatFormFieldModule,
     MatSelectModule,
-    VideoPlayerComponent,
     WsVideoPlayerComponent
   ],
   template: `
@@ -61,6 +60,24 @@ interface CameraGroup {
             <mat-icon>refresh</mat-icon>
           </button>
         </div>
+
+        <!-- AI Box Multi-Select -->
+        <div class="aibox-tabs">
+          @for (box of aiBoxes(); track box.id) {
+            <label class="aibox-tab" [class.checked]="isAiBoxSelected(box.id)">
+              <input type="checkbox"
+                [checked]="isAiBoxSelected(box.id)"
+                (change)="toggleAiBox(box.id)">
+              <span class="aibox-status" [class.online]="box.is_online" [class.offline]="!box.is_online"></span>
+              <span class="aibox-name">{{ box.name }}</span>
+              <span class="aibox-code">({{ box.code }})</span>
+            </label>
+          }
+          @if (aiBoxes().length === 0) {
+            <span class="no-aibox">No AI Boxes configured</span>
+          }
+        </div>
+
         <div class="source-count">
           <mat-icon>smart_display</mat-icon>
           <span>{{ filteredVideoSources().length }} AI Streams</span>
@@ -196,7 +213,8 @@ interface CameraGroup {
                       [stream]="getWsStreamId(cell.source)"
                       [mediaName]="cell.source.name"
                       [showControls]="true"
-                      [showFps]="true">
+                      [showFps]="true"
+                      [wsBaseUrl]="getWsBaseUrl(cell.source)">
                     </app-ws-video-player>
                     <div class="video-info">
                       <span class="video-name">{{ cell.source.name }}</span>
@@ -418,6 +436,71 @@ interface CameraGroup {
         &::placeholder {
           color: var(--text-muted);
         }
+      }
+    }
+
+    .aibox-tabs {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+
+      .aibox-tab {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 12px;
+        background: var(--glass-bg);
+        border: 1px solid var(--glass-border);
+        border-radius: var(--radius-sm);
+        cursor: pointer;
+        transition: all 0.2s ease;
+        user-select: none;
+
+        input[type="checkbox"] {
+          display: none;
+        }
+
+        &:hover {
+          background: var(--glass-bg-hover);
+          border-color: var(--accent-primary);
+        }
+
+        &.checked {
+          background: rgba(var(--accent-primary-rgb), 0.15);
+          border-color: var(--accent-primary);
+        }
+
+        .aibox-status {
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          background: var(--status-offline);
+
+          &.online {
+            background: var(--status-online);
+          }
+
+          &.offline {
+            background: var(--status-offline);
+          }
+        }
+
+        .aibox-name {
+          font-size: 13px;
+          color: var(--text-primary);
+          font-weight: 500;
+        }
+
+        .aibox-code {
+          font-size: 11px;
+          color: var(--text-tertiary);
+        }
+      }
+
+      .no-aibox {
+        font-size: 13px;
+        color: var(--text-muted);
+        padding: 6px 12px;
       }
     }
 
@@ -1162,6 +1245,7 @@ export class MonitorComponent implements OnInit {
   private authService = inject(AuthService);
   private aiTaskService = inject(AITaskService);
   private cameraStatusService = inject(CameraStatusService);
+  private aiBoxService = inject(AIBoxService);
 
   searchQuery = '';
   showActiveOnly = true;
@@ -1171,6 +1255,10 @@ export class MonitorComponent implements OnInit {
   loading = signal(false);
   videoSources = signal<VideoSource[]>([]);
   cameraGroups = signal<CameraGroup[]>([]);
+
+  // AI Box multi-selection
+  aiBoxes = this.aiBoxService.aiBoxes;
+  selectedAiBoxIds = signal<Set<string>>(new Set());
 
   // Source mode: local (MediaMTX) or bmapp (BM-APP WebSocket)
   sourceMode = signal<'bmapp'>('bmapp');
@@ -1230,11 +1318,40 @@ export class MonitorComponent implements OnInit {
   }
 
   ngOnInit() {
+    // Load AI boxes first
+    this.loadAiBoxes();
     // Load camera groups + assignments from backend first
     this.cameraGroupsService.loadGroups();
     this.loadVideoSources();
     // Pre-load AI tasks for BM-APP mode (avoid race condition)
     this.loadAiTasks();
+  }
+
+  loadAiBoxes() {
+    this.aiBoxService.loadAiBoxes().subscribe({
+      next: (boxes) => {
+        // Auto-select all AI boxes by default
+        const allIds = new Set(boxes.map(b => b.id));
+        this.selectedAiBoxIds.set(allIds);
+      }
+    });
+  }
+
+  isAiBoxSelected(id: string): boolean {
+    return this.selectedAiBoxIds().has(id);
+  }
+
+  toggleAiBox(id: string) {
+    const current = this.selectedAiBoxIds();
+    const newSet = new Set(current);
+    if (newSet.has(id)) {
+      newSet.delete(id);
+    } else {
+      newSet.add(id);
+    }
+    this.selectedAiBoxIds.set(newSet);
+    // Rebuild groups with filtered sources
+    this.buildCameraGroups(this.videoSources());
   }
 
   loadVideoSources() {
@@ -1308,6 +1425,13 @@ export class MonitorComponent implements OnInit {
     const streamId = `task/${nameTrimmed}`;
     console.log('[Monitor.getWsStreamId] Fallback to task/source.name:', streamId);
     return streamId;
+  }
+
+  // Get WebSocket base URL for a video source based on its AI Box
+  getWsBaseUrl(source: VideoSource): string {
+    if (!source.aibox_id) return '';
+    const box = this.aiBoxes().find(b => b.id === source.aibox_id);
+    return box?.stream_ws_url || '';
   }
 
   /**
@@ -1418,6 +1542,16 @@ export class MonitorComponent implements OnInit {
 
   filteredVideoSources(): VideoSource[] {
     let sources = this.videoSources();
+    const selectedIds = this.selectedAiBoxIds();
+
+    // Filter by selected AI Boxes (show sources that belong to selected boxes OR have no aibox_id)
+    if (selectedIds.size > 0) {
+      sources = sources.filter(s =>
+        s.aibox_id ? selectedIds.has(s.aibox_id) : true
+      );
+    }
+
+    // Filter by search query
     if (this.searchQuery) {
       const query = this.searchQuery.toLowerCase();
       sources = sources.filter(s =>

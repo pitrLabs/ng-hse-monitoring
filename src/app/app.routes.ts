@@ -70,6 +70,11 @@ export const routes: Routes = [
         canActivate: [superuserGuard]
       },
       {
+        path: 'admin/ai-boxes',
+        loadComponent: () => import('./features/admin/ai-boxes/ai-boxes').then(m => m.AdminAiBoxesComponent),
+        canActivate: [superuserGuard]
+      },
+      {
         path: 'admin/ai-tasks',
         loadComponent: () => import('./features/admin/ai-tasks/ai-tasks').then(m => m.AdminAiTasksComponent),
         canActivate: [superuserGuard]

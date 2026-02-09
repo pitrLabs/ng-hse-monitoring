@@ -48,7 +48,7 @@ import { getBestAlarmImageUrl } from '../../../core/models/alarm.model';
                 <div class="source-info">
                   <span class="camera-name">{{ toast.alarm?.camera_name || 'Unknown' }}</span>
                   @if (toast.alarm?.media_url) {
-                    <span class="rtsp-link" [matTooltip]="toast.alarm.media_url">
+                    <span class="rtsp-link" [matTooltip]="toast.alarm?.media_url || ''">
                       <mat-icon>videocam</mat-icon>
                       RTSP
                     </span>
@@ -68,7 +68,7 @@ import { getBestAlarmImageUrl } from '../../../core/models/alarm.model';
               @if (toast.alarm?.confidence) {
                 <div class="toast-row confidence-row">
                   <span class="label">Confidence:</span>
-                  <span class="value confidence-badge">{{ (toast.alarm.confidence * 100).toFixed(0) }}%</span>
+                  <span class="value confidence-badge">{{ ((toast.alarm?.confidence || 0) * 100).toFixed(0) }}%</span>
                 </div>
               }
 

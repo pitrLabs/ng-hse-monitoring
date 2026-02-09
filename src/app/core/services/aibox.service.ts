@@ -56,6 +56,18 @@ export interface AIBoxHealthResponse {
   boxes: AIBoxStatus[];
 }
 
+export interface SyncCamerasResponse {
+  message: string;
+  aibox_id: string;
+  aibox_name: string;
+  imported: number;
+  updated: number;
+  skipped: number;
+  total_from_bmapp: number;
+  camera_count: number;
+  errors: string[] | null;
+}
+
 @Injectable({ providedIn: 'root' })
 export class AIBoxService {
   private api = environment.apiUrl;
@@ -153,6 +165,18 @@ export class AIBoxService {
   // Get cameras for an AI box
   getCameras(id: string): Observable<VideoSource[]> {
     return this.http.get<VideoSource[]>(`${this.api}/ai-boxes/${id}/cameras`);
+  }
+
+  // Sync cameras from AI box's BM-APP
+  syncCameras(id: string): Observable<SyncCamerasResponse> {
+    return this.http.post<SyncCamerasResponse>(`${this.api}/ai-boxes/${id}/sync-cameras`, {}).pipe(
+      tap(response => {
+        // Update camera_count in the list
+        this.aiBoxes.update(boxes =>
+          boxes.map(b => b.id === id ? { ...b, camera_count: response.camera_count } : b)
+        );
+      })
+    );
   }
 
   // Select an AI box

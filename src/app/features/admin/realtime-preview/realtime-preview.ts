@@ -10,6 +10,7 @@ import { MatInputModule } from '@angular/material/input';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatSelectModule } from '@angular/material/select';
 import { WsVideoPlayerComponent } from '../../../shared/components/ws-video-player/ws-video-player.component';
+import { WebrtcVideoPlayerComponent } from '../../../shared/components/webrtc-video-player/webrtc-video-player.component';
 import { VideoSourceService, VideoSource } from '../../../core/services/video-source.service';
 import { AITaskService, AITask, ZLMStream } from '../../../core/services/ai-task.service';
 import { CameraGroupsService } from '../../../core/services/camera-groups.service';
@@ -51,7 +52,7 @@ interface ChannelGroup {
 @Component({
   standalone: true,
   selector: 'app-admin-realtime-preview',
-  imports: [CommonModule, FormsModule, MatIconModule, MatButtonModule, MatTooltipModule, MatProgressSpinnerModule, MatInputModule, MatFormFieldModule, MatSelectModule, WsVideoPlayerComponent],
+  imports: [CommonModule, FormsModule, MatIconModule, MatButtonModule, MatTooltipModule, MatProgressSpinnerModule, MatInputModule, MatFormFieldModule, MatSelectModule, WsVideoPlayerComponent, WebrtcVideoPlayerComponent],
   template: `
     <div class="realtime-preview" #previewContainer>
       <!-- Toolbar -->
@@ -125,39 +126,62 @@ interface ChannelGroup {
                 <span>No video sources found</span>
               </div>
             } @else {
-              @for (group of channelGroups; track group.id + (group.aiboxId || ''); let i = $index) {
-                <!-- AI Box Header (show when aiboxId changes) -->
-                @if (i === 0 || group.aiboxId !== channelGroups[i-1].aiboxId) {
-                  <div class="aibox-separator">
-                    <mat-icon class="aibox-icon">dns</mat-icon>
-                    <span class="aibox-name">{{ group.aiboxName || 'No AI Box' }}</span>
-                  </div>
-                }
-                <!-- Folder Node -->
-                <div class="tree-node">
-                  <div class="node-header"
-                       [class.drag-over]="dragOverGroup === group.id"
-                       (click)="toggleGroup(group)"
-                       (dragover)="onFolderDragOver($event, group)"
-                       (dragleave)="onFolderDragLeave($event)"
-                       (drop)="onFolderDrop($event, group)">
-                    <mat-icon class="expand-icon" [class.expanded]="group.expanded">chevron_right</mat-icon>
-                    <mat-icon class="folder-icon">folder</mat-icon>
-                    <span class="node-name">{{ group.displayName }}</span>
-                    <span class="node-count">({{ group.channels.length }})</span>
-                    @if (canRenameGroups() && group.id !== 'ungrouped') {
-                      <div class="folder-actions">
-                        <button mat-icon-button class="folder-action-btn" matTooltip="Rename" (click)="openRenameDialog(group); $event.stopPropagation()">
-                          <mat-icon>edit</mat-icon>
-                        </button>
-                        <button mat-icon-button class="folder-action-btn delete-btn" matTooltip="Delete" (click)="openDeleteDialog(group); $event.stopPropagation()">
-                          <mat-icon>delete</mat-icon>
-                        </button>
+              @for (group of channelGroups; track group.id; let i = $index) {
+                <!-- User Folder (no aiboxId) -->
+                @if (!group.aiboxId) {
+                  <div class="tree-node user-folder">
+                    <div class="node-header"
+                         [class.drag-over]="dragOverGroup === group.id"
+                         (click)="toggleGroup(group)"
+                         (dragover)="onFolderDragOver($event, group)"
+                         (dragleave)="onFolderDragLeave($event)"
+                         (drop)="onFolderDrop($event, group)">
+                      <mat-icon class="expand-icon" [class.expanded]="group.expanded">chevron_right</mat-icon>
+                      <mat-icon class="folder-icon">folder</mat-icon>
+                      <span class="node-name">{{ group.displayName }}</span>
+                      <span class="node-count">({{ group.channels.length }})</span>
+                      @if (canRenameGroups()) {
+                        <div class="folder-actions">
+                          <button mat-icon-button class="folder-action-btn" matTooltip="Rename" (click)="openRenameDialog(group); $event.stopPropagation()">
+                            <mat-icon>edit</mat-icon>
+                          </button>
+                          <button mat-icon-button class="folder-action-btn delete-btn" matTooltip="Delete" (click)="openDeleteDialog(group); $event.stopPropagation()">
+                            <mat-icon>delete</mat-icon>
+                          </button>
+                        </div>
+                      }
+                    </div>
+                    @if (group.expanded) {
+                      <div class="node-children">
+                        @for (channel of group.channels; track channel.id) {
+                          <div class="device-item"
+                               [class.online]="channel.status === 'online'"
+                               [class.connecting]="channel.isConnecting"
+                               [class.dragging]="draggingChannel?.id === channel.id"
+                               draggable="true"
+                               (dragstart)="onChannelDragStart($event, channel, group)"
+                               (dragend)="onChannelDragEnd($event)"
+                               (click)="selectChannel(channel)"
+                               [matTooltip]="channel.statusLabel || ''">
+                            <mat-icon>{{ channel.status === 'online' ? 'videocam' : channel.isConnecting ? 'sync' : 'videocam_off' }}</mat-icon>
+                            <span class="device-name">{{ channel.name }}</span>
+                            <span class="status-dot"
+                                  [class.online]="channel.status === 'online'"
+                                  [class.connecting]="channel.isConnecting"></span>
+                          </div>
+                        }
                       </div>
                     }
                   </div>
-                  @if (group.expanded) {
-                    <div class="node-children">
+                } @else {
+                  <!-- AI Box Section -->
+                  <div class="aibox-section">
+                    <div class="aibox-separator">
+                      <mat-icon class="aibox-icon">dns</mat-icon>
+                      <span class="aibox-name">{{ group.aiboxName }}</span>
+                      <span class="node-count">({{ group.channels.length }})</span>
+                    </div>
+                    <div class="aibox-cameras">
                       @for (channel of group.channels; track channel.id) {
                         <div class="device-item"
                              [class.online]="channel.status === 'online'"
@@ -176,8 +200,8 @@ interface ChannelGroup {
                         </div>
                       }
                     </div>
-                  }
-                </div>
+                  </div>
+                }
               }
             }
           </div>
@@ -190,14 +214,12 @@ interface ChannelGroup {
               <div class="video-slot">
                 @if (getChannelForSlot(i); as channel) {
                   <div class="video-container">
-                    <app-ws-video-player
-                      [stream]="getWsStreamId(channel)"
-                      [mediaName]="channel.name"
-                      [showControls]="true"
-                      [showFps]="true"
-                      [useSharedService]="useSharedServiceMode()"
-                      [wsBaseUrl]="channel.aiboxWsUrl || ''">
-                    </app-ws-video-player>
+                    <app-webrtc-video-player
+                      [app]="channel.app || 'live'"
+                      [stream]="channel.stream || channel.name"
+                      [webrtcUrl]="getWebrtcUrl(channel)"
+                      [showControls]="true">
+                    </app-webrtc-video-player>
                     <div class="video-overlay-controls">
                       <!-- Recording button -->
                       <button mat-icon-button
@@ -725,6 +747,10 @@ interface ChannelGroup {
       margin-bottom: 2px;
     }
 
+    .aibox-section {
+      margin-bottom: 8px;
+    }
+
     .aibox-separator {
       display: flex;
       align-items: center;
@@ -747,11 +773,25 @@ interface ChannelGroup {
         font-weight: 600;
         color: var(--text-primary);
         letter-spacing: 0.3px;
+        flex: 1;
+      }
+
+      .node-count {
+        font-size: 11px;
+        color: var(--text-muted);
       }
 
       &:first-child {
         margin-top: 0;
       }
+    }
+
+    .aibox-cameras {
+      padding-left: 8px;
+    }
+
+    .user-folder {
+      margin-bottom: 4px;
     }
 
     .node-header {
@@ -1471,7 +1511,11 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
           const allIds = new Set(boxes.map(b => b.id));
           this.selectedAiBoxIds.set(allIds);
         }
-        this.loadVideoSources();
+        // Fetch real-time health status for accurate online/offline coloring
+        this.aiBoxService.getHealth().subscribe({
+          next: () => this.loadVideoSources(),
+          error: () => this.loadVideoSources()
+        });
       },
       error: () => {
         // Fallback - load with proxy
@@ -1931,8 +1975,9 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
   }
 
   /**
-   * Build channel groups - grouped by AI Box first, then by folder within each AI Box
-   * Structure: AI Box header -> Folders -> Cameras
+   * Build channel groups with structure:
+   * 1. User-created folders (at top, outside AI Boxes)
+   * 2. AI Box sections with cameras directly (no "Ungrouped" folder)
    */
   buildChannelGroups() {
     const groups: ChannelGroup[] = [];
@@ -1945,76 +1990,91 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
       groupLookup.set(g.id, { name: g.name, displayName: g.display_name || g.name });
     }
 
-    // Group channels by AI Box first, then by folder within each AI Box
-    // Key: "aiboxId|folderId"
-    const groupMap = new Map<string, VideoChannel[]>();
+    // Separate channels into: assigned to folders vs unassigned (per AI Box)
+    const folderChannelsMap = new Map<string, VideoChannel[]>(); // folderId -> channels
+    const aiboxChannelsMap = new Map<string, VideoChannel[]>(); // aiboxId -> unassigned channels
 
     for (const channel of this.videoChannels) {
       const aiboxId = channel.aiboxId || 'unknown';
-      const aibox = this.aiBoxes().find(b => b.id === aiboxId);
-      const aiboxName = aibox ? `${aibox.name} (${aibox.code})` : 'Unknown AI Box';
 
-      // Find folder assignment for this channel
-      let folderId = 'ungrouped';
-      let folderName = 'Ungrouped';
-      let folderDisplayName = 'Ungrouped';
+      // Check if this channel has a folder assignment
+      let assignedFolderId: string | null = null;
 
-      // Check if this channel has a folder assignment (by backendId)
-      // assignments is Record<string, string> = {video_source_id: group_id}
       if (channel.backendId) {
-        const assignedGroupId = assignments[channel.backendId];
-        if (assignedGroupId) {
-          const groupInfo = groupLookup.get(assignedGroupId);
-          if (groupInfo) {
-            folderId = assignedGroupId;
-            folderName = groupInfo.name;
-            folderDisplayName = groupInfo.displayName;
-          }
+        const groupId = assignments[channel.backendId];
+        if (groupId && groupLookup.has(groupId)) {
+          assignedFolderId = groupId;
         }
       }
 
-      // Also check channel.groupId as fallback
-      if (folderId === 'ungrouped' && channel.groupId) {
-        const groupInfo = groupLookup.get(channel.groupId);
-        if (groupInfo) {
-          folderId = channel.groupId;
-          folderName = groupInfo.name;
-          folderDisplayName = groupInfo.displayName;
-        }
+      // Fallback to channel.groupId
+      if (!assignedFolderId && channel.groupId && groupLookup.has(channel.groupId)) {
+        assignedFolderId = channel.groupId;
       }
 
-      const key = `${aiboxId}|${folderId}`;
-      if (!groupMap.has(key)) {
-        groupMap.set(key, []);
+      if (assignedFolderId) {
+        // Channel is assigned to a user folder
+        if (!folderChannelsMap.has(assignedFolderId)) {
+          folderChannelsMap.set(assignedFolderId, []);
+        }
+        folderChannelsMap.get(assignedFolderId)!.push({
+          ...channel,
+          aiboxId,
+          aiboxWsUrl: channel.aiboxWsUrl
+        });
+      } else {
+        // Channel is not assigned - goes under AI Box directly
+        if (!aiboxChannelsMap.has(aiboxId)) {
+          aiboxChannelsMap.set(aiboxId, []);
+        }
+        aiboxChannelsMap.get(aiboxId)!.push({
+          ...channel,
+          aiboxId,
+          aiboxWsUrl: channel.aiboxWsUrl
+        });
       }
-      groupMap.get(key)!.push({
-        ...channel,
-        // Store AI Box info for later use
-        aiboxId,
-        aiboxWsUrl: channel.aiboxWsUrl
-      });
     }
 
-    // Convert map to array of ChannelGroup objects
-    groupMap.forEach((channels, key) => {
-      const [aiboxId, folderId] = key.split('|');
+    // 1. Add user-created folders at top (aiboxId = null to show without AI Box header)
+    folderChannelsMap.forEach((channels, folderId) => {
+      const groupInfo = groupLookup.get(folderId);
+      if (groupInfo) {
+        groups.push({
+          id: folderId,
+          name: groupInfo.name,
+          displayName: groupInfo.displayName,
+          expanded: true,
+          channels: channels.sort((a, b) => a.name.localeCompare(b.name)),
+          aiboxId: undefined, // No AI Box - these are user folders
+          aiboxName: undefined
+        });
+      }
+    });
+
+    // Also add empty user-created folders (so they appear in the list)
+    for (const g of backendGroups) {
+      if (!folderChannelsMap.has(g.id)) {
+        groups.push({
+          id: g.id,
+          name: g.name,
+          displayName: g.display_name || g.name,
+          expanded: true,
+          channels: [],
+          aiboxId: undefined,
+          aiboxName: undefined
+        });
+      }
+    }
+
+    // 2. Add AI Box sections with unassigned cameras
+    aiboxChannelsMap.forEach((channels, aiboxId) => {
       const aibox = this.aiBoxes().find(b => b.id === aiboxId);
       const aiboxName = aibox ? `${aibox.name} (${aibox.code})` : 'Unknown AI Box';
 
-      let folderName = 'Ungrouped';
-      let folderDisplayName = 'Ungrouped';
-      if (folderId !== 'ungrouped') {
-        const groupInfo = groupLookup.get(folderId);
-        if (groupInfo) {
-          folderName = groupInfo.name;
-          folderDisplayName = groupInfo.displayName;
-        }
-      }
-
       groups.push({
-        id: folderId,
-        name: folderName,
-        displayName: folderDisplayName,
+        id: `aibox_${aiboxId}`, // Special ID for AI Box direct cameras
+        name: aiboxName,
+        displayName: aiboxName,
         expanded: true,
         channels: channels.sort((a, b) => a.name.localeCompare(b.name)),
         aiboxId,
@@ -2022,17 +2082,16 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
       });
     });
 
-    // Sort groups: first by AI Box name, then by folder name (ungrouped last within each AI Box)
+    // Sort: user folders first (alphabetically), then AI Box groups (alphabetically)
     groups.sort((a, b) => {
-      // First compare by AI Box name
-      const aiboxCompare = (a.aiboxName || '').localeCompare(b.aiboxName || '');
-      if (aiboxCompare !== 0) return aiboxCompare;
+      const aIsUserFolder = !a.aiboxId;
+      const bIsUserFolder = !b.aiboxId;
 
-      // Within same AI Box, put ungrouped at the end
-      if (a.id === 'ungrouped' && b.id !== 'ungrouped') return 1;
-      if (a.id !== 'ungrouped' && b.id === 'ungrouped') return -1;
+      // User folders come first
+      if (aIsUserFolder && !bIsUserFolder) return -1;
+      if (!aIsUserFolder && bIsUserFolder) return 1;
 
-      // Otherwise sort by folder display name
+      // Within same category, sort alphabetically
       return a.displayName.localeCompare(b.displayName);
     });
 
@@ -2121,6 +2180,32 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
     return '';
   }
 
+  /**
+   * Get WebRTC URL for a channel.
+   * Uses the AI Box's stream_ws_url as base and constructs the WebRTC endpoint.
+   * Format: http://host:port/webrtc
+   */
+  getWebrtcUrl(channel: VideoChannel): string {
+    // Get WebRTC URL from AI Box configuration
+    if (channel.aiboxWsUrl) {
+      // Convert ws:// to http:// and append /webrtc path
+      let baseUrl = channel.aiboxWsUrl
+        .replace('ws://', 'http://')
+        .replace('wss://', 'https://');
+
+      // Remove any trailing paths like /video/
+      const urlParts = baseUrl.split('/');
+      if (urlParts.length > 3) {
+        baseUrl = urlParts.slice(0, 3).join('/');
+      }
+
+      return `${baseUrl}/webrtc`;
+    }
+
+    // Fallback to environment bmappUrl
+    return `${this.bmappUrl}/webrtc`;
+  }
+
   // ========== Local Recording Methods (Download to User's Computer) ==========
 
   /**
@@ -2161,18 +2246,24 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
       return;
     }
 
-    // Get the img element from ws-video-player (it uses <img> not <canvas>)
+    // Get the video element from webrtc-video-player or ws-video-player
     const videoSlots = document.querySelectorAll('.video-slot');
     const slot = videoSlots[slotIndex];
+    // Try WebRTC video element first, fallback to WS player img
+    const videoElement = slot?.querySelector('app-webrtc-video-player video.stream-video') as HTMLVideoElement;
     const imgElement = slot?.querySelector('app-ws-video-player img.stream-frame') as HTMLImageElement;
 
-    if (!imgElement || !imgElement.src || imgElement.style.display === 'none') {
+    // Check if we have a valid source
+    const hasVideoSource = videoElement && videoElement.srcObject;
+    const hasImgSource = imgElement && imgElement.src && imgElement.style.display !== 'none';
+
+    if (!hasVideoSource && !hasImgSource) {
       alert('Cannot start recording: video not loaded or not playing');
       return;
     }
 
     try {
-      // Create an off-screen canvas to capture frames from the img element
+      let stream: MediaStream;
       const canvas = document.createElement('canvas');
       const ctx = canvas.getContext('2d');
 
@@ -2181,12 +2272,37 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
         return;
       }
 
-      // Set canvas size based on img natural dimensions
-      canvas.width = imgElement.naturalWidth || 1280;
-      canvas.height = imgElement.naturalHeight || 720;
+      if (hasVideoSource && videoElement) {
+        // WebRTC: Get stream directly from video element
+        canvas.width = videoElement.videoWidth || 1280;
+        canvas.height = videoElement.videoHeight || 720;
+        stream = canvas.captureStream(24);
 
-      // Capture stream from canvas at 24 fps for smoother video
-      const stream = canvas.captureStream(24);
+        // Draw video frames to canvas
+        const drawVideoFrame = () => {
+          if (videoElement.readyState >= 2) {
+            if (canvas.width !== videoElement.videoWidth && videoElement.videoWidth > 0) {
+              canvas.width = videoElement.videoWidth;
+              canvas.height = videoElement.videoHeight;
+            }
+            ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+          }
+        };
+
+        // Start drawing frames
+        const videoFrameInterval = setInterval(drawVideoFrame, 1000 / 24);
+
+        // Store interval for cleanup
+        (stream as any)._videoFrameInterval = videoFrameInterval;
+      } else if (hasImgSource && imgElement) {
+        // WS Player: Capture from img element
+        canvas.width = imgElement.naturalWidth || 1280;
+        canvas.height = imgElement.naturalHeight || 720;
+        stream = canvas.captureStream(24);
+      } else {
+        alert('Cannot start recording: no valid video source');
+        return;
+      }
 
       // Try to use best available codec - prefer MP4/H.264 for better quality
       let mimeType = 'video/webm;codecs=vp9';
@@ -2223,21 +2339,28 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
         }
       };
 
-      // Frame capture interval - draw img onto canvas at 24 fps
-      const frameInterval = setInterval(() => {
-        if (imgElement && imgElement.src && imgElement.complete) {
-          // Update canvas size if img dimensions changed
-          if (canvas.width !== imgElement.naturalWidth && imgElement.naturalWidth > 0) {
-            canvas.width = imgElement.naturalWidth;
-            canvas.height = imgElement.naturalHeight;
+      // Frame capture interval - only needed for WS player (img element)
+      // WebRTC already has its own interval set up above
+      let frameInterval: any = null;
+      if (hasImgSource && imgElement) {
+        frameInterval = setInterval(() => {
+          if (imgElement && imgElement.src && imgElement.complete) {
+            // Update canvas size if img dimensions changed
+            if (canvas.width !== imgElement.naturalWidth && imgElement.naturalWidth > 0) {
+              canvas.width = imgElement.naturalWidth;
+              canvas.height = imgElement.naturalHeight;
+            }
+            ctx.drawImage(imgElement, 0, 0, canvas.width, canvas.height);
           }
-          ctx.drawImage(imgElement, 0, 0, canvas.width, canvas.height);
-        }
-      }, 1000 / 24); // 24 fps
+        }, 1000 / 24); // 24 fps
+      } else if ((stream as any)._videoFrameInterval) {
+        // For WebRTC, use the interval we created earlier
+        frameInterval = (stream as any)._videoFrameInterval;
+      }
 
       mediaRecorder.onstop = () => {
         // Stop frame capture
-        clearInterval(frameInterval);
+        if (frameInterval) clearInterval(frameInterval);
 
         // Create blob and download with correct mime type
         const blob = new Blob(chunks, { type: mimeType.split(';')[0] });
@@ -2531,29 +2654,23 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
         this.newFolderDisplayName || this.newFolderName
       );
 
-      // Add to local state with the backend ID
-      // Put in first selected AI Box or 'unknown'
-      const selectedIds = Array.from(this.selectedAiBoxIds());
-      const firstAiboxId = selectedIds.length > 0 ? selectedIds[0] : 'unknown';
-      const aibox = this.aiBoxes().find(b => b.id === firstAiboxId);
-      const aiboxName = aibox ? `${aibox.name} (${aibox.code})` : 'No AI Box';
-
+      // Add to local state - user folders have no aiboxId
       this.channelGroups.push({
         id: result.id,
         name: result.name,
         displayName: result.display_name || result.name,
         expanded: true,
         channels: [],
-        aiboxId: firstAiboxId,
-        aiboxName: aiboxName
+        aiboxId: undefined, // User folders are not tied to AI Boxes
+        aiboxName: undefined
       });
 
-      // Re-sort groups to put new folder in correct position
+      // Re-sort: user folders first, then AI Box sections
       this.channelGroups.sort((a, b) => {
-        const aiboxCompare = (a.aiboxName || '').localeCompare(b.aiboxName || '');
-        if (aiboxCompare !== 0) return aiboxCompare;
-        if (a.id === 'ungrouped' && b.id !== 'ungrouped') return 1;
-        if (a.id !== 'ungrouped' && b.id === 'ungrouped') return -1;
+        const aIsUserFolder = !a.aiboxId;
+        const bIsUserFolder = !b.aiboxId;
+        if (aIsUserFolder && !bIsUserFolder) return -1;
+        if (!aIsUserFolder && bIsUserFolder) return 1;
         return a.displayName.localeCompare(b.displayName);
       });
 

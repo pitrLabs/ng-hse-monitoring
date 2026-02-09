@@ -9,7 +9,7 @@ import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
 import { MatSlideToggleModule } from '@angular/material/slide-toggle';
-import { AIBoxService, AIBox, AIBoxCreate, AIBoxUpdate } from '../../../core/services/aibox.service';
+import { AIBoxService, AIBox, AIBoxCreate, AIBoxUpdate, SyncCamerasResponse } from '../../../core/services/aibox.service';
 
 @Component({
   standalone: true,
@@ -66,6 +66,13 @@ import { AIBoxService, AIBox, AIBoxCreate, AIBoxUpdate } from '../../../core/ser
                   {{ box.is_online ? 'Online' : 'Offline' }}
                 </div>
                 <div class="box-actions">
+                  <button mat-icon-button matTooltip="Sync Cameras" (click)="syncCameras(box)" [disabled]="syncing() === box.id || !box.is_online">
+                    @if (syncing() === box.id) {
+                      <mat-spinner diameter="18"></mat-spinner>
+                    } @else {
+                      <mat-icon>sync</mat-icon>
+                    }
+                  </button>
                   <button mat-icon-button matTooltip="Test Connection" (click)="testConnection(box)" [disabled]="testing() === box.id">
                     @if (testing() === box.id) {
                       <mat-spinner diameter="18"></mat-spinner>
@@ -530,6 +537,7 @@ export class AdminAiBoxesComponent implements OnInit {
 
   checkingHealth = signal(false);
   testing = signal<string | null>(null);
+  syncing = signal<string | null>(null);
   saving = signal(false);
   deleting = signal(false);
 
@@ -553,7 +561,12 @@ export class AdminAiBoxesComponent implements OnInit {
   }
 
   loadAiBoxes() {
-    this.aiBoxService.loadAiBoxes().subscribe();
+    this.aiBoxService.loadAiBoxes().subscribe({
+      next: () => {
+        // Auto-check health to get real-time online/offline status
+        this.checkHealth();
+      }
+    });
   }
 
   checkHealth() {
@@ -561,16 +574,26 @@ export class AdminAiBoxesComponent implements OnInit {
     this.aiBoxService.getHealth().subscribe({
       next: (health) => {
         this.checkingHealth.set(false);
-        this.snackBar.open(
-          `Health check complete: ${health.online}/${health.total} online`,
-          'Close',
-          { duration: 3000 }
-        );
+        // Auto-sync cameras for all online boxes
+        const onlineBoxes = health.boxes.filter(b => b.is_online);
+        if (onlineBoxes.length > 0) {
+          this.autoSyncAllOnlineBoxes(onlineBoxes.map(b => b.id));
+        }
       },
       error: () => {
         this.checkingHealth.set(false);
         this.snackBar.open('Health check failed', 'Close', { duration: 3000 });
       }
+    });
+  }
+
+  private autoSyncAllOnlineBoxes(boxIds: string[]) {
+    // Sync cameras for all online boxes in parallel
+    boxIds.forEach(id => {
+      this.aiBoxService.syncCameras(id).subscribe({
+        // Silent sync - no snackbar notification
+        error: (err) => console.warn(`Auto-sync failed for ${id}:`, err)
+      });
     });
   }
 
@@ -588,6 +611,21 @@ export class AdminAiBoxesComponent implements OnInit {
       error: () => {
         this.testing.set(null);
         this.snackBar.open('Connection test failed', 'Close', { duration: 3000 });
+      }
+    });
+  }
+
+  syncCameras(box: AIBox) {
+    this.syncing.set(box.id);
+    this.aiBoxService.syncCameras(box.id).subscribe({
+      next: (response) => {
+        this.syncing.set(null);
+        const msg = `Synced ${box.name}: ${response.imported} new, ${response.updated} updated, ${response.camera_count} total`;
+        this.snackBar.open(msg, 'Close', { duration: 4000 });
+      },
+      error: (err) => {
+        this.syncing.set(null);
+        this.snackBar.open(err.error?.detail || 'Sync failed', 'Close', { duration: 3000 });
       }
     });
   }

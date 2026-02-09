@@ -273,17 +273,29 @@ export class WsVideoPlayerComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   private getWsUrl(): string {
-    // Use custom WebSocket URL if provided (from AI Box configuration)
+    // Build WebSocket URL with media parameter for independent stream selection
+    // BM-APP format: ws://host/video/stream?media=<media_name>
+    let baseUrl: string;
+
     if (this.wsBaseUrl) {
-      // Ensure URL ends with /video/ path
-      let url = this.wsBaseUrl;
-      if (!url.endsWith('/')) url += '/';
-      if (!url.endsWith('video/')) url += 'video/';
-      return url;
+      // Use custom WebSocket URL from AI Box configuration
+      baseUrl = this.wsBaseUrl;
+      if (!baseUrl.endsWith('/')) baseUrl += '/';
+    } else {
+      // Fallback to proxy URL for development
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      baseUrl = `${protocol}//${window.location.host}/bmapp-api/`;
     }
-    // Fallback to proxy URL for development
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    return `${protocol}//${window.location.host}/bmapp-api/video/`;
+
+    // Use /video/stream with media parameter for independent stream selection
+    // This allows multiple concurrent WebSocket connections without interference
+    const mediaName = this.mediaName || this.stream;
+    if (mediaName) {
+      return `${baseUrl}video/stream?media=${encodeURIComponent(mediaName)}`;
+    }
+
+    // Fallback to old video endpoint if no media name
+    return `${baseUrl}video/`;
   }
 
   ngOnInit() {
@@ -437,9 +449,15 @@ export class WsVideoPlayerComponent implements OnInit, OnDestroy, OnChanges {
       this.websocket = new WebSocket(wsUrl);
 
       this.websocket.onopen = () => {
-        console.log(`[${this.sessionId}] WebSocket connected, selecting channel: ${this.stream}`);
-        this.statusMessage.set('Selecting channel...');
-        this.sendChannelSelection();
+        console.log(`[${this.sessionId}] WebSocket connected for stream: ${this.mediaName || this.stream}`);
+        // When using media parameter in URL, stream selection happens automatically
+        // Only send channel selection if using legacy /video/ endpoint without media param
+        if (!this.mediaName && !wsUrl.includes('?media=')) {
+          this.statusMessage.set('Selecting channel...');
+          this.sendChannelSelection();
+        } else {
+          this.statusMessage.set('Waiting for stream...');
+        }
       };
 
       this.websocket.onmessage = (event) => {

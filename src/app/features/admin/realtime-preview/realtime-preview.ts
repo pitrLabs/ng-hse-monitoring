@@ -1920,12 +1920,8 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
 
   initializeGrid() {
     const totalSlots = this.getGridSlotCount();
+    // Start with empty grid - user manually selects which cameras to display
     this.gridSlots = Array(totalSlots).fill(null);
-
-    const onlineChannels = this.videoChannels.filter(c => c.status === 'online');
-    for (let i = 0; i < Math.min(onlineChannels.length, totalSlots); i++) {
-      this.gridSlots[i] = onlineChannels[i];
-    }
 
     // Update shared service mode based on active streams
     this.updateSharedServiceMode();
@@ -2339,13 +2335,12 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
     return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
   }
 
-  // Update shared service mode based on active streams
-  // BM-APP WebSocket doesn't properly support multiple concurrent streams,
-  // BM-APP only supports 1 stream at a time on video WebSocket
-  // When multiple streams displayed, we use shared service with fast cycling
+  // Each ws-video-player now uses independent WebSocket with media parameter in URL
+  // No need for shared service mode anymore - each stream gets dedicated connection
+  // Format: ws://host/video/stream?media=<media_name>
   private updateSharedServiceMode(): void {
-    const activeStreams = this.gridSlots.filter(s => s !== null).length;
-    this.useSharedServiceMode.set(activeStreams > 1);
+    // Always use dedicated WebSocket per stream (not shared service)
+    this.useSharedServiceMode.set(false);
   }
 
   toggleFullscreen() {
@@ -2413,16 +2408,8 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
 
   updateGridForPage() {
     const totalSlots = this.getGridSlotCount();
+    // Keep grid empty - user manually selects which cameras to display
     this.gridSlots = Array(totalSlots).fill(null);
-
-    const onlineChannels = this.videoChannels.filter(c => c.status === 'online');
-    const startIndex = (this.currentPage - 1) * this.itemsPerPage;
-    const pageChannels = onlineChannels.slice(startIndex, startIndex + this.itemsPerPage);
-
-    for (let i = 0; i < Math.min(pageChannels.length, totalSlots); i++) {
-      this.gridSlots[i] = pageChannels[i];
-    }
-
     this.updateSharedServiceMode();
   }
 

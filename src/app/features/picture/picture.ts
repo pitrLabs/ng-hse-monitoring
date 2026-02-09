@@ -13,6 +13,7 @@ import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { AlarmService } from '../../core/services/alarm.service';
 import { Alarm, getBestAlarmImageUrl, getAlarmSeverity, AlarmSeverity } from '../../core/models/alarm.model';
 import { environment } from '../../../environments/environment';
+import { BboxImageComponent } from '../../shared/components/bbox-image/bbox-image.component';
 
 interface AlarmPicture {
   alarm: Alarm;
@@ -33,7 +34,8 @@ interface AlarmPicture {
     MatSelectModule,
     MatFormFieldModule,
     MatInputModule,
-    MatProgressSpinnerModule
+    MatProgressSpinnerModule,
+    BboxImageComponent
   ],
   template: `
     <div class="picture-container">
@@ -155,7 +157,12 @@ interface AlarmPicture {
                   <mat-checkbox [(ngModel)]="pic.selected" color="primary"></mat-checkbox>
                 </div>
                 <div class="picture-image" (click)="openViewer(pic); $event.stopPropagation()">
-                  <img [src]="pic.imageUrl" [alt]="pic.alarm.alarm_type" loading="lazy" (error)="onImageError($event)">
+                  <app-bbox-image
+                    [src]="pic.imageUrl"
+                    [alt]="pic.alarm.alarm_type"
+                    [rawData]="pic.alarm.raw_data"
+                    [showLabels]="false">
+                  </app-bbox-image>
                   <div class="picture-overlay">
                     <mat-icon>zoom_in</mat-icon>
                   </div>
@@ -216,7 +223,14 @@ interface AlarmPicture {
               <mat-icon>chevron_right</mat-icon>
             </button>
 
-            <img [src]="pic.imageUrl" [alt]="pic.alarm.alarm_type">
+            <div class="viewer-image">
+              <app-bbox-image
+                [src]="pic.imageUrl"
+                [alt]="pic.alarm.alarm_type"
+                [rawData]="pic.alarm.raw_data"
+                [showLabels]="true">
+              </app-bbox-image>
+            </div>
 
             <div class="viewer-info">
               <div class="viewer-header">
@@ -673,6 +687,22 @@ interface AlarmPicture {
         max-height: calc(90vh - 150px);
         object-fit: contain;
         border-radius: 8px;
+      }
+    }
+
+    .viewer-image {
+      max-width: 100%;
+      max-height: calc(90vh - 150px);
+      border-radius: 8px;
+      overflow: hidden;
+      background: #0a0b0f;
+
+      app-bbox-image {
+        display: block;
+        width: auto;
+        height: auto;
+        max-width: 80vw;
+        max-height: calc(90vh - 150px);
       }
     }
 

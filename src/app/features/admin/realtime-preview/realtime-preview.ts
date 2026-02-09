@@ -214,12 +214,14 @@ interface ChannelGroup {
               <div class="video-slot">
                 @if (getChannelForSlot(i); as channel) {
                   <div class="video-container">
-                    <app-webrtc-video-player
-                      [app]="channel.app || 'live'"
-                      [stream]="channel.stream || channel.name"
-                      [webrtcUrl]="getWebrtcUrl(channel)"
-                      [showControls]="true">
-                    </app-webrtc-video-player>
+                    <app-ws-video-player
+                      [stream]="getWsStreamId(channel)"
+                      [mediaName]="channel.name"
+                      [wsBaseUrl]="getChannelWsUrl(channel)"
+                      [showControls]="true"
+                      [showFps]="false"
+                      [useSharedService]="false">
+                    </app-ws-video-player>
                     <div class="video-overlay-controls">
                       <!-- Recording button -->
                       <button mat-icon-button

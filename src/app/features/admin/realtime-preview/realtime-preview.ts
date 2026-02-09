@@ -1868,12 +1868,13 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
       let folderDisplayName = 'Ungrouped';
 
       // Check if this channel has a folder assignment (by backendId)
+      // assignments is Record<string, string> = {video_source_id: group_id}
       if (channel.backendId) {
-        const assignment = assignments.find(a => a.video_source_id === channel.backendId);
-        if (assignment && assignment.group_id) {
-          const groupInfo = groupLookup.get(assignment.group_id);
+        const assignedGroupId = assignments[channel.backendId];
+        if (assignedGroupId) {
+          const groupInfo = groupLookup.get(assignedGroupId);
           if (groupInfo) {
-            folderId = assignment.group_id;
+            folderId = assignedGroupId;
             folderName = groupInfo.name;
             folderDisplayName = groupInfo.displayName;
           }

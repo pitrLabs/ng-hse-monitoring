@@ -2189,12 +2189,34 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
       canvas.width = imgElement.naturalWidth || 1280;
       canvas.height = imgElement.naturalHeight || 720;
 
-      // Capture stream from canvas at 15 fps
-      const stream = canvas.captureStream(15);
+      // Capture stream from canvas at 24 fps for smoother video
+      const stream = canvas.captureStream(24);
 
-      // Create MediaRecorder
+      // Try to use best available codec - prefer MP4/H.264 for better quality
+      let mimeType = 'video/webm;codecs=vp9';
+      let fileExtension = 'webm';
+
+      // Check codec support - prefer MP4 for better compatibility and quality
+      if (MediaRecorder.isTypeSupported('video/mp4;codecs=h264')) {
+        mimeType = 'video/mp4;codecs=h264';
+        fileExtension = 'mp4';
+      } else if (MediaRecorder.isTypeSupported('video/webm;codecs=h264')) {
+        mimeType = 'video/webm;codecs=h264';
+        fileExtension = 'webm';
+      } else if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9')) {
+        mimeType = 'video/webm;codecs=vp9';
+        fileExtension = 'webm';
+      } else if (MediaRecorder.isTypeSupported('video/webm;codecs=vp8')) {
+        mimeType = 'video/webm;codecs=vp8';
+        fileExtension = 'webm';
+      }
+
+      console.log(`[Recording] Using codec: ${mimeType}`);
+
+      // Create MediaRecorder with higher bitrate for better quality
       const mediaRecorder = new MediaRecorder(stream, {
-        mimeType: 'video/webm;codecs=vp9'
+        mimeType: mimeType,
+        videoBitsPerSecond: 5000000  // 5 Mbps for good quality
       });
 
       const chunks: Blob[] = [];
@@ -2205,7 +2227,7 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
         }
       };
 
-      // Frame capture interval - draw img onto canvas at 15 fps
+      // Frame capture interval - draw img onto canvas at 24 fps
       const frameInterval = setInterval(() => {
         if (imgElement && imgElement.src && imgElement.complete) {
           // Update canvas size if img dimensions changed
@@ -2215,15 +2237,15 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
           }
           ctx.drawImage(imgElement, 0, 0, canvas.width, canvas.height);
         }
-      }, 1000 / 15); // 15 fps
+      }, 1000 / 24); // 24 fps
 
       mediaRecorder.onstop = () => {
         // Stop frame capture
         clearInterval(frameInterval);
 
-        // Create blob and download
-        const blob = new Blob(chunks, { type: 'video/webm' });
-        this.downloadRecording(blob, channel.name);
+        // Create blob and download with correct mime type
+        const blob = new Blob(chunks, { type: mimeType.split(';')[0] });
+        this.downloadRecording(blob, channel.name, fileExtension);
 
         // Clean up
         this.localRecordings.delete(streamId);
@@ -2286,10 +2308,10 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
   /**
    * Download recording as file to user's computer
    */
-  private downloadRecording(blob: Blob, channelName: string): void {
+  private downloadRecording(blob: Blob, channelName: string, extension: string = 'mp4'): void {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
     const safeName = channelName.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 30);
-    const filename = `recording_${safeName}_${timestamp}.webm`;
+    const filename = `recording_${safeName}_${timestamp}.${extension}`;
 
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');

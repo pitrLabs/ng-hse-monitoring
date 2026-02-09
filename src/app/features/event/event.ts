@@ -19,6 +19,7 @@ import {
   AlarmSeverity,
   getAlarmSeverity,
   getAlarmImageUrl,
+  getBestAlarmImageUrl,
   ALARM_TYPE_SEVERITY
 } from '../../core/models/alarm.model';
 
@@ -315,9 +316,9 @@ import {
             </button>
           </div>
           <div class="modal-content">
-            @if (selectedAlarm()!.image_url) {
+            @if (getAlarmImage(selectedAlarm()!)) {
               <div class="modal-image">
-                <img [src]="getImageUrl(selectedAlarm()!.image_url)" alt="Alarm capture" (error)="onImageError($event)">
+                <img [src]="getAlarmImage(selectedAlarm()!)" alt="Alarm capture" (error)="onImageError($event)">
               </div>
             }
             <div class="modal-details">
@@ -1253,6 +1254,11 @@ export class EventComponent implements OnInit, OnDestroy {
 
   getImageUrl(imageUrl: string | undefined | null): string | null {
     return getAlarmImageUrl(imageUrl);
+  }
+
+  // Get best available image URL for alarm (MinIO preferred, then BM-APP fallback)
+  getAlarmImage(alarm: Alarm | null): string | null {
+    return getBestAlarmImageUrl(alarm);
   }
 
   getAlarmIcon(alarmType: string): string {

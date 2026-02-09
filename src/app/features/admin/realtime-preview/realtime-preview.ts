@@ -52,15 +52,26 @@ interface ChannelGroup {
         <div class="toolbar-left">
           <!-- AI Box Selector -->
           <div class="aibox-selector">
-            <mat-icon class="selector-icon">dns</mat-icon>
-            <select [(ngModel)]="selectedAiBoxId" (ngModelChange)="onAiBoxChange($event)" class="aibox-select">
-              @for (box of aiBoxes(); track box.id) {
-                <option [value]="box.id">{{ box.name }} {{ box.is_online ? '(Online)' : '(Offline)' }}</option>
-              }
-              @if (aiBoxes().length === 0) {
-                <option value="">No AI Box configured</option>
-              }
-            </select>
+            <mat-form-field appearance="outline" class="aibox-field">
+              <mat-label>
+                <mat-icon>dns</mat-icon>
+                AI Box
+              </mat-label>
+              <mat-select [(ngModel)]="selectedAiBoxId" (selectionChange)="onAiBoxChange($event.value)">
+                @for (box of aiBoxes(); track box.id) {
+                  <mat-option [value]="box.id">
+                    <span class="aibox-option">
+                      <span class="status-dot" [class.online]="box.is_online" [class.offline]="!box.is_online"></span>
+                      {{ box.name }}
+                      <span class="aibox-code">({{ box.code }})</span>
+                    </span>
+                  </mat-option>
+                }
+                @if (aiBoxes().length === 0) {
+                  <mat-option value="" disabled>No AI Box configured</mat-option>
+                }
+              </mat-select>
+            </mat-form-field>
           </div>
           <button class="action-btn refresh-btn" (click)="loadVideoSources()" matTooltip="Refresh">
             <mat-icon>refresh</mat-icon>
@@ -377,36 +388,51 @@ interface ChannelGroup {
     }
 
     .aibox-selector {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 6px 12px;
-      background: var(--glass-bg);
-      border: 1px solid var(--glass-border);
-      border-radius: 8px;
+      .aibox-field {
+        width: 200px;
 
-      .selector-icon {
-        font-size: 18px;
-        width: 18px;
-        height: 18px;
-        color: var(--accent-primary);
+        ::ng-deep {
+          .mat-mdc-text-field-wrapper {
+            background: var(--glass-bg);
+          }
+          .mat-mdc-form-field-subscript-wrapper {
+            display: none;
+          }
+          .mdc-notched-outline__leading,
+          .mdc-notched-outline__notch,
+          .mdc-notched-outline__trailing {
+            border-color: var(--glass-border) !important;
+          }
+          .mat-mdc-select-value,
+          .mat-mdc-floating-label {
+            color: var(--text-primary);
+          }
+          .mat-mdc-floating-label mat-icon {
+            font-size: 16px;
+            width: 16px;
+            height: 16px;
+            margin-right: 4px;
+            vertical-align: middle;
+          }
+        }
       }
 
-      .aibox-select {
-        background: transparent;
-        border: none;
-        color: var(--text-primary);
-        font-size: 13px;
-        font-weight: 500;
-        padding: 4px 8px;
-        cursor: pointer;
-        outline: none;
-        min-width: 150px;
+      .aibox-option {
+        display: flex;
+        align-items: center;
+        gap: 8px;
 
-        option {
-          background: var(--bg-secondary, #1a1a2e);
-          color: var(--text-primary);
-          padding: 8px;
+        .status-dot {
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          &.online { background: #22c55e; }
+          &.offline { background: #ef4444; }
+        }
+
+        .aibox-code {
+          color: var(--text-secondary);
+          font-size: 12px;
         }
       }
     }
@@ -1219,8 +1245,9 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
   channelGroups: ChannelGroup[] = [];
   gridSlots: (VideoChannel | null)[] = [];
 
-  // Signal to track whether shared service mode should be used
-  // This prevents race conditions from template re-evaluation during change detection
+  // Shared service mode for multi-grid view
+  // BM-APP limitation: only 1 stream active at a time on video WebSocket
+  // We use time-division cycling to show multiple streams
   useSharedServiceMode = signal(false);
 
   private bmappUrl = environment.bmappUrl;
@@ -1870,11 +1897,10 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
 
   // Update shared service mode based on active streams
   // BM-APP WebSocket doesn't properly support multiple concurrent streams,
-  // so we use a shared service that cycles through streams when more than 1 is active
-  // This is called whenever gridSlots changes to update the signal
+  // BM-APP only supports 1 stream at a time on video WebSocket
+  // When multiple streams displayed, we use shared service with fast cycling
   private updateSharedServiceMode(): void {
     const activeStreams = this.gridSlots.filter(s => s !== null).length;
-    // Use shared service when more than 1 stream is displayed simultaneously
     this.useSharedServiceMode.set(activeStreams > 1);
   }
 

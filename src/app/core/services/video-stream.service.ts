@@ -1,5 +1,6 @@
-import { Injectable, signal } from '@angular/core';
+import { Injectable, signal, inject } from '@angular/core';
 import { Subject, BehaviorSubject } from 'rxjs';
+import { AIBoxService } from './aibox.service';
 
 interface StreamSubscription {
   id: string;
@@ -24,17 +25,18 @@ interface StreamSubscription {
   providedIn: 'root'
 })
 export class VideoStreamService {
+  private aiBoxService = inject(AIBoxService);
   private websocket: WebSocket | null = null;
   private subscriptions: Map<string, StreamSubscription> = new Map();
   private currentStream: string | null = null;
   private streamQueue: string[] = [];
   private cycleTimer: any = null;
-  private cycleInterval = 2000; // 2 seconds per stream
+  private cycleInterval = 500; // 500ms per stream (faster cycling for smoother multi-grid)
   private isConnected = false;
 
   // Channel switch settling - ignore frames briefly after switching to avoid stale frames
   private lastChannelSwitch = 0;
-  private settlingPeriod = 300; // ms to ignore frames after channel switch
+  private settlingPeriod = 100; // 100ms settling (reduced for faster cycling)
 
   // Observable for connection status
   connectionStatus = signal<'disconnected' | 'connecting' | 'connected'>('disconnected');
@@ -104,8 +106,18 @@ export class VideoStreamService {
     if (this.websocket) return;
 
     this.connectionStatus.set('connecting');
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/bmapp-api/video/`;
+
+    // Get WebSocket URL from selected AI Box
+    let wsUrl = this.aiBoxService.getSelectedStreamWsUrl();
+    if (wsUrl) {
+      // Ensure URL ends with /video/ path
+      if (!wsUrl.endsWith('/')) wsUrl += '/';
+      if (!wsUrl.endsWith('video/')) wsUrl += 'video/';
+    } else {
+      // Fallback to proxy
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      wsUrl = `${protocol}//${window.location.host}/bmapp-api/video/`;
+    }
 
     console.log(`[VideoStreamService] Connecting to: ${wsUrl}`);
 

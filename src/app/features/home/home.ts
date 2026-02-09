@@ -8,7 +8,7 @@ import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatDividerModule } from '@angular/material/divider';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { AlarmService } from '../../core/services/alarm.service';
-import { AlarmNotification, getAlarmImageUrl } from '../../core/models/alarm.model';
+import { AlarmNotification, getAlarmImageUrl, getBestAlarmImageUrl } from '../../core/models/alarm.model';
 import { LocationsService, CameraLocation } from '../../core/services/locations.service';
 import { AuthService } from '../../core/services/auth.service';
 import { VideoSourceService, VideoSource } from '../../core/services/video-source.service';
@@ -347,9 +347,9 @@ interface DeviceClass {
             </button>
           </div>
           <div class="popup-content">
-            @if (selectedNotification()?.alarm?.image_url) {
+            @if (getAlarmImage(selectedNotification()?.alarm)) {
               <div class="popup-image">
-                <img [src]="getImageUrl(selectedNotification()?.alarm?.image_url)" alt="Alarm capture">
+                <img [src]="getAlarmImage(selectedNotification()?.alarm)" alt="Alarm capture">
               </div>
             }
             <div class="popup-details">
@@ -1505,6 +1505,11 @@ export class HomeComponent implements OnInit, OnDestroy {
 
   getImageUrl(imageUrl: string | undefined | null): string | null {
     return getAlarmImageUrl(imageUrl);
+  }
+
+  // Get best available image URL for alarm (MinIO preferred, then BM-APP fallback)
+  getAlarmImage(alarm: any): string | null {
+    return getBestAlarmImageUrl(alarm);
   }
 
   viewAlarmDetail(notification: AlarmNotification): void {

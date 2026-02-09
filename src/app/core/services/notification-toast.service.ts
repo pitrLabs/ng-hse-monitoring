@@ -1,5 +1,5 @@
 import { Injectable, signal, computed } from '@angular/core';
-import { Alarm, getAlarmSeverity, AlarmSeverity } from '../models/alarm.model';
+import { Alarm, getAlarmSeverity, AlarmSeverity, getBestAlarmImageUrl } from '../models/alarm.model';
 
 export interface ToastNotification {
   id: string;
@@ -51,7 +51,7 @@ export class NotificationToastService {
       title: alarm.alarm_type || 'Alert',
       message: `${alarm.camera_name || 'Unknown'} - ${alarm.alarm_name || alarm.alarm_type}`,
       severity: getAlarmSeverity(alarm.alarm_type),
-      imageUrl: alarm.image_url,
+      imageUrl: getBestAlarmImageUrl(alarm),  // Prefer MinIO, fallback to BM-APP
       alarm,
       timestamp: new Date()
     };

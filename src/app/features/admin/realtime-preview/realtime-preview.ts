@@ -16,6 +16,7 @@ import { CameraGroupsService } from '../../../core/services/camera-groups.servic
 import { AuthService } from '../../../core/services/auth.service';
 import { CameraStatusService } from '../../../core/services/camera-status.service';
 import { AIBoxService, AIBox } from '../../../core/services/aibox.service';
+import { RecordingControlService } from '../../../core/services/recording-control.service';
 import { environment } from '../../../../environments/environment';
 
 interface VideoChannel {
@@ -198,12 +199,27 @@ interface ChannelGroup {
                       [wsBaseUrl]="channel.aiboxWsUrl || ''">
                     </app-ws-video-player>
                     <div class="video-overlay-controls">
+                      <!-- Recording button -->
+                      <button mat-icon-button
+                              [matTooltip]="isRecording(channel) ? 'Stop Recording' : 'Start Recording'"
+                              [class.recording]="isRecording(channel)"
+                              (click)="toggleRecording(channel); $event.stopPropagation()">
+                        <mat-icon>{{ isRecording(channel) ? 'stop_circle' : 'fiber_manual_record' }}</mat-icon>
+                      </button>
                       <button mat-icon-button matTooltip="Close" (click)="removeFromSlot(i)">
                         <mat-icon>close</mat-icon>
                       </button>
                     </div>
+                    <!-- Recording indicator -->
+                    @if (isRecording(channel)) {
+                      <div class="recording-indicator">
+                        <span class="rec-dot"></span>
+                        <span class="rec-text">REC</span>
+                        <span class="rec-time">{{ getRecordingTime(channel) }}</span>
+                      </div>
+                    }
                     <div class="video-info">
-                      <span class="status-indicator online"></span>
+                      <span class="status-indicator" [class.online]="channel.status === 'online'"></span>
                       <span class="channel-name">{{ channel.name }}</span>
                     </div>
                   </div>
@@ -991,6 +1007,54 @@ interface ChannelGroup {
       opacity: 1;
     }
 
+    .video-overlay-controls button.recording {
+      background: rgba(239, 68, 68, 0.9);
+      mat-icon {
+        color: white;
+        animation: pulse-recording 1s infinite;
+      }
+    }
+
+    @keyframes pulse-recording {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    .recording-indicator {
+      position: absolute;
+      top: 8px;
+      left: 8px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      background: rgba(239, 68, 68, 0.9);
+      border-radius: 4px;
+      z-index: 20;
+
+      .rec-dot {
+        width: 8px;
+        height: 8px;
+        background: white;
+        border-radius: 50%;
+        animation: pulse-recording 1s infinite;
+      }
+
+      .rec-text {
+        font-size: 11px;
+        font-weight: 700;
+        color: white;
+        letter-spacing: 1px;
+      }
+
+      .rec-time {
+        font-size: 11px;
+        font-weight: 600;
+        color: white;
+        font-family: monospace;
+      }
+    }
+
     .video-info {
       position: absolute;
       bottom: 0;
@@ -1260,6 +1324,7 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
   private authService = inject(AuthService);
   private cameraStatusService = inject(CameraStatusService);
   private aiBoxService = inject(AIBoxService);
+  private recordingService = inject(RecordingControlService);
 
   @ViewChild('previewContainer') previewContainer!: ElementRef<HTMLElement>;
 
@@ -1305,6 +1370,7 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
   selectedAiBoxIds = signal<Set<string>>(new Set());
 
   private fullscreenChangeHandler = () => this.onFullscreenChange();
+  private recordingTimerInterval: any = null;
 
   videoChannels: VideoChannel[] = [];
   channelGroups: ChannelGroup[] = [];
@@ -1374,9 +1440,11 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
     private aiTaskService: AITaskService
   ) {
     // Re-build channel groups when assignments or groups change (fixes race condition)
+    // Re-build channel groups when assignments, groups, or aiBoxes change
     effect(() => {
       const assignments = this.cameraGroupsService.assignments();
       const groups = this.cameraGroupsService.groups();
+      const boxes = this.aiBoxes(); // Trigger rebuild when aiBoxes load
       if (this.videoChannels.length > 0) {
         this.buildChannelGroups();
       }
@@ -1386,6 +1454,8 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
   ngOnInit() {
     // Load camera groups + assignments from backend first
     this.cameraGroupsService.loadGroups();
+    // Load active recordings status
+    this.recordingService.loadActiveRecordings();
     // Load AI boxes and auto-select ALL by default
     this.aiBoxService.loadAiBoxes().subscribe({
       next: (boxes) => {
@@ -1402,10 +1472,19 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
       }
     });
     document.addEventListener('fullscreenchange', this.fullscreenChangeHandler);
+
+    // Start timer to update recording elapsed time display
+    this.recordingTimerInterval = setInterval(() => {
+      // Force change detection for recording time updates
+      // This is needed because getRecordingTime() returns a new value each second
+    }, 1000);
   }
 
   ngOnDestroy() {
     document.removeEventListener('fullscreenchange', this.fullscreenChangeHandler);
+    if (this.recordingTimerInterval) {
+      clearInterval(this.recordingTimerInterval);
+    }
   }
 
   loadVideoSources() {
@@ -2029,6 +2108,48 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
     return '';
   }
 
+  // ========== Recording Methods ==========
+
+  /**
+   * Check if a channel is currently being recorded
+   */
+  isRecording(channel: VideoChannel): boolean {
+    const streamId = this.getWsStreamId(channel);
+    return this.recordingService.isRecording(streamId);
+  }
+
+  /**
+   * Toggle recording for a channel
+   */
+  async toggleRecording(channel: VideoChannel): Promise<void> {
+    const streamId = this.getWsStreamId(channel);
+    if (!streamId) {
+      console.error('Cannot record: no stream ID');
+      return;
+    }
+
+    try {
+      if (this.isRecording(channel)) {
+        await this.recordingService.stopRecording(streamId);
+        console.log(`[Recording] Stopped recording: ${channel.name}`);
+      } else {
+        await this.recordingService.startRecording(streamId, channel.name);
+        console.log(`[Recording] Started recording: ${channel.name}`);
+      }
+    } catch (error: any) {
+      console.error('Recording error:', error);
+      alert(error?.error?.detail || 'Failed to toggle recording');
+    }
+  }
+
+  /**
+   * Get elapsed recording time for a channel
+   */
+  getRecordingTime(channel: VideoChannel): string {
+    const streamId = this.getWsStreamId(channel);
+    return this.recordingService.getElapsedTime(streamId);
+  }
+
   // Update shared service mode based on active streams
   // BM-APP WebSocket doesn't properly support multiple concurrent streams,
   // BM-APP only supports 1 stream at a time on video WebSocket
@@ -2235,12 +2356,29 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
       );
 
       // Add to local state with the backend ID
+      // Put in first selected AI Box or 'unknown'
+      const selectedIds = Array.from(this.selectedAiBoxIds());
+      const firstAiboxId = selectedIds.length > 0 ? selectedIds[0] : 'unknown';
+      const aibox = this.aiBoxes().find(b => b.id === firstAiboxId);
+      const aiboxName = aibox ? `${aibox.name} (${aibox.code})` : 'No AI Box';
+
       this.channelGroups.push({
         id: result.id,
         name: result.name,
         displayName: result.display_name || result.name,
         expanded: true,
-        channels: []
+        channels: [],
+        aiboxId: firstAiboxId,
+        aiboxName: aiboxName
+      });
+
+      // Re-sort groups to put new folder in correct position
+      this.channelGroups.sort((a, b) => {
+        const aiboxCompare = (a.aiboxName || '').localeCompare(b.aiboxName || '');
+        if (aiboxCompare !== 0) return aiboxCompare;
+        if (a.id === 'ungrouped' && b.id !== 'ungrouped') return 1;
+        if (a.id !== 'ungrouped' && b.id === 'ungrouped') return -1;
+        return a.displayName.localeCompare(b.displayName);
       });
 
       this.closeCreateFolderDialog();

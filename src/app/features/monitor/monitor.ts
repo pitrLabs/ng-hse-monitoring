@@ -13,7 +13,7 @@ import { MatInputModule } from '@angular/material/input';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatSelectModule } from '@angular/material/select';
 import { VideoSourceService, VideoSource } from '../../core/services/video-source.service';
-import { WsVideoPlayerComponent } from '../../shared/components/ws-video-player/ws-video-player.component';
+import { VideoPlayerComponent } from '../../shared/components/video-player';
 import { CameraGroupsService } from '../../core/services/camera-groups.service';
 import { AuthService } from '../../core/services/auth.service';
 import { AITaskService, BmappTask } from '../../core/services/ai-task.service';
@@ -48,7 +48,7 @@ interface CameraGroup {
     MatInputModule,
     MatFormFieldModule,
     MatSelectModule,
-    WsVideoPlayerComponent
+    VideoPlayerComponent
   ],
   template: `
     <div class="monitor-container">
@@ -220,16 +220,13 @@ interface CameraGroup {
               >
                 @if (cell.source) {
                   <div class="video-content">
-                    <app-ws-video-player
-                      [stream]="getWsStreamId(cell.source)"
-                      [mediaName]="cell.source.name"
-                      [showControls]="true"
-                      [showFps]="true"
-                      [wsBaseUrl]="getWsBaseUrl(cell.source)">
-                    </app-ws-video-player>
+                    <app-video-player
+                      [streamName]="cell.source.stream_name"
+                      mode="mediamtx">
+                    </app-video-player>
                     <div class="video-info">
                       <span class="video-name">{{ cell.source.name }}</span>
-                      <span class="video-type">AI</span>
+                      <span class="video-type">RAW</span>
                     </div>
                   </div>
                   <div class="video-overlay">
@@ -1355,11 +1352,12 @@ export class MonitorComponent implements OnInit {
   canRenameGroups = computed(() => !!this.authService.currentUser());
 
   constructor(private videoSourceService: VideoSourceService) {
-    // Re-build camera groups when assignments or groups change (fixes race condition)
+    // Re-build camera groups when assignments, groups, or aiBoxes change (fixes race condition)
     effect(() => {
       const assignments = this.cameraGroupsService.assignments();
       const groups = this.cameraGroupsService.groups();
       const sources = this.videoSources();
+      const boxes = this.aiBoxes(); // Trigger rebuild when aiBoxes load
       if (sources.length > 0) {
         this.buildCameraGroups(sources);
       }
@@ -1912,13 +1910,31 @@ export class MonitorComponent implements OnInit {
       );
 
       // Add to local state with the backend ID
-      this.cameraGroups.update(groups => [...groups, {
-        id: result.id,
-        name: result.name,
-        displayName: result.display_name || result.name,
-        expanded: true,
-        cameras: []
-      }]);
+      // Put in first selected AI Box or 'no-aibox'
+      const selectedIds = Array.from(this.selectedAiBoxIds());
+      const firstAiboxId = selectedIds.length > 0 ? selectedIds[0] : 'no-aibox';
+      const aibox = this.aiBoxes().find(b => b.id === firstAiboxId);
+      const aiboxName = aibox ? `${aibox.name} (${aibox.code})` : 'No AI Box';
+
+      this.cameraGroups.update(groups => {
+        const newGroups = [...groups, {
+          id: result.id,
+          name: result.name,
+          displayName: result.display_name || result.name,
+          expanded: true,
+          cameras: [],
+          aiboxId: firstAiboxId,
+          aiboxName: aiboxName
+        }];
+        // Re-sort groups to put new folder in correct position
+        return newGroups.sort((a, b) => {
+          const aiboxCompare = (a.aiboxName || '').localeCompare(b.aiboxName || '');
+          if (aiboxCompare !== 0) return aiboxCompare;
+          if (a.id === 'ungrouped' && b.id !== 'ungrouped') return 1;
+          if (a.id !== 'ungrouped' && b.id === 'ungrouped') return -1;
+          return a.displayName.localeCompare(b.displayName);
+        });
+      });
 
       this.closeCreateFolderDialog();
     } catch (error) {

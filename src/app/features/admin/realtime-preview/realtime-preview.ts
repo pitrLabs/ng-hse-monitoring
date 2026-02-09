@@ -1331,6 +1331,7 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
     startTime: Date;
     channelName: string;
     autoStopTimer: any;
+    frameInterval?: any;  // Interval for capturing img frames to canvas
   }>();
   private readonly MAX_RECORDING_SECONDS = 600; // 10 minutes auto-stop
 
@@ -2154,6 +2155,7 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
 
   /**
    * Start local recording - captures video frames and records to blob
+   * Uses canvas to capture img element frames from ws-video-player
    */
   private startLocalRecording(channel: VideoChannel, streamId: string): void {
     // Find the video element for this channel
@@ -2163,19 +2165,32 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
       return;
     }
 
-    // Get the canvas element from ws-video-player
+    // Get the img element from ws-video-player (it uses <img> not <canvas>)
     const videoSlots = document.querySelectorAll('.video-slot');
     const slot = videoSlots[slotIndex];
-    const canvas = slot?.querySelector('canvas');
+    const imgElement = slot?.querySelector('app-ws-video-player img.stream-frame') as HTMLImageElement;
 
-    if (!canvas) {
-      alert('Cannot start recording: video not loaded');
+    if (!imgElement || !imgElement.src || imgElement.style.display === 'none') {
+      alert('Cannot start recording: video not loaded or not playing');
       return;
     }
 
     try {
-      // Capture stream from canvas
-      const stream = (canvas as HTMLCanvasElement).captureStream(15); // 15 fps
+      // Create an off-screen canvas to capture frames from the img element
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+
+      if (!ctx) {
+        alert('Cannot start recording: canvas not supported');
+        return;
+      }
+
+      // Set canvas size based on img natural dimensions
+      canvas.width = imgElement.naturalWidth || 1280;
+      canvas.height = imgElement.naturalHeight || 720;
+
+      // Capture stream from canvas at 15 fps
+      const stream = canvas.captureStream(15);
 
       // Create MediaRecorder
       const mediaRecorder = new MediaRecorder(stream, {
@@ -2190,7 +2205,22 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
         }
       };
 
+      // Frame capture interval - draw img onto canvas at 15 fps
+      const frameInterval = setInterval(() => {
+        if (imgElement && imgElement.src && imgElement.complete) {
+          // Update canvas size if img dimensions changed
+          if (canvas.width !== imgElement.naturalWidth && imgElement.naturalWidth > 0) {
+            canvas.width = imgElement.naturalWidth;
+            canvas.height = imgElement.naturalHeight;
+          }
+          ctx.drawImage(imgElement, 0, 0, canvas.width, canvas.height);
+        }
+      }, 1000 / 15); // 15 fps
+
       mediaRecorder.onstop = () => {
+        // Stop frame capture
+        clearInterval(frameInterval);
+
         // Create blob and download
         const blob = new Blob(chunks, { type: 'video/webm' });
         this.downloadRecording(blob, channel.name);
@@ -2210,16 +2240,17 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
         }
       }, this.MAX_RECORDING_SECONDS * 1000);
 
-      // Store recording state
+      // Store recording state (include frameInterval for cleanup)
       this.localRecordings.set(streamId, {
         mediaRecorder,
         chunks,
         startTime: new Date(),
         channelName: channel.name,
-        autoStopTimer
+        autoStopTimer,
+        frameInterval // Store for cleanup
       });
 
-      console.log(`[Recording] Started local recording: ${channel.name}`);
+      console.log(`[Recording] Started local recording: ${channel.name} (${canvas.width}x${canvas.height})`);
 
     } catch (error) {
       console.error('Failed to start recording:', error);
@@ -2237,6 +2268,11 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
     // Clear auto-stop timer
     if (recording.autoStopTimer) {
       clearTimeout(recording.autoStopTimer);
+    }
+
+    // Clear frame capture interval
+    if (recording.frameInterval) {
+      clearInterval(recording.frameInterval);
     }
 
     // Stop the media recorder (will trigger onstop and download)

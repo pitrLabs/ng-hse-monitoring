@@ -9,6 +9,7 @@ export interface Alarm {
   confidence?: number;
   image_url?: string;
   video_url?: string;
+  media_url?: string;  // RTSP URL for video source
   description?: string;
   alarm_time: string;
   status: 'new' | 'acknowledged' | 'resolved';

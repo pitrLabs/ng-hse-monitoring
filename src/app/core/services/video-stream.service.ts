@@ -31,12 +31,15 @@ export class VideoStreamService {
   private currentStream: string | null = null;
   private streamQueue: string[] = [];
   private cycleTimer: any = null;
-  private cycleInterval = 500; // 500ms per stream (faster cycling for smoother multi-grid)
+  private cycleInterval = 800; // 800ms per stream (balance between smoothness and stability)
   private isConnected = false;
 
   // Channel switch settling - ignore frames briefly after switching to avoid stale frames
   private lastChannelSwitch = 0;
-  private settlingPeriod = 100; // 100ms settling (reduced for faster cycling)
+  private settlingPeriod = 250; // 250ms settling (longer to avoid stale frames from previous channel)
+
+  // Track which stream we're currently expecting frames from
+  private expectedStream: string | null = null;
 
   // Observable for connection status
   connectionStatus = signal<'disconnected' | 'connecting' | 'connected'>('disconnected');
@@ -215,12 +218,11 @@ export class VideoStreamService {
     this.currentStream = stream;
     this.lastChannelSwitch = Date.now(); // Record switch time for settling
 
+    // Find the expected mediaName for this stream so we can validate incoming frames
+    const sub = Array.from(this.subscriptions.values()).find(s => s.stream === stream);
+    this.expectedStream = sub?.mediaName || this.extractStreamKey(stream);
+
     const message = JSON.stringify({ chn: stream });
-    console.log(`[VideoStreamService] Selecting stream:`, {
-      stream: stream,
-      message: message,
-      timestamp: this.lastChannelSwitch
-    });
     this.websocket.send(message);
   }
 
@@ -261,6 +263,17 @@ export class VideoStreamService {
           // BM-APP returns data.task = MediaName (e.g., "KOPER02", "BWC SALATIGA 1")
           const frameTaskNormalized = frameTask.toLowerCase();
 
+          // STRICT VALIDATION: Only accept frames that match what we're currently expecting
+          // This prevents frames from other channels (selected by other clients) from being delivered
+          if (this.expectedStream) {
+            const expectedNormalized = this.expectedStream.toLowerCase();
+            if (frameTaskNormalized !== expectedNormalized) {
+              // Frame is from a different channel than what we selected - discard silently
+              // This happens because BM-APP broadcasts the same stream to all clients
+              return;
+            }
+          }
+
           // Match frame to subscribers based on mediaName (which matches data.task from BM-APP)
           let delivered = false;
           this.subscriptions.forEach(sub => {
@@ -276,12 +289,13 @@ export class VideoStreamService {
           });
 
           if (!delivered && this.subscriptions.size > 0) {
-            // Log for debugging - show what we're trying to match
+            // This shouldn't happen often now with strict validation above
+            // Log for debugging if it does
             const subInfo = Array.from(this.subscriptions.values()).map(s => ({
               mediaName: s.mediaName,
               streamKey: s.streamKey
             }));
-            console.warn(`[VideoStreamService] Frame discarded - task "${frameTask}" doesn't match any subscriber:`, subInfo);
+            console.warn(`[VideoStreamService] Frame not delivered - task "${frameTask}" doesn't match any subscriber:`, subInfo);
           }
         } else {
           // No task info in response - this is problematic for multi-stream
@@ -291,9 +305,8 @@ export class VideoStreamService {
             if (sub) {
               sub.callback(frameUrl);
             }
-          } else {
-            console.warn('[VideoStreamService] No task in frame data and multiple subscribers - discarding frame');
           }
+          // Don't log warning - just silently discard
         }
       }
 
@@ -321,17 +334,15 @@ export class VideoStreamService {
     }
 
     // Binary frames don't have task info - only safe to deliver if 1 subscriber
-    if (this.subscriptions.size === 1) {
+    // AND we're not in cycling mode (multiple streams would cause ambiguity)
+    if (this.subscriptions.size === 1 && this.streamQueue.length === 1) {
       const frameUrl = URL.createObjectURL(blob);
       const sub = this.subscriptions.values().next().value;
       if (sub) {
         sub.callback(frameUrl);
       }
-    } else if (this.subscriptions.size > 1) {
-      // Multiple subscribers - binary frames are ambiguous, discard
-      // This prevents wrong-stream delivery
-      console.warn('[VideoStreamService] Binary frame discarded - multiple subscribers and no task info');
     }
+    // For multiple subscribers, silently discard binary frames to prevent wrong delivery
   }
 
   /**

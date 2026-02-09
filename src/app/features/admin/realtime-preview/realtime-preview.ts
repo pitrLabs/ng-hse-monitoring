@@ -31,6 +31,9 @@ interface VideoChannel {
   // Backend VideoSource info for folder assignment
   backendId?: string; // Backend VideoSource ID for API calls
   groupId?: string | null; // group_id from backend VideoSource
+  // AI Box tracking for multi-box support
+  aiboxId?: string; // Which AI Box this channel belongs to
+  aiboxWsUrl?: string; // WebSocket URL for this channel's AI Box
 }
 
 interface ChannelGroup {
@@ -39,6 +42,9 @@ interface ChannelGroup {
   displayName: string;   // Custom display name (can be renamed)
   expanded: boolean;
   channels: VideoChannel[];
+  // AI Box info for grouping (which AI Box this folder belongs to)
+  aiboxId?: string;
+  aiboxName?: string;
 }
 
 @Component({
@@ -50,28 +56,21 @@ interface ChannelGroup {
       <!-- Toolbar -->
       <div class="preview-toolbar">
         <div class="toolbar-left">
-          <!-- AI Box Selector -->
-          <div class="aibox-selector">
-            <mat-form-field appearance="outline" class="aibox-field">
-              <mat-label>
-                <mat-icon>dns</mat-icon>
-                AI Box
-              </mat-label>
-              <mat-select [(ngModel)]="selectedAiBoxId" (selectionChange)="onAiBoxChange($event.value)">
-                @for (box of aiBoxes(); track box.id) {
-                  <mat-option [value]="box.id">
-                    <span class="aibox-option">
-                      <span class="status-dot" [class.online]="box.is_online" [class.offline]="!box.is_online"></span>
-                      {{ box.name }}
-                      <span class="aibox-code">({{ box.code }})</span>
-                    </span>
-                  </mat-option>
-                }
-                @if (aiBoxes().length === 0) {
-                  <mat-option value="" disabled>No AI Box configured</mat-option>
-                }
-              </mat-select>
-            </mat-form-field>
+          <!-- AI Box Multi-Select (like Monitor page) -->
+          <div class="aibox-tabs">
+            @for (box of aiBoxes(); track box.id) {
+              <label class="aibox-tab" [class.checked]="isAiBoxSelected(box.id)">
+                <input type="checkbox"
+                  [checked]="isAiBoxSelected(box.id)"
+                  (change)="toggleAiBox(box.id)">
+                <span class="aibox-status" [class.online]="box.is_online" [class.offline]="!box.is_online"></span>
+                <span class="aibox-name">{{ box.name }}</span>
+                <span class="aibox-code">({{ box.code }})</span>
+              </label>
+            }
+            @if (aiBoxes().length === 0) {
+              <span class="no-aibox">No AI Boxes configured</span>
+            }
           </div>
           <button class="action-btn refresh-btn" (click)="loadVideoSources()" matTooltip="Refresh">
             <mat-icon>refresh</mat-icon>
@@ -125,7 +124,15 @@ interface ChannelGroup {
                 <span>No video sources found</span>
               </div>
             } @else {
-              @for (group of channelGroups; track group.id) {
+              @for (group of channelGroups; track group.id + (group.aiboxId || ''); let i = $index) {
+                <!-- AI Box Header (show when aiboxId changes) -->
+                @if (i === 0 || group.aiboxId !== channelGroups[i-1].aiboxId) {
+                  <div class="aibox-separator">
+                    <mat-icon class="aibox-icon">dns</mat-icon>
+                    <span class="aibox-name">{{ group.aiboxName || 'No AI Box' }}</span>
+                  </div>
+                }
+                <!-- Folder Node -->
                 <div class="tree-node">
                   <div class="node-header"
                        [class.drag-over]="dragOverGroup === group.id"
@@ -137,12 +144,12 @@ interface ChannelGroup {
                     <mat-icon class="folder-icon">folder</mat-icon>
                     <span class="node-name">{{ group.displayName }}</span>
                     <span class="node-count">({{ group.channels.length }})</span>
-                    @if (canRenameGroups()) {
+                    @if (canRenameGroups() && group.id !== 'ungrouped') {
                       <div class="folder-actions">
-                        <button mat-icon-button class="folder-action-btn" matTooltip="Rename folder" (click)="openRenameDialog(group); $event.stopPropagation()">
+                        <button mat-icon-button class="folder-action-btn" matTooltip="Rename" (click)="openRenameDialog(group); $event.stopPropagation()">
                           <mat-icon>edit</mat-icon>
                         </button>
-                        <button mat-icon-button class="folder-action-btn delete-btn" matTooltip="Delete folder" (click)="openDeleteDialog(group); $event.stopPropagation()">
+                        <button mat-icon-button class="folder-action-btn delete-btn" matTooltip="Delete" (click)="openDeleteDialog(group); $event.stopPropagation()">
                           <mat-icon>delete</mat-icon>
                         </button>
                       </div>
@@ -188,7 +195,7 @@ interface ChannelGroup {
                       [showControls]="true"
                       [showFps]="true"
                       [useSharedService]="useSharedServiceMode()"
-                      [wsBaseUrl]="getSelectedStreamWsUrl()">
+                      [wsBaseUrl]="channel.aiboxWsUrl || ''">
                     </app-ws-video-player>
                     <div class="video-overlay-controls">
                       <button mat-icon-button matTooltip="Close" (click)="removeFromSlot(i)">
@@ -387,53 +394,68 @@ interface ChannelGroup {
       gap: 16px;
     }
 
-    .aibox-selector {
-      .aibox-field {
-        width: 200px;
+    .aibox-tabs {
+      display: flex;
+      align-items: center;
+      gap: 8px;
 
-        ::ng-deep {
-          .mat-mdc-text-field-wrapper {
-            background: var(--glass-bg);
-          }
-          .mat-mdc-form-field-subscript-wrapper {
-            display: none;
-          }
-          .mdc-notched-outline__leading,
-          .mdc-notched-outline__notch,
-          .mdc-notched-outline__trailing {
-            border-color: var(--glass-border) !important;
-          }
-          .mat-mdc-select-value,
-          .mat-mdc-floating-label {
-            color: var(--text-primary);
-          }
-          .mat-mdc-floating-label mat-icon {
-            font-size: 16px;
-            width: 16px;
-            height: 16px;
-            margin-right: 4px;
-            vertical-align: middle;
-          }
-        }
-      }
-
-      .aibox-option {
+      .aibox-tab {
         display: flex;
         align-items: center;
-        gap: 8px;
+        gap: 6px;
+        padding: 6px 12px;
+        background: var(--glass-bg);
+        border: 1px solid var(--glass-border);
+        border-radius: var(--radius-sm, 6px);
+        cursor: pointer;
+        transition: all 0.2s ease;
+        user-select: none;
 
-        .status-dot {
+        input[type="checkbox"] {
+          display: none;
+        }
+
+        &:hover {
+          background: var(--glass-bg-hover);
+          border-color: var(--accent-primary);
+        }
+
+        &.checked {
+          background: rgba(0, 212, 255, 0.15);
+          border-color: var(--accent-primary);
+        }
+
+        .aibox-status {
           width: 8px;
           height: 8px;
           border-radius: 50%;
-          &.online { background: #22c55e; }
-          &.offline { background: #ef4444; }
+          background: var(--status-offline, #ef4444);
+
+          &.online {
+            background: var(--status-online, #22c55e);
+          }
+
+          &.offline {
+            background: var(--status-offline, #ef4444);
+          }
+        }
+
+        .aibox-name {
+          font-size: 13px;
+          color: var(--text-primary);
+          font-weight: 500;
         }
 
         .aibox-code {
-          color: var(--text-secondary);
-          font-size: 12px;
+          font-size: 11px;
+          color: var(--text-tertiary);
         }
+      }
+
+      .no-aibox {
+        font-size: 13px;
+        color: var(--text-muted);
+        padding: 6px 12px;
       }
     }
 
@@ -687,6 +709,35 @@ interface ChannelGroup {
       margin-bottom: 2px;
     }
 
+    .aibox-separator {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 12px;
+      margin: 8px 0 4px 0;
+      background: rgba(0, 212, 255, 0.08);
+      border-left: 3px solid var(--accent-primary, #00d4ff);
+      border-radius: 0 6px 6px 0;
+
+      .aibox-icon {
+        font-size: 18px;
+        width: 18px;
+        height: 18px;
+        color: var(--accent-primary, #00d4ff);
+      }
+
+      .aibox-name {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--text-primary);
+        letter-spacing: 0.3px;
+      }
+
+      &:first-child {
+        margin-top: 0;
+      }
+    }
+
     .node-header {
       display: flex;
       align-items: center;
@@ -728,6 +779,20 @@ interface ChannelGroup {
       min-width: 16px;
       color: #f59e0b;
       flex-shrink: 0;
+    }
+
+    .aibox-icon {
+      font-size: 16px;
+      width: 16px;
+      height: 16px;
+      min-width: 16px;
+      color: var(--accent-primary, #00d4ff);
+      flex-shrink: 0;
+    }
+
+    .aibox-header {
+      background: rgba(0, 212, 255, 0.05);
+      border-left: 2px solid var(--accent-primary, #00d4ff);
     }
 
     .node-name {
@@ -1235,9 +1300,9 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
   // All users can manage their own personal folders
   canRenameGroups = computed(() => !!this.authService.currentUser());
 
-  // AI Box selection
+  // AI Box multi-selection (like Monitor page)
   aiBoxes = this.aiBoxService.aiBoxes;
-  selectedAiBoxId = '';
+  selectedAiBoxIds = signal<Set<string>>(new Set());
 
   private fullscreenChangeHandler = () => this.onFullscreenChange();
 
@@ -1254,9 +1319,9 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
   // Use proxy in development to bypass CORS (fallback)
   private bmappProxyUrl = '/bmapp-api';
 
-  // Get API base URL from selected AI Box
-  private getApiBaseUrl(): string {
-    const box = this.aiBoxes().find(b => b.id === this.selectedAiBoxId);
+  // Get API base URL for a specific AI Box
+  private getApiBaseUrlForBox(boxId: string): string {
+    const box = this.aiBoxes().find(b => b.id === boxId);
     if (box?.api_url) {
       // Return the AI Box API URL (e.g., "http://192.168.1.100:2323/api")
       // Strip trailing /api if present since we add it in the calls
@@ -1273,16 +1338,33 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
     return this.bmappProxyUrl;
   }
 
-  // Get WebSocket URL for video streaming from selected AI Box
-  getSelectedStreamWsUrl(): string {
-    const box = this.aiBoxes().find(b => b.id === this.selectedAiBoxId);
+  // Get WebSocket URL for a specific AI Box
+  getWsUrlForBox(boxId: string): string {
+    const box = this.aiBoxes().find(b => b.id === boxId);
     return box?.stream_ws_url || '';
   }
 
-  // Handle AI Box selection change
-  onAiBoxChange(boxId: string) {
-    this.selectedAiBoxId = boxId;
-    // Reload video sources from new AI Box
+  // Get WebSocket URL for a channel (uses channel's aiboxWsUrl)
+  getChannelWsUrl(channel: VideoChannel): string {
+    return channel.aiboxWsUrl || '';
+  }
+
+  // Check if AI Box is selected
+  isAiBoxSelected(id: string): boolean {
+    return this.selectedAiBoxIds().has(id);
+  }
+
+  // Toggle AI Box selection
+  toggleAiBox(id: string) {
+    const current = this.selectedAiBoxIds();
+    const newSet = new Set(current);
+    if (newSet.has(id)) {
+      newSet.delete(id);
+    } else {
+      newSet.add(id);
+    }
+    this.selectedAiBoxIds.set(newSet);
+    // Reload video sources from selected AI Boxes
     this.loadVideoSources();
   }
 
@@ -1304,13 +1386,13 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
   ngOnInit() {
     // Load camera groups + assignments from backend first
     this.cameraGroupsService.loadGroups();
-    // Load AI boxes and select first one
+    // Load AI boxes and auto-select ALL by default
     this.aiBoxService.loadAiBoxes().subscribe({
       next: (boxes) => {
         if (boxes.length > 0) {
-          // Auto-select first online box, or first box if none online
-          const onlineBox = boxes.find(b => b.is_active && b.is_online);
-          this.selectedAiBoxId = onlineBox?.id || boxes[0].id;
+          // Auto-select ALL AI Boxes by default
+          const allIds = new Set(boxes.map(b => b.id));
+          this.selectedAiBoxIds.set(allIds);
         }
         this.loadVideoSources();
       },
@@ -1331,8 +1413,8 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
     this.loadDirectFromBmapp();
   }
 
-  // Store preview channel mapping (task name -> url for WebSocket)
-  private previewChannelMap = new Map<string, string>();
+  // Store preview channel mapping per AI Box (aiboxId -> (task name -> url))
+  private previewChannelMaps = new Map<string, Map<string, string>>();
 
   // Store allowed camera names for filtering (based on user assignment)
   private allowedCameraNames = new Set<string>();
@@ -1345,10 +1427,14 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
   // Key: camera name (stream_name or name), Value: VideoSource with group_id
   private backendVideoSourceMap = new Map<string, VideoSource>();
 
+  // Pending load count for multi-AI Box loading
+  private pendingLoads = 0;
+  private allChannels: VideoChannel[] = [];
+
   // Direct query to BM-APP API via proxy
-  // BM-APP nginx routes: /api/ -> port 10002 (backend API)
+  // Now supports loading from MULTIPLE AI Boxes
   loadDirectFromBmapp() {
-    console.log('Loading from BM-APP via proxy...');
+    console.log('Loading from BM-APP (multi-AI Box mode)...');
 
     // First, load user's assigned cameras from backend to filter BM-APP results
     // Also store full VideoSource records to get group_id for folder assignment
@@ -1367,10 +1453,9 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
         });
         console.log('Allowed cameras for user:', Array.from(this.allowedCameraNames));
         console.log('Has assignment data:', this.hasAssignmentData, 'Count:', this.allowedCameraNames.size);
-        console.log('Backend VideoSource map size:', this.backendVideoSourceMap.size);
 
-        // Now fetch preview channels from BM-APP
-        this.fetchPreviewChannels();
+        // Now fetch from ALL selected AI Boxes
+        this.fetchFromAllAiBoxes();
       },
       error: (err) => {
         console.error('Failed to load assigned cameras:', err);
@@ -1378,218 +1463,231 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
         this.allowedCameraNames.clear();
         this.backendVideoSourceMap.clear();
         this.hasAssignmentData = false;
-        this.fetchPreviewChannels();
+        this.fetchFromAllAiBoxes();
       }
     });
   }
 
-  // Fetch preview channels from BM-APP
-  private fetchPreviewChannels() {
-    const previewUrl = `${this.getApiBaseUrl()}/api/app_preview_channel`;
+  // Fetch channels from ALL selected AI Boxes
+  private fetchFromAllAiBoxes() {
+    const selectedIds = Array.from(this.selectedAiBoxIds());
+
+    if (selectedIds.length === 0) {
+      console.log('No AI Boxes selected');
+      this.videoChannels = [];
+      this.initializeGrid();
+      this.loading = false;
+      return;
+    }
+
+    console.log(`Fetching from ${selectedIds.length} AI Boxes:`, selectedIds);
+
+    // Reset state
+    this.previewChannelMaps.clear();
+    this.allChannels = [];
+    this.pendingLoads = selectedIds.length;
+
+    // Fetch from each AI Box
+    selectedIds.forEach(boxId => {
+      this.fetchPreviewChannelsForBox(boxId);
+    });
+  }
+
+  // Fetch preview channels for a specific AI Box
+  private fetchPreviewChannelsForBox(boxId: string) {
+    const apiUrl = this.getApiBaseUrlForBox(boxId);
+    const wsUrl = this.getWsUrlForBox(boxId);
+    const previewUrl = `${apiUrl}/api/app_preview_channel`;
+
+    console.log(`[${boxId}] Fetching preview channels from ${previewUrl}`);
+
     this.http.post<any>(previewUrl, {}).subscribe({
       next: (res) => {
-        console.log('=== PREVIEW CHANNELS RAW RESPONSE ===');
-        console.log(JSON.stringify(res, null, 2));
-
-        // Build a map of task name -> url from preview channels
-        // Format from BM-APP:
-        // { "name": "Task Stream", "chn": [{ "name": "H8C-1", "task": "H8C-1", "url": "task/H8C-1" }] }
-        this.previewChannelMap.clear();
+        // Build a map of task name -> url from preview channels for this AI Box
+        const channelMap = new Map<string, string>();
 
         if (res.Content && Array.isArray(res.Content)) {
           res.Content.forEach((group: any) => {
             if (group.chn && Array.isArray(group.chn)) {
               group.chn.forEach((chn: any) => {
-                // Map by task name (which is AlgTaskSession) to the url
                 if (chn.task && chn.url) {
-                  this.previewChannelMap.set(chn.task.trim(), chn.url);
-                  console.log(`Mapped task "${chn.task.trim()}" -> "${chn.url}"`);
+                  channelMap.set(chn.task.trim(), chn.url);
                 }
-                // Also map by name if different
                 if (chn.name && chn.url && chn.name !== chn.task) {
-                  this.previewChannelMap.set(chn.name.trim(), chn.url);
-                  console.log(`Mapped name "${chn.name.trim()}" -> "${chn.url}"`);
+                  channelMap.set(chn.name.trim(), chn.url);
                 }
               });
             }
           });
         }
 
-        console.log('Preview channel map size:', this.previewChannelMap.size);
+        this.previewChannelMaps.set(boxId, channelMap);
+        console.log(`[${boxId}] Preview channel map size:`, channelMap.size);
 
-        // Now load tasks
-        this.loadTasksFromBmapp();
+        // Now load tasks for this AI Box
+        this.loadTasksForBox(boxId, wsUrl);
       },
       error: (err) => {
-        console.log('Preview channels fetch failed (optional):', err.message);
+        console.log(`[${boxId}] Preview channels fetch failed:`, err.message);
         // Still try to load tasks without preview channel mapping
-        this.loadTasksFromBmapp();
+        this.previewChannelMaps.set(boxId, new Map());
+        this.loadTasksForBox(boxId, wsUrl);
       }
     });
   }
 
-  // Load tasks from BM-APP
-  private loadTasksFromBmapp() {
-    const taskUrl = `${this.getApiBaseUrl()}/api/alg_task_fetch`;
+  // Load tasks for a specific AI Box
+  private loadTasksForBox(boxId: string, wsUrl: string) {
+    const apiUrl = this.getApiBaseUrlForBox(boxId);
+    const taskUrl = `${apiUrl}/api/alg_task_fetch`;
+    const previewChannelMap = this.previewChannelMaps.get(boxId) || new Map();
+    const boxName = this.aiBoxes().find(b => b.id === boxId)?.name || boxId;
+
+    console.log(`[${boxId}] Fetching tasks from ${taskUrl}`);
 
     this.http.post<any>(taskUrl, {}).subscribe({
       next: (res) => {
-        console.log('Task fetch response:', res);
+        console.log(`[${boxId}] Task fetch response:`, res);
         if (res.Result?.Code === 0 && res.Content) {
           let tasks = res.Content;
 
           // Filter tasks based on user's assigned cameras
-          // hasAssignmentData=true means backend responded (apply filtering)
-          // hasAssignmentData=false means backend failed (don't filter, user might be superuser)
           if (this.hasAssignmentData) {
-            // If user has no cameras assigned, show empty list
             if (this.allowedCameraNames.size === 0) {
-              console.log('User has no cameras assigned - showing empty list');
               tasks = [];
             } else {
               tasks = tasks.filter((t: any) => {
                 const mediaName = t.MediaName?.trim();
                 const session = t.AlgTaskSession?.trim();
-                // Check if either MediaName or AlgTaskSession is in allowed list
-                const isAllowed = this.allowedCameraNames.has(mediaName) ||
-                                 this.allowedCameraNames.has(session);
-                if (!isAllowed) {
-                  console.log(`Filtered out task: ${mediaName} (not in assigned cameras)`);
-                }
-                return isAllowed;
+                return this.allowedCameraNames.has(mediaName) ||
+                       this.allowedCameraNames.has(session);
               });
-              console.log(`Filtered to ${tasks.length} tasks based on user assignment`);
             }
-          } else {
-            console.log('No assignment data - showing all cameras (superuser/admin mode)');
           }
 
-          this.videoChannels = tasks.map((t: any, index: number) => {
-            // Status types: 0=Stopped, 1=Connecting, 2=Warning/Error, 4=Healthy/Running
+          const channels: VideoChannel[] = tasks.map((t: any, index: number) => {
             const statusType = t.AlgTaskStatus?.type;
-            const isOnline = statusType === 4; // Only "Healthy" is truly online
+            const isOnline = statusType === 4;
             const isConnecting = statusType === 1;
 
-            // Get preview channel URL from the map
-            // Try matching by AlgTaskSession (task name)
             const sessionTrimmed = t.AlgTaskSession?.trim();
-            let previewChn = this.previewChannelMap.get(sessionTrimmed);
+            let previewChn = previewChannelMap.get(sessionTrimmed);
 
-            // If not found, try MediaName
             if (!previewChn && t.MediaName) {
-              previewChn = this.previewChannelMap.get(t.MediaName.trim());
+              previewChn = previewChannelMap.get(t.MediaName.trim());
             }
 
-            // If still not found and we have AlgTaskSession, construct the URL
-            // Format: "task/<AlgTaskSession>"
             if (!previewChn && sessionTrimmed) {
               previewChn = `task/${sessionTrimmed}`;
-              console.log(`Constructed previewChn for ${sessionTrimmed}: ${previewChn}`);
             }
 
-            // Match with backend VideoSource by MediaName or AlgTaskSession for group_id
             const mediaName = t.MediaName?.trim();
             const backendSource = this.backendVideoSourceMap.get(mediaName) ||
                                   this.backendVideoSourceMap.get(sessionTrimmed);
 
-            // Debug: log TaskIdx and preview channel for each task
-            console.log(`Task[${index}]: ${mediaName}, TaskIdx=${t.TaskIdx}, Session=${t.AlgTaskSession}, previewChn=${previewChn}, groupId=${backendSource?.group_id || 'none'}`);
-
             return {
-              id: sessionTrimmed || t.AlgTaskSession,
+              id: `${boxId}_${sessionTrimmed || t.AlgTaskSession}`, // Unique ID per AI Box
               name: mediaName || sessionTrimmed || t.AlgTaskSession,
               status: isOnline ? 'online' : 'offline',
               statusLabel: t.AlgTaskStatus?.label || 'Unknown',
               isConnecting,
-              stream: sessionTrimmed || t.AlgTaskSession?.trim(), // Task session (trimmed) is the stream name for AI output
+              stream: sessionTrimmed || t.AlgTaskSession?.trim(),
               app: 'live',
-              taskIdx: t.TaskIdx, // For WebSocket video streaming (individual camera view)
-              previewChn: previewChn, // Channel URL from preview API: "task/<AlgTaskSession>"
+              taskIdx: t.TaskIdx,
+              previewChn: previewChn,
               backendId: backendSource?.id || undefined,
-              groupId: backendSource?.group_id || null
-            };
+              groupId: backendSource?.group_id || null,
+              // AI Box tracking
+              aiboxId: boxId,
+              aiboxWsUrl: wsUrl
+            } as VideoChannel;
           });
-          console.log('Loaded tasks with previewChn:', this.videoChannels.map(c => ({
-            name: c.name,
-            stream: c.stream,
-            previewChn: c.previewChn
-          })));
-        } else {
-          this.videoChannels = [];
+
+          console.log(`[${boxId}] Loaded ${channels.length} channels`);
+          this.allChannels.push(...channels);
         }
-        this.initializeGrid();
-        this.loading = false;
+
+        this.onBoxLoadComplete(boxId);
       },
       error: (err) => {
-        console.error('Task fetch failed:', err);
-        // Fallback to media fetch
-        this.loadMediaFromBmapp();
+        console.error(`[${boxId}] Task fetch failed:`, err);
+        // Try fallback to media fetch for this box
+        this.loadMediaForBox(boxId, wsUrl);
       }
     });
   }
 
-  // Fallback: Get media/cameras from BM-APP
-  loadMediaFromBmapp() {
-    console.log('Trying BM-APP media fetch...');
-    const mediaUrl = `${this.getApiBaseUrl()}/api/alg_media_fetch`;
+  // Called when one AI Box finishes loading
+  private onBoxLoadComplete(boxId: string) {
+    this.pendingLoads--;
+    console.log(`[${boxId}] Load complete. Pending: ${this.pendingLoads}`);
+
+    if (this.pendingLoads <= 0) {
+      // All boxes loaded - merge results
+      this.videoChannels = this.allChannels;
+      console.log(`All AI Boxes loaded. Total channels: ${this.videoChannels.length}`);
+      this.initializeGrid();
+      this.loading = false;
+    }
+  }
+
+  // Fallback: Get media/cameras from a specific AI Box
+  private loadMediaForBox(boxId: string, wsUrl: string) {
+    const apiUrl = this.getApiBaseUrlForBox(boxId);
+    console.log(`[${boxId}] Trying BM-APP media fetch...`);
+    const mediaUrl = `${apiUrl}/api/alg_media_fetch`;
 
     this.http.post<any>(mediaUrl, {}).subscribe({
       next: (res) => {
-        console.log('Media fetch response:', res);
+        console.log(`[${boxId}] Media fetch response:`, res);
         if (res.Result?.Code === 0 && res.Content) {
           let mediaList = res.Content;
 
           // Filter media based on user's assigned cameras
           if (this.hasAssignmentData) {
             if (this.allowedCameraNames.size === 0) {
-              console.log('User has no cameras assigned - showing empty list');
               mediaList = [];
             } else {
               mediaList = mediaList.filter((m: any) => {
                 const mediaName = m.MediaName?.trim();
-                const isAllowed = this.allowedCameraNames.has(mediaName);
-                if (!isAllowed) {
-                  console.log(`Filtered out media: ${mediaName} (not in assigned cameras)`);
-                }
-                return isAllowed;
+                return this.allowedCameraNames.has(mediaName);
               });
-              console.log(`Filtered to ${mediaList.length} media based on user assignment`);
+              console.log(`[${boxId}] Filtered to ${mediaList.length} media`);
             }
-          } else {
-            console.log('No assignment data - showing all media (superuser/admin mode)');
           }
 
-          this.videoChannels = mediaList.map((m: any) => {
+          const channels: VideoChannel[] = mediaList.map((m: any) => {
             // MediaStatus types: 0=Offline, 2=Online
             const statusType = m.MediaStatus?.type;
-            const isOnline = statusType === 2; // For media, type 2 means online
+            const isOnline = statusType === 2;
             const mediaName = m.MediaName?.trim();
             const backendSource = this.backendVideoSourceMap.get(mediaName);
 
             return {
-              id: m.MediaName,
+              id: `${boxId}_${m.MediaName}`,
               name: mediaName || m.MediaName,
               status: isOnline ? 'online' : 'offline',
               statusLabel: m.MediaStatus?.label || 'Unknown',
               stream: m.MediaName,
               app: 'live',
               backendId: backendSource?.id || undefined,
-              groupId: backendSource?.group_id || null
-            };
+              groupId: backendSource?.group_id || null,
+              // AI Box tracking
+              aiboxId: boxId,
+              aiboxWsUrl: wsUrl
+            } as VideoChannel;
           });
-          console.log('Loaded media:', this.videoChannels);
-        } else {
-          this.videoChannels = [];
+
+          console.log(`[${boxId}] Loaded ${channels.length} media channels`);
+          this.allChannels.push(...channels);
         }
-        this.initializeGrid();
-        this.loading = false;
+
+        this.onBoxLoadComplete(boxId);
       },
       error: (err) => {
-        console.error('Media fetch failed:', err);
-        console.error('All BM-APP endpoints failed - check proxy config');
-        this.videoChannels = [];
-        this.initializeGrid();
-        this.loading = false;
+        console.error(`[${boxId}] Media fetch failed:`, err);
+        // Mark this box as complete even if failed
+        this.onBoxLoadComplete(boxId);
       }
     });
   }
@@ -1741,72 +1839,107 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
   }
 
   /**
-   * Build channel groups from video channels using backend group assignments
-   * Matches BM-APP channels with backend VideoSource records by name to get group_id
+   * Build channel groups - grouped by AI Box first, then by folder within each AI Box
+   * Structure: AI Box header -> Folders -> Cameras
    */
   buildChannelGroups() {
+    const groups: ChannelGroup[] = [];
     const backendGroups = this.cameraGroupsService.groups();
     const assignments = this.cameraGroupsService.assignments();
-    const groupChannelsMap = new Map<string, VideoChannel[]>();
-    const ungroupedChannels: VideoChannel[] = [];
 
-    // Group channels by per-user assignments (using backendId to look up assignment)
+    // Build group lookup map
+    const groupLookup = new Map<string, { name: string; displayName: string }>();
+    for (const g of backendGroups) {
+      groupLookup.set(g.id, { name: g.name, displayName: g.display_name || g.name });
+    }
+
+    // Group channels by AI Box first, then by folder within each AI Box
+    // Key: "aiboxId|folderId"
+    const groupMap = new Map<string, VideoChannel[]>();
+
     for (const channel of this.videoChannels) {
-      const assignedGroupId = channel.backendId ? assignments[channel.backendId] : null;
-      if (assignedGroupId) {
-        if (!groupChannelsMap.has(assignedGroupId)) {
-          groupChannelsMap.set(assignedGroupId, []);
+      const aiboxId = channel.aiboxId || 'unknown';
+      const aibox = this.aiBoxes().find(b => b.id === aiboxId);
+      const aiboxName = aibox ? `${aibox.name} (${aibox.code})` : 'Unknown AI Box';
+
+      // Find folder assignment for this channel
+      let folderId = 'ungrouped';
+      let folderName = 'Ungrouped';
+      let folderDisplayName = 'Ungrouped';
+
+      // Check if this channel has a folder assignment (by backendId)
+      if (channel.backendId) {
+        const assignment = assignments.find(a => a.video_source_id === channel.backendId);
+        if (assignment && assignment.group_id) {
+          const groupInfo = groupLookup.get(assignment.group_id);
+          if (groupInfo) {
+            folderId = assignment.group_id;
+            folderName = groupInfo.name;
+            folderDisplayName = groupInfo.displayName;
+          }
         }
-        groupChannelsMap.get(assignedGroupId)!.push(channel);
-      } else {
-        ungroupedChannels.push(channel);
       }
-    }
 
-    const groups: ChannelGroup[] = [];
-
-    // Add groups that have channels
-    groupChannelsMap.forEach((channels, groupId) => {
-      const backendGroup = backendGroups.find(g => g.id === groupId);
-      if (backendGroup) {
-        groups.push({
-          id: backendGroup.id,
-          name: backendGroup.name,
-          displayName: backendGroup.display_name || backendGroup.name,
-          expanded: true,
-          channels: channels.sort((a, b) => a.name.localeCompare(b.name))
-        });
+      // Also check channel.groupId as fallback
+      if (folderId === 'ungrouped' && channel.groupId) {
+        const groupInfo = groupLookup.get(channel.groupId);
+        if (groupInfo) {
+          folderId = channel.groupId;
+          folderName = groupInfo.name;
+          folderDisplayName = groupInfo.displayName;
+        }
       }
-    });
 
-    // Add empty groups from backend (user-created folders without channels)
-    for (const bg of backendGroups) {
-      if (!groupChannelsMap.has(bg.id)) {
-        groups.push({
-          id: bg.id,
-          name: bg.name,
-          displayName: bg.display_name || bg.name,
-          expanded: true,
-          channels: []
-        });
+      const key = `${aiboxId}|${folderId}`;
+      if (!groupMap.has(key)) {
+        groupMap.set(key, []);
       }
-    }
-
-    // Add ungrouped channels (only if there are any)
-    if (ungroupedChannels.length > 0) {
-      groups.push({
-        id: 'ungrouped',
-        name: 'Ungrouped',
-        displayName: 'Ungrouped',
-        expanded: true,
-        channels: ungroupedChannels.sort((a, b) => a.name.localeCompare(b.name))
+      groupMap.get(key)!.push({
+        ...channel,
+        // Store AI Box info for later use
+        aiboxId,
+        aiboxWsUrl: channel.aiboxWsUrl
       });
     }
 
-    // Sort groups alphabetically, put "Ungrouped" at the end
+    // Convert map to array of ChannelGroup objects
+    groupMap.forEach((channels, key) => {
+      const [aiboxId, folderId] = key.split('|');
+      const aibox = this.aiBoxes().find(b => b.id === aiboxId);
+      const aiboxName = aibox ? `${aibox.name} (${aibox.code})` : 'Unknown AI Box';
+
+      let folderName = 'Ungrouped';
+      let folderDisplayName = 'Ungrouped';
+      if (folderId !== 'ungrouped') {
+        const groupInfo = groupLookup.get(folderId);
+        if (groupInfo) {
+          folderName = groupInfo.name;
+          folderDisplayName = groupInfo.displayName;
+        }
+      }
+
+      groups.push({
+        id: folderId,
+        name: folderName,
+        displayName: folderDisplayName,
+        expanded: true,
+        channels: channels.sort((a, b) => a.name.localeCompare(b.name)),
+        aiboxId,
+        aiboxName
+      });
+    });
+
+    // Sort groups: first by AI Box name, then by folder name (ungrouped last within each AI Box)
     groups.sort((a, b) => {
-      if (a.id === 'ungrouped') return 1;
-      if (b.id === 'ungrouped') return -1;
+      // First compare by AI Box name
+      const aiboxCompare = (a.aiboxName || '').localeCompare(b.aiboxName || '');
+      if (aiboxCompare !== 0) return aiboxCompare;
+
+      // Within same AI Box, put ungrouped at the end
+      if (a.id === 'ungrouped' && b.id !== 'ungrouped') return 1;
+      if (a.id !== 'ungrouped' && b.id === 'ungrouped') return -1;
+
+      // Otherwise sort by folder display name
       return a.displayName.localeCompare(b.displayName);
     });
 

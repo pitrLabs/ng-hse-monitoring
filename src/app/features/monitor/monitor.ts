@@ -26,6 +26,9 @@ interface CameraGroup {
   displayName: string;   // Custom display name (can be renamed)
   expanded: boolean;
   cameras: VideoSource[];
+  // AI Box info for grouping
+  aiboxId?: string;
+  aiboxName?: string;
 }
 
 @Component({
@@ -119,7 +122,15 @@ interface CameraGroup {
             </div>
           } @else {
             <div class="source-list">
-              @for (group of filteredGroups(); track group.id) {
+              @for (group of filteredGroups(); track group.id + group.aiboxId; let i = $index) {
+                <!-- AI Box Header (show when aiboxId changes) -->
+                @if (i === 0 || group.aiboxId !== filteredGroups()[i-1].aiboxId) {
+                  <div class="aibox-separator">
+                    <mat-icon class="aibox-icon">dns</mat-icon>
+                    <span class="aibox-name">{{ group.aiboxName || 'No AI Box' }}</span>
+                  </div>
+                }
+                <!-- Folder -->
                 <div class="tree-node">
                   <div class="node-header"
                        [class.drag-over]="dragOverGroup === group.id"
@@ -692,6 +703,44 @@ interface CameraGroup {
       height: 16px;
       min-width: 16px;
       color: var(--warning);
+    }
+
+    .aibox-icon {
+      font-size: 16px;
+      width: 16px;
+      height: 16px;
+      min-width: 16px;
+      color: var(--accent-primary, #00d4ff);
+      flex-shrink: 0;
+    }
+
+    .aibox-separator {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 12px;
+      margin-top: 8px;
+      margin-bottom: 4px;
+      background: rgba(0, 212, 255, 0.08);
+      border-left: 3px solid var(--accent-primary, #00d4ff);
+      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+
+      &:first-child {
+        margin-top: 0;
+      }
+
+      .aibox-name {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--accent-primary, #00d4ff);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+    }
+
+    .aibox-header {
+      background: rgba(0, 212, 255, 0.05);
+      border-left: 2px solid var(--accent-primary, #00d4ff);
       flex-shrink: 0;
     }
 
@@ -1435,70 +1484,90 @@ export class MonitorComponent implements OnInit {
   }
 
   /**
-   * Build camera groups from video sources using per-user assignments
-   * Uses assignments signal from CameraGroupsService (not source.group_id)
+   * Build camera groups from video sources using per-user folder assignments
+   * Groups are organized by AI Box first, then by folder within each AI Box
    */
   buildCameraGroups(sources: VideoSource[]) {
     const backendGroups = this.cameraGroupsService.groups();
     const assignments = this.cameraGroupsService.assignments();
-    const groupMap = new Map<string, VideoSource[]>();
-    const ungroupedCameras: VideoSource[] = [];
+    const selectedIds = this.selectedAiBoxIds();
 
-    // Group cameras by per-user assignment
-    for (const source of sources) {
-      const assignedGroupId = assignments[source.id];
-      if (assignedGroupId) {
-        if (!groupMap.has(assignedGroupId)) {
-          groupMap.set(assignedGroupId, []);
-        }
-        groupMap.get(assignedGroupId)!.push(source);
-      } else {
-        ungroupedCameras.push(source);
+    // Filter sources by selected AI Boxes
+    const filteredSources = sources.filter(s =>
+      !s.aibox_id || selectedIds.has(s.aibox_id)
+    );
+
+    // First, group by AI Box, then by folder within each AI Box
+    // Key: "aiboxId|folderId"
+    const groupMap = new Map<string, VideoSource[]>();
+
+    for (const source of filteredSources) {
+      const aiboxId = source.aibox_id || 'no-aibox';
+      const assignedGroupId = assignments[source.id] || 'ungrouped';
+      const key = `${aiboxId}|${assignedGroupId}`;
+
+      if (!groupMap.has(key)) {
+        groupMap.set(key, []);
       }
+      groupMap.get(key)!.push(source);
     }
 
     const groups: CameraGroup[] = [];
 
-    // Add groups that have cameras
-    groupMap.forEach((cameras, groupId) => {
-      const backendGroup = backendGroups.find(g => g.id === groupId);
-      if (backendGroup) {
-        groups.push({
-          id: backendGroup.id,
-          name: backendGroup.name,
-          displayName: backendGroup.display_name || backendGroup.name,
-          expanded: true,
-          cameras: cameras.sort((a, b) => a.name.localeCompare(b.name))
-        });
+    // Build groups with AI Box info
+    groupMap.forEach((cameras, key) => {
+      const [aiboxId, folderId] = key.split('|');
+      const aibox = this.aiBoxes().find(b => b.id === aiboxId);
+      const aiboxName = aibox ? `${aibox.name} (${aibox.code})` : 'No AI Box';
+
+      let folderName = 'Ungrouped';
+      let folderDisplayName = 'Ungrouped';
+
+      if (folderId !== 'ungrouped') {
+        const backendGroup = backendGroups.find(g => g.id === folderId);
+        if (backendGroup) {
+          folderName = backendGroup.name;
+          folderDisplayName = backendGroup.display_name || backendGroup.name;
+        }
       }
+
+      groups.push({
+        id: folderId,
+        name: folderName,
+        displayName: folderDisplayName,
+        expanded: true,
+        cameras: cameras.sort((a, b) => a.name.localeCompare(b.name)),
+        aiboxId: aiboxId,
+        aiboxName: aiboxName
+      });
     });
 
-    // Add empty groups from backend (user-created folders without cameras)
+    // Add empty folders from backend (user-created folders without cameras)
     for (const bg of backendGroups) {
-      if (!groupMap.has(bg.id)) {
+      const hasGroup = groups.some(g => g.id === bg.id);
+      if (!hasGroup) {
+        // Add to first AI Box or 'no-aibox'
+        const firstAiboxId = selectedIds.size > 0 ? Array.from(selectedIds)[0] : 'no-aibox';
+        const aibox = this.aiBoxes().find(b => b.id === firstAiboxId);
         groups.push({
           id: bg.id,
           name: bg.name,
           displayName: bg.display_name || bg.name,
           expanded: true,
-          cameras: []
+          cameras: [],
+          aiboxId: firstAiboxId,
+          aiboxName: aibox ? `${aibox.name} (${aibox.code})` : 'No AI Box'
         });
       }
     }
 
-    // Add ungrouped cameras (only if there are any)
-    if (ungroupedCameras.length > 0) {
-      groups.push({
-        id: 'ungrouped',
-        name: 'Ungrouped',
-        displayName: 'Ungrouped',
-        expanded: true,
-        cameras: ungroupedCameras.sort((a, b) => a.name.localeCompare(b.name))
-      });
-    }
-
-    // Sort groups alphabetically, put "Ungrouped" at the end
+    // Sort: first by AI Box name, then by folder name (Ungrouped last)
     groups.sort((a, b) => {
+      // First sort by AI Box
+      const aiboxCompare = (a.aiboxName || '').localeCompare(b.aiboxName || '');
+      if (aiboxCompare !== 0) return aiboxCompare;
+
+      // Then sort by folder (Ungrouped last)
       if (a.id === 'ungrouped') return 1;
       if (b.id === 'ungrouped') return -1;
       return a.displayName.localeCompare(b.displayName);

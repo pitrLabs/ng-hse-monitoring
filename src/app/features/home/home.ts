@@ -13,7 +13,6 @@ import { LocationsService, CameraLocation } from '../../core/services/locations.
 import { AuthService } from '../../core/services/auth.service';
 import { VideoSourceService, VideoSource } from '../../core/services/video-source.service';
 import { AITaskService, BmappTask } from '../../core/services/ai-task.service';
-import { RecordingControlService } from '../../core/services/recording-control.service';
 import { LeafletMapComponent, MapMarker } from '../../shared/components/leaflet-map/leaflet-map';
 import { WsVideoPlayerComponent } from '../../shared/components/ws-video-player/ws-video-player.component';
 
@@ -247,7 +246,7 @@ interface DeviceClass {
               </div>
             } @else {
               @for (task of cameraSlots(); track $index; let i = $index) {
-                <div class="video-cell" [class.has-video]="task" [class.recording]="task && recordingService.isRecording(getStreamId(task))">
+                <div class="video-cell" [class.has-video]="task">
                   @if (task) {
                     <app-ws-video-player
                       [stream]="getStreamId(task)"
@@ -259,27 +258,7 @@ interface DeviceClass {
                     <div class="video-info-overlay">
                       <span class="video-status online"></span>
                       <span class="video-name">{{ task.MediaName }}</span>
-                      @if (recordingService.isRecording(getStreamId(task))) {
-                        <span class="recording-indicator">
-                          <span class="rec-dot"></span>
-                          REC
-                        </span>
-                      }
                     </div>
-                    <!-- Recording Controls (only for Operator+) -->
-                    @if (canRecord()) {
-                      <div class="video-record-controls">
-                        @if (recordingService.isRecording(getStreamId(task))) {
-                          <button mat-icon-button class="stop-btn" matTooltip="Stop Recording" (click)="stopRecording(task); $event.stopPropagation()">
-                            <mat-icon>stop</mat-icon>
-                          </button>
-                        } @else {
-                          <button mat-icon-button class="record-btn" matTooltip="Start Recording" (click)="startRecording(task); $event.stopPropagation()">
-                            <mat-icon>fiber_manual_record</mat-icon>
-                          </button>
-                        }
-                      </div>
-                    }
                   } @else {
                     <div class="video-placeholder">
                       <mat-icon>videocam_off</mat-icon>
@@ -1263,7 +1242,6 @@ export class HomeComponent implements OnInit, OnDestroy {
   authService = inject(AuthService);
   videoSourceService = inject(VideoSourceService);
   aiTaskService = inject(AITaskService);
-  recordingService = inject(RecordingControlService);
 
   // BM-APP tasks for video panel
   bmappTasks = signal<BmappTask[]>([]);
@@ -1372,9 +1350,6 @@ export class HomeComponent implements OnInit, OnDestroy {
 
     // Load BM-APP tasks for video panel
     this.loadBmappTasks();
-
-    // Load active recordings (for recording indicator)
-    this.recordingService.loadActiveRecordings();
   }
 
   loadBmappTasks(): void {
@@ -1529,37 +1504,6 @@ export class HomeComponent implements OnInit, OnDestroy {
       } catch (err) {
         console.error('Failed to acknowledge alarm:', err);
       }
-    }
-  }
-
-  // Recording controls
-  canRecord(): boolean {
-    // Only Operator and above can record (P3 cannot)
-    const user = this.authService.currentUser();
-    if (!user) return false;
-    const roleNames = user.roles?.map(r => r.name.toLowerCase()) || [];
-    return roleNames.some(r => r === 'operator' || r === 'manager' || r === 'superadmin');
-  }
-
-  async startRecording(task: BmappTask): Promise<void> {
-    const streamId = this.getStreamId(task);
-    try {
-      await this.recordingService.startRecording(streamId, task.MediaName);
-      console.log('[Home] Recording started for:', task.MediaName);
-    } catch (err: any) {
-      console.error('Failed to start recording:', err);
-      alert(err?.error?.detail || 'Failed to start recording');
-    }
-  }
-
-  async stopRecording(task: BmappTask): Promise<void> {
-    const streamId = this.getStreamId(task);
-    try {
-      await this.recordingService.stopRecording(streamId);
-      console.log('[Home] Recording stopped for:', task.MediaName);
-    } catch (err: any) {
-      console.error('Failed to stop recording:', err);
-      alert(err?.error?.detail || 'Failed to stop recording');
     }
   }
 }

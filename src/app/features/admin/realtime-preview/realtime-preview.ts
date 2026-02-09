@@ -16,7 +16,7 @@ import { CameraGroupsService } from '../../../core/services/camera-groups.servic
 import { AuthService } from '../../../core/services/auth.service';
 import { CameraStatusService } from '../../../core/services/camera-status.service';
 import { AIBoxService, AIBox } from '../../../core/services/aibox.service';
-import { RecordingControlService } from '../../../core/services/recording-control.service';
+// Local recording - downloads to user's computer (not server)
 import { environment } from '../../../../environments/environment';
 
 interface VideoChannel {
@@ -1324,7 +1324,15 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
   private authService = inject(AuthService);
   private cameraStatusService = inject(CameraStatusService);
   private aiBoxService = inject(AIBoxService);
-  private recordingService = inject(RecordingControlService);
+  // Local recording state (client-side, downloads to user's computer)
+  private localRecordings = new Map<string, {
+    mediaRecorder: MediaRecorder;
+    chunks: Blob[];
+    startTime: Date;
+    channelName: string;
+    autoStopTimer: any;
+  }>();
+  private readonly MAX_RECORDING_SECONDS = 600; // 10 minutes auto-stop
 
   @ViewChild('previewContainer') previewContainer!: ElementRef<HTMLElement>;
 
@@ -1454,8 +1462,6 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
   ngOnInit() {
     // Load camera groups + assignments from backend first
     this.cameraGroupsService.loadGroups();
-    // Load active recordings status
-    this.recordingService.loadActiveRecordings();
     // Load AI boxes and auto-select ALL by default
     this.aiBoxService.loadAiBoxes().subscribe({
       next: (boxes) => {
@@ -1485,6 +1491,16 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
     if (this.recordingTimerInterval) {
       clearInterval(this.recordingTimerInterval);
     }
+    // Stop all active recordings
+    this.localRecordings.forEach((recording, streamId) => {
+      if (recording.autoStopTimer) {
+        clearTimeout(recording.autoStopTimer);
+      }
+      if (recording.mediaRecorder.state !== 'inactive') {
+        recording.mediaRecorder.stop();
+      }
+    });
+    this.localRecordings.clear();
   }
 
   loadVideoSources() {
@@ -2108,18 +2124,19 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
     return '';
   }
 
-  // ========== Recording Methods ==========
+  // ========== Local Recording Methods (Download to User's Computer) ==========
 
   /**
-   * Check if a channel is currently being recorded
+   * Check if a channel is currently being recorded locally
    */
   isRecording(channel: VideoChannel): boolean {
     const streamId = this.getWsStreamId(channel);
-    return this.recordingService.isRecording(streamId);
+    return this.localRecordings.has(streamId);
   }
 
   /**
-   * Toggle recording for a channel
+   * Toggle local recording for a channel
+   * Recording is saved to user's local computer when stopped
    */
   async toggleRecording(channel: VideoChannel): Promise<void> {
     const streamId = this.getWsStreamId(channel);
@@ -2128,18 +2145,126 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
       return;
     }
 
-    try {
-      if (this.isRecording(channel)) {
-        await this.recordingService.stopRecording(streamId);
-        console.log(`[Recording] Stopped recording: ${channel.name}`);
-      } else {
-        await this.recordingService.startRecording(streamId, channel.name);
-        console.log(`[Recording] Started recording: ${channel.name}`);
-      }
-    } catch (error: any) {
-      console.error('Recording error:', error);
-      alert(error?.error?.detail || 'Failed to toggle recording');
+    if (this.isRecording(channel)) {
+      this.stopLocalRecording(streamId);
+    } else {
+      this.startLocalRecording(channel, streamId);
     }
+  }
+
+  /**
+   * Start local recording - captures video frames and records to blob
+   */
+  private startLocalRecording(channel: VideoChannel, streamId: string): void {
+    // Find the video element for this channel
+    const slotIndex = this.gridSlots.findIndex(s => s?.id === channel.id);
+    if (slotIndex === -1) {
+      alert('Please add the camera to a video slot first before recording');
+      return;
+    }
+
+    // Get the canvas element from ws-video-player
+    const videoSlots = document.querySelectorAll('.video-slot');
+    const slot = videoSlots[slotIndex];
+    const canvas = slot?.querySelector('canvas');
+
+    if (!canvas) {
+      alert('Cannot start recording: video not loaded');
+      return;
+    }
+
+    try {
+      // Capture stream from canvas
+      const stream = (canvas as HTMLCanvasElement).captureStream(15); // 15 fps
+
+      // Create MediaRecorder
+      const mediaRecorder = new MediaRecorder(stream, {
+        mimeType: 'video/webm;codecs=vp9'
+      });
+
+      const chunks: Blob[] = [];
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          chunks.push(event.data);
+        }
+      };
+
+      mediaRecorder.onstop = () => {
+        // Create blob and download
+        const blob = new Blob(chunks, { type: 'video/webm' });
+        this.downloadRecording(blob, channel.name);
+
+        // Clean up
+        this.localRecordings.delete(streamId);
+      };
+
+      // Start recording
+      mediaRecorder.start(1000); // Collect data every 1 second
+
+      // Set up auto-stop after 10 minutes
+      const autoStopTimer = setTimeout(() => {
+        if (this.localRecordings.has(streamId)) {
+          console.log(`[Recording] Auto-stopping after ${this.MAX_RECORDING_SECONDS / 60} minutes: ${channel.name}`);
+          this.stopLocalRecording(streamId);
+        }
+      }, this.MAX_RECORDING_SECONDS * 1000);
+
+      // Store recording state
+      this.localRecordings.set(streamId, {
+        mediaRecorder,
+        chunks,
+        startTime: new Date(),
+        channelName: channel.name,
+        autoStopTimer
+      });
+
+      console.log(`[Recording] Started local recording: ${channel.name}`);
+
+    } catch (error) {
+      console.error('Failed to start recording:', error);
+      alert('Failed to start recording. Your browser may not support this feature.');
+    }
+  }
+
+  /**
+   * Stop local recording and trigger download
+   */
+  private stopLocalRecording(streamId: string): void {
+    const recording = this.localRecordings.get(streamId);
+    if (!recording) return;
+
+    // Clear auto-stop timer
+    if (recording.autoStopTimer) {
+      clearTimeout(recording.autoStopTimer);
+    }
+
+    // Stop the media recorder (will trigger onstop and download)
+    if (recording.mediaRecorder.state !== 'inactive') {
+      recording.mediaRecorder.stop();
+    }
+
+    console.log(`[Recording] Stopped local recording: ${recording.channelName}`);
+  }
+
+  /**
+   * Download recording as file to user's computer
+   */
+  private downloadRecording(blob: Blob, channelName: string): void {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const safeName = channelName.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 30);
+    const filename = `recording_${safeName}_${timestamp}.webm`;
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    console.log(`[Recording] Downloaded: ${filename} (${(blob.size / 1024 / 1024).toFixed(2)} MB)`);
   }
 
   /**
@@ -2147,7 +2272,13 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
    */
   getRecordingTime(channel: VideoChannel): string {
     const streamId = this.getWsStreamId(channel);
-    return this.recordingService.getElapsedTime(streamId);
+    const recording = this.localRecordings.get(streamId);
+    if (!recording) return '00:00';
+
+    const elapsed = Math.floor((Date.now() - recording.startTime.getTime()) / 1000);
+    const minutes = Math.floor(elapsed / 60);
+    const seconds = elapsed % 60;
+    return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
   }
 
   // Update shared service mode based on active streams

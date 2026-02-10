@@ -251,6 +251,7 @@ interface DeviceClass {
                     <app-ws-video-player
                       [stream]="getStreamId(task)"
                       [mediaName]="task.MediaName"
+                      [taskIdx]="task.TaskIdx"
                       [showControls]="false"
                       [showFps]="false"
                       [useSharedService]="false">

@@ -13,6 +13,7 @@ import {
 import { CommonModule } from '@angular/common';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
+import { environment } from '../../../../environments/environment';
 
 declare const ZLMRTCClient: any;
 
@@ -228,6 +229,8 @@ export class WebrtcVideoPlayerComponent implements OnInit, OnDestroy, OnChanges,
   @Input() app = '';  // ZLMediaKit app name (e.g., "live")
   @Input() stream = '';  // Stream name (e.g., "camera1")
   @Input() webrtcUrl = '';  // Base WebRTC URL (e.g., "http://192.168.1.100:2323/webrtc")
+  @Input() aiboxId = '';  // AI Box ID for using backend proxy (rewrites private IPs)
+  @Input() useProxy = true;  // Use backend proxy for SDP rewriting (default: true)
   @Input() showControls = true;
   @Input() autoConnect = true;
 
@@ -247,21 +250,25 @@ export class WebrtcVideoPlayerComponent implements OnInit, OnDestroy, OnChanges,
   private reconnectTimer: any = null;
   private isDestroyed = false;
   private zlmLoaded = false;
+  private viewReady = false;  // Track if video element is available
 
   private readonly sessionId = `webrtc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
   ngOnInit() {
+    console.log(`[${this.sessionId}] ngOnInit - app=${this.app}, stream=${this.stream}, aiboxId=${this.aiboxId}, useProxy=${this.useProxy}`);
     this.loadZLMRTCClient();
   }
 
   ngAfterViewInit() {
+    this.viewReady = true;
+    console.log(`[${this.sessionId}] View ready, zlmLoaded=${this.zlmLoaded}, stream=${this.stream}`);
     if (this.autoConnect && this.stream && this.zlmLoaded) {
       this.connect();
     }
   }
 
   ngOnChanges(changes: SimpleChanges) {
-    if ((changes['stream'] || changes['app'] || changes['webrtcUrl']) && !changes['stream']?.firstChange) {
+    if ((changes['stream'] || changes['app'] || changes['webrtcUrl'] || changes['aiboxId']) && !changes['stream']?.firstChange) {
       this.disconnect();
       this.resetRetry();
       if (this.stream && this.zlmLoaded) {
@@ -279,18 +286,17 @@ export class WebrtcVideoPlayerComponent implements OnInit, OnDestroy, OnChanges,
   private loadZLMRTCClient() {
     if (typeof ZLMRTCClient !== 'undefined') {
       this.zlmLoaded = true;
-      if (this.autoConnect && this.stream) {
-        this.connect();
-      }
+      // Don't connect here - wait for ngAfterViewInit when video element is ready
       return;
     }
 
     const script = document.createElement('script');
     script.src = '/assets/js/ZLMRTCClient.js';
     script.onload = () => {
-      console.log(`[${this.sessionId}] ZLMRTCClient loaded`);
+      console.log(`[${this.sessionId}] ZLMRTCClient loaded, viewReady=${this.viewReady}`);
       this.zlmLoaded = true;
-      if (this.autoConnect && this.stream) {
+      // Only connect if view is ready (video element available)
+      if (this.autoConnect && this.stream && this.viewReady) {
         this.connect();
       }
     };
@@ -303,9 +309,17 @@ export class WebrtcVideoPlayerComponent implements OnInit, OnDestroy, OnChanges,
   }
 
   connect() {
-    if (this.isDestroyed || !this.zlmLoaded) return;
+    if (this.isDestroyed) {
+      console.log(`[${this.sessionId}] connect() aborted - component destroyed`);
+      return;
+    }
+    if (!this.zlmLoaded) {
+      console.log(`[${this.sessionId}] connect() aborted - ZLMRTCClient not loaded yet`);
+      return;
+    }
 
     if (!this.stream) {
+      console.log(`[${this.sessionId}] connect() - no stream specified, setting idle`);
       this.status.set('idle');
       return;
     }
@@ -325,28 +339,45 @@ export class WebrtcVideoPlayerComponent implements OnInit, OnDestroy, OnChanges,
       }
 
       // Build WebRTC URL
-      // Format: http://host/webrtc?app={app}&stream={stream}&type=play
-      let baseUrl = this.webrtcUrl;
-      if (!baseUrl) {
-        // Fallback to proxy
-        baseUrl = `${window.location.protocol}//${window.location.host}/bmapp-api/webrtc`;
-      }
-
       const appName = this.app || 'live';
       const streamName = this.stream;
-      const zlmUrl = `${baseUrl}?app=${encodeURIComponent(appName)}&stream=${encodeURIComponent(streamName)}&type=play`;
+      let zlmUrl: string;
 
-      console.log(`[${this.sessionId}] Connecting WebRTC: ${zlmUrl}`);
+      if (this.useProxy && this.aiboxId) {
+        // Use backend proxy for SDP rewriting (fixes private IP issue)
+        // Format: {apiUrl}/webrtc-proxy/{aibox_id}?app={app}&stream={stream}&type=play
+        zlmUrl = `${environment.apiUrl}/webrtc-proxy/${this.aiboxId}?app=${encodeURIComponent(appName)}&stream=${encodeURIComponent(streamName)}&type=play`;
+        console.log(`[${this.sessionId}] Using WebRTC proxy for AI Box: ${this.aiboxId}`);
+      } else {
+        // Direct connection to BM-APP (may fail if private IP not reachable)
+        let baseUrl = this.webrtcUrl;
+        if (!baseUrl) {
+          baseUrl = `${window.location.protocol}//${window.location.host}/bmapp-api/webrtc`;
+        }
+        zlmUrl = `${baseUrl}?app=${encodeURIComponent(appName)}&stream=${encodeURIComponent(streamName)}&type=play`;
+      }
+
+      console.log(`[${this.sessionId}] Connecting WebRTC:`, {
+        useProxy: this.useProxy,
+        aiboxId: this.aiboxId,
+        app: appName,
+        stream: streamName,
+        fullUrl: zlmUrl,
+        videoElement: videoEl ? 'found' : 'missing',
+        videoElementDimensions: videoEl ? `${videoEl.offsetWidth}x${videoEl.offsetHeight}` : 'N/A'
+      });
 
       this.player = new ZLMRTCClient.Endpoint({
         element: videoEl,
-        debug: false,
+        debug: true,  // Enable debug logging
         zlmsdpUrl: zlmUrl,
         videoEnable: true,
         audioEnable: true,
         recvOnly: true,
         resolution: { w: 1280, h: 720 }
       });
+
+      console.log(`[${this.sessionId}] ZLMRTCClient.Endpoint created`);
 
       this.player.on(ZLMRTCClient.Events.WEBRTC_ON_REMOTE_STREAMS, (s: MediaStream) => {
         console.log(`[${this.sessionId}] WebRTC stream received`);

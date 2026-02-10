@@ -9,7 +9,6 @@ import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatInputModule } from '@angular/material/input';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatSelectModule } from '@angular/material/select';
-import { WsVideoPlayerComponent } from '../../../shared/components/ws-video-player/ws-video-player.component';
 import { WebrtcVideoPlayerComponent } from '../../../shared/components/webrtc-video-player/webrtc-video-player.component';
 import { VideoSourceService, VideoSource } from '../../../core/services/video-source.service';
 import { AITaskService, AITask, ZLMStream } from '../../../core/services/ai-task.service';
@@ -52,7 +51,7 @@ interface ChannelGroup {
 @Component({
   standalone: true,
   selector: 'app-admin-realtime-preview',
-  imports: [CommonModule, FormsModule, MatIconModule, MatButtonModule, MatTooltipModule, MatProgressSpinnerModule, MatInputModule, MatFormFieldModule, MatSelectModule, WsVideoPlayerComponent, WebrtcVideoPlayerComponent],
+  imports: [CommonModule, FormsModule, MatIconModule, MatButtonModule, MatTooltipModule, MatProgressSpinnerModule, MatInputModule, MatFormFieldModule, MatSelectModule, WebrtcVideoPlayerComponent],
   template: `
     <div class="realtime-preview" #previewContainer>
       <!-- Toolbar -->
@@ -214,14 +213,13 @@ interface ChannelGroup {
               <div class="video-slot">
                 @if (getChannelForSlot(i); as channel) {
                   <div class="video-container">
-                    <app-ws-video-player
-                      [stream]="getWsStreamId(channel)"
-                      [mediaName]="channel.stream || channel.name"
-                      [wsBaseUrl]="getChannelWsUrl(channel)"
-                      [showControls]="true"
-                      [showFps]="false"
-                      [useSharedService]="false">
-                    </app-ws-video-player>
+                    <app-webrtc-video-player
+                      [app]="getChannelApp(channel)"
+                      [stream]="getChannelStreamName(channel)"
+                      [aiboxId]="channel.aiboxId || ''"
+                      [useProxy]="true"
+                      [showControls]="true">
+                    </app-webrtc-video-player>
                     <div class="video-overlay-controls">
                       <!-- Recording button -->
                       <button mat-icon-button
@@ -1466,6 +1464,24 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
     return channel.aiboxWsUrl || '';
   }
 
+  // Parse channel URL to get app name (e.g., "task/H8C-4" -> "task")
+  getChannelApp(channel: VideoChannel): string {
+    const url = channel.previewChn || `task/${channel.stream || channel.name}`;
+    const parts = url.split('/');
+    const app = parts[0] || 'task';
+    console.log(`[getChannelApp] channel=${channel.name}, previewChn=${channel.previewChn}, app=${app}`);
+    return app;
+  }
+
+  // Parse channel URL to get stream name (e.g., "task/H8C-4" -> "H8C-4")
+  getChannelStreamName(channel: VideoChannel): string {
+    const url = channel.previewChn || `task/${channel.stream || channel.name}`;
+    const parts = url.split('/');
+    const streamName = parts.slice(1).join('/') || channel.stream || channel.name;
+    console.log(`[getChannelStreamName] channel=${channel.name}, previewChn=${channel.previewChn}, streamName=${streamName}`);
+    return streamName;
+  }
+
   // Check if AI Box is selected
   isAiBoxSelected(id: string): boolean {
     return this.selectedAiBoxIds().has(id);
@@ -2189,6 +2205,7 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
    */
   getWebrtcUrl(channel: VideoChannel): string {
     // Get WebRTC URL from AI Box configuration
+    let result: string;
     if (channel.aiboxWsUrl) {
       // Convert ws:// to http:// and append /webrtc path
       let baseUrl = channel.aiboxWsUrl
@@ -2201,11 +2218,13 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
         baseUrl = urlParts.slice(0, 3).join('/');
       }
 
-      return `${baseUrl}/webrtc`;
+      result = `${baseUrl}/webrtc`;
+    } else {
+      // Fallback to environment bmappUrl
+      result = `${this.bmappUrl}/webrtc`;
     }
-
-    // Fallback to environment bmappUrl
-    return `${this.bmappUrl}/webrtc`;
+    console.log(`[getWebrtcUrl] channel=${channel.name}, aiboxWsUrl=${channel.aiboxWsUrl}, result=${result}`);
+    return result;
   }
 
   // ========== Local Recording Methods (Download to User's Computer) ==========

@@ -237,6 +237,7 @@ import { VideoStreamService } from '../../../core/services/video-stream.service'
 export class WsVideoPlayerComponent implements OnInit, OnDestroy, OnChanges {
   @Input() stream = ''; // BM-APP channel URL: "task/<AlgTaskSession>" for individual, "group/<n>" for mosaic
   @Input() mediaName = ''; // MediaName for matching with data.task from BM-APP response
+  @Input() taskIdx: number | null = null; // BM-APP TaskIdx number for channel selection (preferred over stream)
   @Input() showControls = true;
   @Input() showFps = false;
   @Input() autoConnect = true;
@@ -273,28 +274,24 @@ export class WsVideoPlayerComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   private getWsUrl(): string {
-    // Build WebSocket URL with media parameter for independent stream selection
-    // BM-APP format: ws://host/video/stream?media=<media_name>
+    // Build WebSocket URL - connect to /video/ endpoint
+    // BM-APP video server handles channel switching via {"chn": "..."} message
     let baseUrl: string;
 
     if (this.wsBaseUrl) {
       // Use custom WebSocket URL from AI Box configuration
-      baseUrl = this.wsBaseUrl;
-      if (!baseUrl.endsWith('/')) baseUrl += '/';
+      // Strip any existing /video/ path to avoid duplication
+      baseUrl = this.wsBaseUrl
+        .replace(/\/video\/?$/, '')  // Remove trailing /video/ or /video
+        .replace(/\/$/, '');          // Remove trailing slash
+      baseUrl += '/';
     } else {
       // Fallback to proxy URL for development
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       baseUrl = `${protocol}//${window.location.host}/bmapp-api/`;
     }
 
-    // Use /video/stream with media parameter for independent stream selection
-    // This allows multiple concurrent WebSocket connections without interference
-    const mediaName = this.mediaName || this.stream;
-    if (mediaName) {
-      return `${baseUrl}video/stream?media=${encodeURIComponent(mediaName)}`;
-    }
-
-    // Fallback to old video endpoint if no media name
+    // Connect to /video/ endpoint - channel selection is done via WebSocket message
     return `${baseUrl}video/`;
   }
 
@@ -444,20 +441,21 @@ export class WsVideoPlayerComponent implements OnInit, OnDestroy, OnChanges {
 
     try {
       const wsUrl = this.getWsUrl();
-      console.log(`[${this.sessionId}] Connecting to WebSocket for stream: ${this.stream}`);
+      console.log(`[${this.sessionId}] Connecting to WebSocket:`, {
+        url: wsUrl,
+        stream: this.stream,
+        mediaName: this.mediaName,
+        wsBaseUrl: this.wsBaseUrl
+      });
 
       this.websocket = new WebSocket(wsUrl);
 
       this.websocket.onopen = () => {
         console.log(`[${this.sessionId}] WebSocket connected for stream: ${this.mediaName || this.stream}`);
-        // When using media parameter in URL, stream selection happens automatically
-        // Only send channel selection if using legacy /video/ endpoint without media param
-        if (!this.mediaName && !wsUrl.includes('?media=')) {
-          this.statusMessage.set('Selecting channel...');
-          this.sendChannelSelection();
-        } else {
-          this.statusMessage.set('Waiting for stream...');
-        }
+        // Always send channel selection - BM-APP requires this message to switch streams
+        // URL media parameter alone is not sufficient
+        this.statusMessage.set('Selecting channel...');
+        this.sendChannelSelection();
       };
 
       this.websocket.onmessage = (event) => {
@@ -483,17 +481,21 @@ export class WsVideoPlayerComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   private sendChannelSelection() {
-    if (this.websocket?.readyState === WebSocket.OPEN && this.stream) {
-      // BM-APP WebSocket expects: {"chn": "X"} where X is:
-      // - TaskIdx number as string (e.g., "1", "7") for individual camera
-      // - "group/X" for mosaic view
-      const message = JSON.stringify({ chn: this.stream });
-      console.log(`[WsVideoPlayer] Sending channel selection:`, {
-        stream: this.stream,
-        message: message
-      });
-      this.websocket.send(message);
-    }
+    if (this.websocket?.readyState !== WebSocket.OPEN) return;
+    if (!this.stream) return;
+
+    // BM-APP WebSocket expects: {"chn": "X"} where X is:
+    // - "task/<AlgTaskSession>" for individual camera (e.g., "task/H8C-4")
+    // - "group/X" for mosaic view (e.g., "group/1")
+    // This matches the "url" field from /api/app_preview_channel response
+
+    const message = JSON.stringify({ chn: this.stream });
+
+    console.log(`[WsVideoPlayer] Sending channel selection:`, {
+      stream: this.stream,
+      message: message
+    });
+    this.websocket.send(message);
   }
 
   private handleMessage(event: MessageEvent) {

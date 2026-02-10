@@ -7,7 +7,10 @@ interface StreamSubscription {
   stream: string;           // Full stream ID: "task/AlgTaskSession" or "group/X"
   streamKey: string;        // Normalized key for matching: AlgTaskSession
   mediaName: string;        // MediaName for matching with data.task from BM-APP response
-  callback: (frame: string) => void;
+  callback: (frame: string, task: string) => void;  // Include task for component-level verification
+  // Frame buffering for consistency check
+  frameBuffer: { frame: string; task: string }[];
+  consecutiveCount: number;  // Count of consecutive frames with same task
 }
 
 /**
@@ -31,12 +34,15 @@ export class VideoStreamService {
   private currentStream: string | null = null;
   private streamQueue: string[] = [];
   private cycleTimer: any = null;
-  private cycleInterval = 800; // 800ms per stream (balance between smoothness and stability)
+  private cycleInterval = 800; // 800ms per stream (more time for stable frames)
   private isConnected = false;
 
   // Channel switch settling - ignore frames briefly after switching to avoid stale frames
   private lastChannelSwitch = 0;
-  private settlingPeriod = 250; // 250ms settling (longer to avoid stale frames from previous channel)
+  private settlingPeriod = 200; // 200ms settling
+
+  // Frame consistency - require N consecutive frames with same task before delivering
+  private requiredConsecutiveFrames = 2;  // Need 2 consecutive matching frames
 
   // Track which stream we're currently expecting frames from
   private expectedStream: string | null = null;
@@ -64,15 +70,22 @@ export class VideoStreamService {
    * Subscribe to a video stream
    * @param id Unique subscriber ID
    * @param stream Stream identifier (e.g., "task/AlgTaskSession")
-   * @param callback Function to receive frame data
+   * @param callback Function to receive frame data with task name for verification
    * @param mediaName Optional MediaName for matching with data.task from BM-APP
    */
-  subscribe(id: string, stream: string, callback: (frame: string) => void, mediaName?: string): void {
+  subscribe(id: string, stream: string, callback: (frame: string, task: string) => void, mediaName?: string): void {
     const streamKey = this.extractStreamKey(stream);
     const resolvedMediaName = mediaName?.trim() || streamKey;
-    console.log(`[VideoStreamService] Subscribing: ${id} -> ${stream} (streamKey: ${streamKey}, mediaName: ${resolvedMediaName})`);
 
-    this.subscriptions.set(id, { id, stream, streamKey, mediaName: resolvedMediaName, callback });
+    this.subscriptions.set(id, {
+      id,
+      stream,
+      streamKey,
+      mediaName: resolvedMediaName,
+      callback,
+      frameBuffer: [],
+      consecutiveCount: 0
+    });
     this.updateStreamQueue();
 
     if (!this.isConnected) {
@@ -87,7 +100,6 @@ export class VideoStreamService {
    * Unsubscribe from a video stream
    */
   unsubscribe(id: string): void {
-    console.log(`[VideoStreamService] Unsubscribing: ${id}`);
     this.subscriptions.delete(id);
     this.updateStreamQueue();
 
@@ -102,7 +114,6 @@ export class VideoStreamService {
     const uniqueStreams = new Set<string>();
     this.subscriptions.forEach(sub => uniqueStreams.add(sub.stream));
     this.streamQueue = Array.from(uniqueStreams);
-    console.log(`[VideoStreamService] Stream queue updated:`, this.streamQueue);
   }
 
   private connect() {
@@ -122,13 +133,10 @@ export class VideoStreamService {
       wsUrl = `${protocol}//${window.location.host}/bmapp-api/video/`;
     }
 
-    console.log(`[VideoStreamService] Connecting to: ${wsUrl}`);
-
     try {
       this.websocket = new WebSocket(wsUrl);
 
       this.websocket.onopen = () => {
-        console.log('[VideoStreamService] WebSocket connected');
         this.isConnected = true;
         this.connectionStatus.set('connected');
         this.startCycling();
@@ -139,7 +147,6 @@ export class VideoStreamService {
       };
 
       this.websocket.onclose = () => {
-        console.log('[VideoStreamService] WebSocket closed');
         this.isConnected = false;
         this.connectionStatus.set('disconnected');
         this.websocket = null;
@@ -181,7 +188,6 @@ export class VideoStreamService {
     }
 
     // Multiple streams - start cycling
-    console.log(`[VideoStreamService] Starting stream cycling with ${this.streamQueue.length} streams`);
     let currentIndex = 0;
 
     const cycle = () => {
@@ -221,6 +227,12 @@ export class VideoStreamService {
     // Find the expected mediaName for this stream so we can validate incoming frames
     const sub = Array.from(this.subscriptions.values()).find(s => s.stream === stream);
     this.expectedStream = sub?.mediaName || this.extractStreamKey(stream);
+
+    // Reset consecutive count for ALL subscribers when switching channels
+    // This ensures we need fresh consecutive frames after each switch
+    this.subscriptions.forEach(s => {
+      s.consecutiveCount = 0;
+    });
 
     const message = JSON.stringify({ chn: stream });
     this.websocket.send(message);
@@ -263,47 +275,36 @@ export class VideoStreamService {
           // BM-APP returns data.task = MediaName (e.g., "KOPER02", "BWC SALATIGA 1")
           const frameTaskNormalized = frameTask.toLowerCase();
 
-          // STRICT VALIDATION: Only accept frames that match what we're currently expecting
-          // This prevents frames from other channels (selected by other clients) from being delivered
-          if (this.expectedStream) {
-            const expectedNormalized = this.expectedStream.toLowerCase();
-            if (frameTaskNormalized !== expectedNormalized) {
-              // Frame is from a different channel than what we selected - discard silently
-              // This happens because BM-APP broadcasts the same stream to all clients
-              return;
-            }
-          }
-
           // Match frame to subscribers based on mediaName (which matches data.task from BM-APP)
-          let delivered = false;
           this.subscriptions.forEach(sub => {
             const mediaNameNormalized = sub.mediaName.toLowerCase();
             const streamKeyNormalized = sub.streamKey.toLowerCase();
 
             // Match by mediaName (primary) or streamKey (fallback)
-            // BM-APP data.task is MediaName, so mediaName should match
-            if (mediaNameNormalized === frameTaskNormalized || streamKeyNormalized === frameTaskNormalized) {
-              sub.callback(frameUrl);
-              delivered = true;
+            const isMatch = mediaNameNormalized === frameTaskNormalized || streamKeyNormalized === frameTaskNormalized;
+
+            if (isMatch) {
+              // FRAME CONSISTENCY CHECK: Buffer frames and only deliver after N consecutive matches
+              // This prevents glitch where server sends wrong image with correct task during channel switch
+              sub.consecutiveCount++;
+
+              if (sub.consecutiveCount >= this.requiredConsecutiveFrames) {
+                // We have enough consecutive frames - deliver this one
+                sub.callback(frameUrl, frameTask);
+              }
+            } else {
+              // Different task - reset the consecutive counter for this subscriber
+              // This means we got a frame for a different stream, so reset the "confirmation"
+              sub.consecutiveCount = 0;
             }
           });
-
-          if (!delivered && this.subscriptions.size > 0) {
-            // This shouldn't happen often now with strict validation above
-            // Log for debugging if it does
-            const subInfo = Array.from(this.subscriptions.values()).map(s => ({
-              mediaName: s.mediaName,
-              streamKey: s.streamKey
-            }));
-            console.warn(`[VideoStreamService] Frame not delivered - task "${frameTask}" doesn't match any subscriber:`, subInfo);
-          }
         } else {
           // No task info in response - this is problematic for multi-stream
           // Only deliver if we have exactly 1 subscription (no ambiguity)
           if (this.subscriptions.size === 1) {
             const sub = this.subscriptions.values().next().value;
             if (sub) {
-              sub.callback(frameUrl);
+              sub.callback(frameUrl, sub.mediaName);  // Use subscriber's mediaName as fallback
             }
           }
           // Don't log warning - just silently discard
@@ -339,7 +340,7 @@ export class VideoStreamService {
       const frameUrl = URL.createObjectURL(blob);
       const sub = this.subscriptions.values().next().value;
       if (sub) {
-        sub.callback(frameUrl);
+        sub.callback(frameUrl, sub.mediaName);  // Use subscriber's mediaName as fallback
       }
     }
     // For multiple subscribers, silently discard binary frames to prevent wrong delivery

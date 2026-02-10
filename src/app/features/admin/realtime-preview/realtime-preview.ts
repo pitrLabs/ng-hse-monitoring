@@ -9,7 +9,7 @@ import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatInputModule } from '@angular/material/input';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatSelectModule } from '@angular/material/select';
-import { WebrtcVideoPlayerComponent } from '../../../shared/components/webrtc-video-player/webrtc-video-player.component';
+import { WsVideoPlayerComponent } from '../../../shared/components/ws-video-player/ws-video-player.component';
 import { VideoSourceService, VideoSource } from '../../../core/services/video-source.service';
 import { AITaskService, AITask, ZLMStream } from '../../../core/services/ai-task.service';
 import { CameraGroupsService } from '../../../core/services/camera-groups.service';
@@ -51,7 +51,7 @@ interface ChannelGroup {
 @Component({
   standalone: true,
   selector: 'app-admin-realtime-preview',
-  imports: [CommonModule, FormsModule, MatIconModule, MatButtonModule, MatTooltipModule, MatProgressSpinnerModule, MatInputModule, MatFormFieldModule, MatSelectModule, WebrtcVideoPlayerComponent],
+  imports: [CommonModule, FormsModule, MatIconModule, MatButtonModule, MatTooltipModule, MatProgressSpinnerModule, MatInputModule, MatFormFieldModule, MatSelectModule, WsVideoPlayerComponent],
   template: `
     <div class="realtime-preview" #previewContainer>
       <!-- Toolbar -->
@@ -213,13 +213,13 @@ interface ChannelGroup {
               <div class="video-slot">
                 @if (getChannelForSlot(i); as channel) {
                   <div class="video-container">
-                    <app-webrtc-video-player
-                      [app]="getChannelApp(channel)"
-                      [stream]="getChannelStreamName(channel)"
-                      [aiboxId]="channel.aiboxId || ''"
-                      [useProxy]="true"
+                    <app-ws-video-player
+                      [stream]="channel.previewChn || 'task/' + channel.name"
+                      [mediaName]="channel.name"
+                      [wsBaseUrl]="channel.aiboxWsUrl || ''"
+                      [useSharedService]="true"
                       [showControls]="true">
-                    </app-webrtc-video-player>
+                    </app-ws-video-player>
                     <div class="video-overlay-controls">
                       <!-- Recording button -->
                       <button mat-icon-button
@@ -1468,18 +1468,14 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
   getChannelApp(channel: VideoChannel): string {
     const url = channel.previewChn || `task/${channel.stream || channel.name}`;
     const parts = url.split('/');
-    const app = parts[0] || 'task';
-    console.log(`[getChannelApp] channel=${channel.name}, previewChn=${channel.previewChn}, app=${app}`);
-    return app;
+    return parts[0] || 'task';
   }
 
   // Parse channel URL to get stream name (e.g., "task/H8C-4" -> "H8C-4")
   getChannelStreamName(channel: VideoChannel): string {
     const url = channel.previewChn || `task/${channel.stream || channel.name}`;
     const parts = url.split('/');
-    const streamName = parts.slice(1).join('/') || channel.stream || channel.name;
-    console.log(`[getChannelStreamName] channel=${channel.name}, previewChn=${channel.previewChn}, streamName=${streamName}`);
-    return streamName;
+    return parts.slice(1).join('/') || channel.stream || channel.name;
   }
 
   // Check if AI Box is selected
@@ -2162,37 +2158,19 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
   // - Individual camera: "task/<AlgTaskSession>" (e.g., "task/DCC1-HARKP3_KOPER03")
   // - Mosaic view: "group/<number>" (e.g., "group/1")
   getWsStreamId(channel: VideoChannel): string {
-    // DEBUG: Log channel info
-    console.log('[getWsStreamId] Channel:', {
-      name: channel.name,
-      stream: channel.stream,
-      taskIdx: channel.taskIdx,
-      previewChn: channel.previewChn,
-      app: channel.app
-    });
-
     // Priority 1: Use previewChn which contains the correct "task/XXX" format
-    // IMPORTANT: Trim whitespace as BM-APP may include leading tabs/spaces in AlgTaskSession
     if (channel.previewChn) {
-      const trimmed = channel.previewChn.trim();
-      console.log('[getWsStreamId] Using previewChn:', trimmed);
-      return trimmed;
+      return channel.previewChn.trim();
     }
 
     // Priority 2: Construct "task/<AlgTaskSession>" format if stream available
     if (channel.stream) {
-      const streamTrimmed = channel.stream.trim();
-      const streamId = `task/${streamTrimmed}`;
-      console.log('[getWsStreamId] Constructed task/stream:', streamId);
-      return streamId;
+      return `task/${channel.stream.trim()}`;
     }
 
     // Priority 3: Use MediaName with task/ prefix
     if (channel.name) {
-      const nameTrimmed = channel.name.trim();
-      const streamId = `task/${nameTrimmed}`;
-      console.log('[getWsStreamId] Constructed task/name:', streamId);
-      return streamId;
+      return `task/${channel.name.trim()}`;
     }
 
     return '';
@@ -2205,7 +2183,6 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
    */
   getWebrtcUrl(channel: VideoChannel): string {
     // Get WebRTC URL from AI Box configuration
-    let result: string;
     if (channel.aiboxWsUrl) {
       // Convert ws:// to http:// and append /webrtc path
       let baseUrl = channel.aiboxWsUrl
@@ -2218,13 +2195,11 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
         baseUrl = urlParts.slice(0, 3).join('/');
       }
 
-      result = `${baseUrl}/webrtc`;
-    } else {
-      // Fallback to environment bmappUrl
-      result = `${this.bmappUrl}/webrtc`;
+      return `${baseUrl}/webrtc`;
     }
-    console.log(`[getWebrtcUrl] channel=${channel.name}, aiboxWsUrl=${channel.aiboxWsUrl}, result=${result}`);
-    return result;
+
+    // Fallback to environment bmappUrl
+    return `${this.bmappUrl}/webrtc`;
   }
 
   // ========== Local Recording Methods (Download to User's Computer) ==========
@@ -2270,15 +2245,15 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
     // Get the video element from webrtc-video-player or ws-video-player
     const videoSlots = document.querySelectorAll('.video-slot');
     const slot = videoSlots[slotIndex];
-    // Try WebRTC video element first, fallback to WS player img
+    // Try WebRTC video element first, fallback to WS player canvas
     const videoElement = slot?.querySelector('app-webrtc-video-player video.stream-video') as HTMLVideoElement;
-    const imgElement = slot?.querySelector('app-ws-video-player img.stream-frame') as HTMLImageElement;
+    const canvasElement = slot?.querySelector('app-ws-video-player canvas.stream-frame') as HTMLCanvasElement;
 
     // Check if we have a valid source
     const hasVideoSource = videoElement && videoElement.srcObject;
-    const hasImgSource = imgElement && imgElement.src && imgElement.style.display !== 'none';
+    const hasCanvasSource = canvasElement && canvasElement.style.display !== 'none' && canvasElement.width > 0;
 
-    if (!hasVideoSource && !hasImgSource) {
+    if (!hasVideoSource && !hasCanvasSource) {
       alert('Cannot start recording: video not loaded or not playing');
       return;
     }
@@ -2315,11 +2290,11 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
 
         // Store interval for cleanup
         (stream as any)._videoFrameInterval = videoFrameInterval;
-      } else if (hasImgSource && imgElement) {
-        // WS Player: Capture from img element
-        canvas.width = imgElement.naturalWidth || 1280;
-        canvas.height = imgElement.naturalHeight || 720;
-        stream = canvas.captureStream(24);
+      } else if (hasCanvasSource && canvasElement) {
+        // WS Player: Capture directly from the existing canvas
+        canvas.width = canvasElement.width || 1280;
+        canvas.height = canvasElement.height || 720;
+        stream = canvasElement.captureStream(24);
       } else {
         alert('Cannot start recording: no valid video source');
         return;
@@ -2362,19 +2337,10 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
 
       // Frame capture interval - only needed for WS player (img element)
       // WebRTC already has its own interval set up above
+      // For WebRTC, we need frame interval to draw video frames to canvas
+      // For WS Player, captureStream() on canvas handles it automatically
       let frameInterval: any = null;
-      if (hasImgSource && imgElement) {
-        frameInterval = setInterval(() => {
-          if (imgElement && imgElement.src && imgElement.complete) {
-            // Update canvas size if img dimensions changed
-            if (canvas.width !== imgElement.naturalWidth && imgElement.naturalWidth > 0) {
-              canvas.width = imgElement.naturalWidth;
-              canvas.height = imgElement.naturalHeight;
-            }
-            ctx.drawImage(imgElement, 0, 0, canvas.width, canvas.height);
-          }
-        }, 1000 / 24); // 24 fps
-      } else if ((stream as any)._videoFrameInterval) {
+      if ((stream as any)._videoFrameInterval) {
         // For WebRTC, use the interval we created earlier
         frameInterval = (stream as any)._videoFrameInterval;
       }

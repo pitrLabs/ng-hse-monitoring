@@ -7839,7 +7839,20 @@ var ZLMRTCClient = (function (exports) {
       this._remoteStream = null;
       this._localStream = null;
       this._tracks = [];
-      this.pc = new RTCPeerConnection(null);
+      // Add STUN/TURN servers for NAT traversal
+      const rtcConfig = {
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' },
+          {
+            urls: 'turn:103.105.55.136:3478',
+            username: 'turnuser',
+            credential: 'turnpassword123'
+          }
+        ],
+        iceCandidatePoolSize: 0
+      };
+      this.pc = new RTCPeerConnection(rtcConfig);
       this.pc.onicecandidate = this.e.onicecandidate;
       this.pc.onicecandidateerror = this.e.onicecandidateerror;
       this.pc.ontrack = this.e.ontrack;
@@ -7893,6 +7906,10 @@ var ZLMRTCClient = (function (exports) {
             anwser.sdp = ret.sdp;
             anwser.type = 'answer';
             log(this.TAG, 'answer:', ret.sdp);
+            if (!this.pc) {
+              log(this.TAG, 'peer connection closed, ignoring answer');
+              return;
+            }
             this.pc.setRemoteDescription(anwser).then(() => {
               log(this.TAG, 'set remote sucess');
             }).catch(e => {

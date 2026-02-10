@@ -254,7 +254,7 @@ interface DeviceClass {
                       [taskIdx]="task.TaskIdx"
                       [showControls]="false"
                       [showFps]="false"
-                      [useSharedService]="false">
+                      [useSharedService]="true">
                     </app-ws-video-player>
                     <div class="video-info-overlay">
                       <span class="video-status online"></span>
@@ -805,6 +805,10 @@ interface DeviceClass {
       position: relative;
       overflow: hidden;
       min-height: 100px;
+      /* Isolation to prevent rendering glitches between cells */
+      isolation: isolate;
+      contain: layout style paint;
+      transform: translateZ(0);  /* Force GPU layer per cell */
 
       &.has-video {
         background: #000;
@@ -813,6 +817,8 @@ interface DeviceClass {
       app-ws-video-player {
         position: absolute;
         inset: 0;
+        /* Ensure each player has its own compositing layer */
+        will-change: contents;
       }
     }
 

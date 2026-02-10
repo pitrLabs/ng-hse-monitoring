@@ -122,12 +122,12 @@ interface CameraGroup {
             </div>
           } @else {
             <div class="source-list">
-              @for (group of filteredGroups(); track group.id + group.aiboxId; let i = $index) {
-                <!-- AI Box Header (show when aiboxId changes) -->
-                @if (i === 0 || group.aiboxId !== filteredGroups()[i-1].aiboxId) {
+              @for (group of filteredGroups(); track group.id; let i = $index) {
+                <!-- AI Box Header (only show for AI Box groups, not user folders) -->
+                @if (group.aiboxId && (i === 0 || group.aiboxId !== filteredGroups()[i-1]?.aiboxId)) {
                   <div class="aibox-separator">
                     <mat-icon class="aibox-icon">dns</mat-icon>
-                    <span class="aibox-name">{{ group.aiboxName || 'No AI Box' }}</span>
+                    <span class="aibox-name">{{ group.aiboxName }}</span>
                   </div>
                 }
                 <!-- Folder -->
@@ -139,10 +139,10 @@ interface CameraGroup {
                        (dragleave)="onFolderDragLeave($event)"
                        (drop)="onFolderDrop($event, group)">
                     <mat-icon class="expand-icon" [class.expanded]="group.expanded">chevron_right</mat-icon>
-                    <mat-icon class="folder-icon">folder</mat-icon>
+                    <mat-icon class="folder-icon">{{ group.aiboxId ? 'dns' : 'folder' }}</mat-icon>
                     <span class="node-name">{{ group.displayName }}</span>
                     <span class="node-count">({{ group.cameras.length }})</span>
-                    @if (canRenameGroups()) {
+                    @if (canRenameGroups() && !group.aiboxId) {
                       <div class="folder-actions">
                         <button mat-icon-button class="folder-action-btn" matTooltip="Rename folder" (click)="openRenameDialog(group); $event.stopPropagation()">
                           <mat-icon>edit</mat-icon>
@@ -1483,7 +1483,9 @@ export class MonitorComponent implements OnInit {
 
   /**
    * Build camera groups from video sources using per-user folder assignments
-   * Groups are organized by AI Box first, then by folder within each AI Box
+   * Structure matches Monitoring AI page:
+   * 1. User-created folders at top (no AI Box header)
+   * 2. AI Box sections with cameras directly (no "Ungrouped" folder)
    */
   buildCameraGroups(sources: VideoSource[]) {
     const backendGroups = this.cameraGroupsService.groups();
@@ -1495,44 +1497,79 @@ export class MonitorComponent implements OnInit {
       !s.aibox_id || selectedIds.has(s.aibox_id)
     );
 
-    // First, group by AI Box, then by folder within each AI Box
-    // Key: "aiboxId|folderId"
-    const groupMap = new Map<string, VideoSource[]>();
+    // Build group lookup map
+    const groupLookup = new Map<string, { name: string; displayName: string }>();
+    for (const g of backendGroups) {
+      groupLookup.set(g.id, { name: g.name, displayName: g.display_name || g.name });
+    }
+
+    // Separate sources into: assigned to folders vs unassigned (per AI Box)
+    const folderSourcesMap = new Map<string, VideoSource[]>(); // folderId -> sources
+    const aiboxSourcesMap = new Map<string, VideoSource[]>(); // aiboxId -> unassigned sources
 
     for (const source of filteredSources) {
-      const aiboxId = source.aibox_id || 'no-aibox';
-      const assignedGroupId = assignments[source.id] || 'ungrouped';
-      const key = `${aiboxId}|${assignedGroupId}`;
+      // Check if this source has a folder assignment
+      const assignedFolderId = assignments[source.id];
+      const hasValidFolder = assignedFolderId && groupLookup.has(assignedFolderId);
 
-      if (!groupMap.has(key)) {
-        groupMap.set(key, []);
+      if (hasValidFolder) {
+        // Source is assigned to a user folder
+        if (!folderSourcesMap.has(assignedFolderId)) {
+          folderSourcesMap.set(assignedFolderId, []);
+        }
+        folderSourcesMap.get(assignedFolderId)!.push(source);
+      } else if (source.aibox_id) {
+        // Source is not assigned and has AI Box - goes under AI Box directly
+        if (!aiboxSourcesMap.has(source.aibox_id)) {
+          aiboxSourcesMap.set(source.aibox_id, []);
+        }
+        aiboxSourcesMap.get(source.aibox_id)!.push(source);
       }
-      groupMap.get(key)!.push(source);
+      // Skip sources without aibox_id that are not in a folder (can't stream them)
     }
 
     const groups: CameraGroup[] = [];
 
-    // Build groups with AI Box info
-    groupMap.forEach((cameras, key) => {
-      const [aiboxId, folderId] = key.split('|');
-      const aibox = this.aiBoxes().find(b => b.id === aiboxId);
-      const aiboxName = aibox ? `${aibox.name} (${aibox.code})` : 'No AI Box';
-
-      let folderName = 'Ungrouped';
-      let folderDisplayName = 'Ungrouped';
-
-      if (folderId !== 'ungrouped') {
-        const backendGroup = backendGroups.find(g => g.id === folderId);
-        if (backendGroup) {
-          folderName = backendGroup.name;
-          folderDisplayName = backendGroup.display_name || backendGroup.name;
-        }
+    // 1. Add user-created folders at top (aiboxId = undefined to show without AI Box header)
+    folderSourcesMap.forEach((cameras, folderId) => {
+      const groupInfo = groupLookup.get(folderId);
+      if (groupInfo) {
+        groups.push({
+          id: folderId,
+          name: groupInfo.name,
+          displayName: groupInfo.displayName,
+          expanded: true,
+          cameras: cameras.sort((a, b) => a.name.localeCompare(b.name)),
+          aiboxId: undefined, // No AI Box - these are user folders
+          aiboxName: undefined
+        });
       }
+    });
+
+    // Also add empty user-created folders (so they appear in the list)
+    for (const g of backendGroups) {
+      if (!folderSourcesMap.has(g.id)) {
+        groups.push({
+          id: g.id,
+          name: g.name,
+          displayName: g.display_name || g.name,
+          expanded: true,
+          cameras: [],
+          aiboxId: undefined,
+          aiboxName: undefined
+        });
+      }
+    }
+
+    // 2. Add AI Box sections with unassigned cameras
+    aiboxSourcesMap.forEach((cameras, aiboxId) => {
+      const aibox = this.aiBoxes().find(b => b.id === aiboxId);
+      const aiboxName = aibox ? `${aibox.name} (${aibox.code})` : 'Unknown AI Box';
 
       groups.push({
-        id: folderId,
-        name: folderName,
-        displayName: folderDisplayName,
+        id: `aibox_${aiboxId}`, // Special ID for AI Box direct cameras
+        name: aiboxName,
+        displayName: aiboxName,
         expanded: true,
         cameras: cameras.sort((a, b) => a.name.localeCompare(b.name)),
         aiboxId: aiboxId,
@@ -1540,34 +1577,13 @@ export class MonitorComponent implements OnInit {
       });
     });
 
-    // Add empty folders from backend (user-created folders without cameras)
-    for (const bg of backendGroups) {
-      const hasGroup = groups.some(g => g.id === bg.id);
-      if (!hasGroup) {
-        // Add to first AI Box or 'no-aibox'
-        const firstAiboxId = selectedIds.size > 0 ? Array.from(selectedIds)[0] : 'no-aibox';
-        const aibox = this.aiBoxes().find(b => b.id === firstAiboxId);
-        groups.push({
-          id: bg.id,
-          name: bg.name,
-          displayName: bg.display_name || bg.name,
-          expanded: true,
-          cameras: [],
-          aiboxId: firstAiboxId,
-          aiboxName: aibox ? `${aibox.name} (${aibox.code})` : 'No AI Box'
-        });
-      }
-    }
-
-    // Sort: first by AI Box name, then by folder name (Ungrouped last)
+    // Sort: user folders first (no aiboxId), then AI Box groups by name
     groups.sort((a, b) => {
-      // First sort by AI Box
-      const aiboxCompare = (a.aiboxName || '').localeCompare(b.aiboxName || '');
-      if (aiboxCompare !== 0) return aiboxCompare;
+      // User folders (no aiboxId) first
+      if (!a.aiboxId && b.aiboxId) return -1;
+      if (a.aiboxId && !b.aiboxId) return 1;
 
-      // Then sort by folder (Ungrouped last)
-      if (a.id === 'ungrouped') return 1;
-      if (b.id === 'ungrouped') return -1;
+      // Then sort by display name
       return a.displayName.localeCompare(b.displayName);
     });
 
@@ -1845,16 +1861,17 @@ export class MonitorComponent implements OnInit {
 
   getOtherGroups(): CameraGroup[] {
     const deleteTarget = this.deleteTarget();
-    // Include "ungrouped" as an option for moving cameras, exclude current folder
-    return this.cameraGroups().filter(g => g.id !== deleteTarget?.id);
+    // Only show user-created folders (not AI Box groups) as move targets, exclude current folder
+    return this.cameraGroups().filter(g => !g.aiboxId && g.id !== deleteTarget?.id);
   }
 
   async confirmDeleteGroup() {
     const group = this.deleteTarget();
     if (!group) return;
 
-    if (group.id === 'ungrouped') {
-      alert('Cannot delete the Ungrouped folder');
+    // Cannot delete AI Box groups (only user-created folders)
+    if (group.id.startsWith('aibox_')) {
+      alert('Cannot delete AI Box camera list');
       return;
     }
 
@@ -1863,10 +1880,11 @@ export class MonitorComponent implements OnInit {
       // If cameras need to be moved to another folder first
       if (this.deleteTargetCameraCount() > 0 && this.moveToGroupId && this.moveToGroupId !== '') {
         const cameraIds = group.cameras.map(c => c.id);
-        if (this.moveToGroupId === 'ungrouped') {
-          await this.cameraGroupsService.unassignCameras(cameraIds);
-        } else {
+        // Move to selected folder (or unassign if empty)
+        if (this.moveToGroupId) {
           await this.cameraGroupsService.assignCamerasToGroup(this.moveToGroupId, cameraIds);
+        } else {
+          await this.cameraGroupsService.unassignCameras(cameraIds);
         }
       }
 
@@ -1987,7 +2005,8 @@ export class MonitorComponent implements OnInit {
 
     try {
       // Per-user assignment: assign or unassign camera
-      if (targetGroup.id === 'ungrouped') {
+      // If dropping to AI Box group (starts with 'aibox_'), unassign from folder
+      if (targetGroup.id.startsWith('aibox_')) {
         await this.cameraGroupsService.unassignCameras([camera.id]);
       } else {
         await this.cameraGroupsService.assignCamerasToGroup(targetGroup.id, [camera.id]);

@@ -255,13 +255,11 @@ export class WebrtcVideoPlayerComponent implements OnInit, OnDestroy, OnChanges,
   private readonly sessionId = `webrtc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
   ngOnInit() {
-    console.log(`[${this.sessionId}] ngOnInit - app=${this.app}, stream=${this.stream}, aiboxId=${this.aiboxId}, useProxy=${this.useProxy}`);
     this.loadZLMRTCClient();
   }
 
   ngAfterViewInit() {
     this.viewReady = true;
-    console.log(`[${this.sessionId}] View ready, zlmLoaded=${this.zlmLoaded}, stream=${this.stream}`);
     if (this.autoConnect && this.stream && this.zlmLoaded) {
       this.connect();
     }
@@ -293,15 +291,12 @@ export class WebrtcVideoPlayerComponent implements OnInit, OnDestroy, OnChanges,
     const script = document.createElement('script');
     script.src = '/assets/js/ZLMRTCClient.js';
     script.onload = () => {
-      console.log(`[${this.sessionId}] ZLMRTCClient loaded, viewReady=${this.viewReady}`);
       this.zlmLoaded = true;
-      // Only connect if view is ready (video element available)
       if (this.autoConnect && this.stream && this.viewReady) {
         this.connect();
       }
     };
     script.onerror = () => {
-      console.error(`[${this.sessionId}] Failed to load ZLMRTCClient`);
       this.status.set('error');
       this.errorMessage.set('Failed to load video player library');
     };
@@ -309,17 +304,9 @@ export class WebrtcVideoPlayerComponent implements OnInit, OnDestroy, OnChanges,
   }
 
   connect() {
-    if (this.isDestroyed) {
-      console.log(`[${this.sessionId}] connect() aborted - component destroyed`);
-      return;
-    }
-    if (!this.zlmLoaded) {
-      console.log(`[${this.sessionId}] connect() aborted - ZLMRTCClient not loaded yet`);
-      return;
-    }
+    if (this.isDestroyed || !this.zlmLoaded) return;
 
     if (!this.stream) {
-      console.log(`[${this.sessionId}] connect() - no stream specified, setting idle`);
       this.status.set('idle');
       return;
     }
@@ -333,7 +320,6 @@ export class WebrtcVideoPlayerComponent implements OnInit, OnDestroy, OnChanges,
     try {
       const videoEl = this.videoElement?.nativeElement;
       if (!videoEl) {
-        console.error(`[${this.sessionId}] Video element not found`);
         setTimeout(() => this.connect(), 500);
         return;
       }
@@ -345,11 +331,9 @@ export class WebrtcVideoPlayerComponent implements OnInit, OnDestroy, OnChanges,
 
       if (this.useProxy && this.aiboxId) {
         // Use backend proxy for SDP rewriting (fixes private IP issue)
-        // Format: {apiUrl}/webrtc-proxy/{aibox_id}?app={app}&stream={stream}&type=play
         zlmUrl = `${environment.apiUrl}/webrtc-proxy/${this.aiboxId}?app=${encodeURIComponent(appName)}&stream=${encodeURIComponent(streamName)}&type=play`;
-        console.log(`[${this.sessionId}] Using WebRTC proxy for AI Box: ${this.aiboxId}`);
       } else {
-        // Direct connection to BM-APP (may fail if private IP not reachable)
+        // Direct connection to BM-APP
         let baseUrl = this.webrtcUrl;
         if (!baseUrl) {
           baseUrl = `${window.location.protocol}//${window.location.host}/bmapp-api/webrtc`;
@@ -357,19 +341,13 @@ export class WebrtcVideoPlayerComponent implements OnInit, OnDestroy, OnChanges,
         zlmUrl = `${baseUrl}?app=${encodeURIComponent(appName)}&stream=${encodeURIComponent(streamName)}&type=play`;
       }
 
-      console.log(`[${this.sessionId}] Connecting WebRTC:`, {
-        useProxy: this.useProxy,
-        aiboxId: this.aiboxId,
-        app: appName,
-        stream: streamName,
-        fullUrl: zlmUrl,
-        videoElement: videoEl ? 'found' : 'missing',
-        videoElementDimensions: videoEl ? `${videoEl.offsetWidth}x${videoEl.offsetHeight}` : 'N/A'
-      });
+      console.log(`[${this.sessionId}] Connecting to: ${streamName}`);
+
+      console.log(`[${this.sessionId}] ZLM URL: ${zlmUrl}`);
 
       this.player = new ZLMRTCClient.Endpoint({
         element: videoEl,
-        debug: true,  // Enable debug logging
+        debug: true,  // Enable debug to see ICE/SDP details
         zlmsdpUrl: zlmUrl,
         videoEnable: true,
         audioEnable: true,
@@ -377,21 +355,35 @@ export class WebrtcVideoPlayerComponent implements OnInit, OnDestroy, OnChanges,
         resolution: { w: 1280, h: 720 }
       });
 
-      console.log(`[${this.sessionId}] ZLMRTCClient.Endpoint created`);
+      this.player.on(ZLMRTCClient.Events.WEBRTC_ON_REMOTE_STREAMS, (e: any) => {
+        console.log(`[${this.sessionId}] Stream received:`, e);
 
-      this.player.on(ZLMRTCClient.Events.WEBRTC_ON_REMOTE_STREAMS, (s: MediaStream) => {
-        console.log(`[${this.sessionId}] WebRTC stream received`);
+        // Check video element
+        const video = this.videoElement?.nativeElement;
+        if (video) {
+          console.log(`[${this.sessionId}] Video state:`, {
+            srcObject: video.srcObject ? 'SET' : 'NULL',
+            readyState: video.readyState,
+            paused: video.paused
+          });
+
+          // Force play if paused
+          if (video.paused) {
+            video.play().catch((err: any) => console.error(`[${this.sessionId}] Play error:`, err));
+          }
+        }
+
         this.status.set('playing');
         this.resetRetry();
       });
 
       this.player.on(ZLMRTCClient.Events.WEBRTC_ICE_CANDIDATE_ERROR, (e: any) => {
-        console.error(`[${this.sessionId}] ICE candidate error:`, e);
+        console.log(`[${this.sessionId}] ICE error:`, e);
         this.handleConnectionError('ICE negotiation failed');
       });
 
       this.player.on(ZLMRTCClient.Events.WEBRTC_OFFER_ANWSER_EXCHANGE_FAILED, (e: any) => {
-        console.error(`[${this.sessionId}] Offer/Answer exchange failed:`, e);
+        console.log(`[${this.sessionId}] SDP exchange failed:`, e);
         this.handleConnectionError('Connection negotiation failed');
       });
 
@@ -406,7 +398,6 @@ export class WebrtcVideoPlayerComponent implements OnInit, OnDestroy, OnChanges,
       });
 
     } catch (error: any) {
-      console.error(`[${this.sessionId}] WebRTC connection error:`, error);
       this.handleConnectionError(error.message || 'Failed to connect');
     }
   }
@@ -431,6 +422,12 @@ export class WebrtcVideoPlayerComponent implements OnInit, OnDestroy, OnChanges,
   private handleConnectionError(message: string) {
     if (this.isDestroyed) return;
 
+    // Don't reconnect if already playing - stream is working
+    if (this.status() === 'playing') {
+      console.log(`[${this.sessionId}] Ignoring error while playing: ${message}`);
+      return;
+    }
+
     if (this.retryCount() < this.maxRetries) {
       this.status.set('reconnecting');
       this.statusMessage.set(message + ' - Reconnecting...');
@@ -453,8 +450,6 @@ export class WebrtcVideoPlayerComponent implements OnInit, OnDestroy, OnChanges,
 
     const delay = Math.min(this.baseDelay * Math.pow(2, currentRetry), this.maxDelay);
     this.retryCount.set(currentRetry + 1);
-
-    console.log(`[${this.sessionId}] Scheduling reconnect in ${delay}ms (attempt ${this.retryCount()}/${this.maxRetries})`);
 
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;

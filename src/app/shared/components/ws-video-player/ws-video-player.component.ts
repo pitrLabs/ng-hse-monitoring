@@ -6,7 +6,9 @@ import {
   signal,
   OnChanges,
   SimpleChanges,
-  inject
+  inject,
+  ViewChild,
+  ElementRef
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { MatIconModule } from '@angular/material/icon';
@@ -46,12 +48,11 @@ import { VideoStreamService } from '../../../core/services/video-stream.service'
         </div>
       }
 
-      <img
-        [src]="frameUrl()"
+      <canvas
+        #videoCanvas
         [style.display]="status() === 'playing' ? 'block' : 'none'"
-        alt="Live Stream"
-        class="stream-frame"
-      />
+        class="stream-frame">
+      </canvas>
 
       @if (status() === 'playing' && showControls) {
         <div class="video-controls">
@@ -89,6 +90,9 @@ import { VideoStreamService } from '../../../core/services/video-stream.service'
       width: 100%;
       height: 100%;
       object-fit: contain;
+      /* Prevent browser caching/reuse artifacts */
+      will-change: contents;
+      transform: translateZ(0);
     }
 
     .status-overlay {
@@ -244,6 +248,8 @@ export class WsVideoPlayerComponent implements OnInit, OnDestroy, OnChanges {
   @Input() useSharedService = false; // Use shared VideoStreamService (for multiple streams)
   @Input() wsBaseUrl = ''; // Custom WebSocket base URL (e.g., "ws://192.168.1.100:2323")
 
+  @ViewChild('videoCanvas') canvasRef!: ElementRef<HTMLCanvasElement>;
+
   private videoStreamService = inject(VideoStreamService);
 
   status = signal<'idle' | 'connecting' | 'reconnecting' | 'playing' | 'error'>('idle');
@@ -252,6 +258,9 @@ export class WsVideoPlayerComponent implements OnInit, OnDestroy, OnChanges {
   retryCount = signal(0);
   frameUrl = signal('');
   fps = signal(0);
+
+  // Canvas rendering
+  private canvasCtx: CanvasRenderingContext2D | null = null;
 
   readonly maxRetries = 10;
   readonly baseDelay = 2000;
@@ -370,11 +379,25 @@ export class WsVideoPlayerComponent implements OnInit, OnDestroy, OnChanges {
 
     // BM-APP expects the channel identifier in format "task/AlgTaskSession" or "group/X"
     const streamUrl = this.stream;
-    console.log(`[${this.sessionId}] Subscribing to shared service for: ${streamUrl}, mediaName: ${this.mediaName}`);
 
     // Subscribe using stream URL and mediaName for matching with data.task from BM-APP
-    this.videoStreamService.subscribe(this.sessionId, streamUrl, (frame: string) => {
-      this.frameUrl.set(frame);
+    this.videoStreamService.subscribe(this.sessionId, streamUrl, (frame: string, task: string) => {
+      // COMPONENT-LEVEL VERIFICATION: Only display frame if task matches this component's mediaName
+      const expectedName = (this.mediaName || '').toLowerCase().trim();
+      const receivedTask = (task || '').toLowerCase().trim();
+
+      // Also check against streamKey patterns (e.g., "H8C4" vs "H8C-4")
+      const streamKeyNormalized = this.stream.replace('task/', '').toLowerCase().trim();
+
+      const isValidFrame = receivedTask === expectedName ||
+                          receivedTask === streamKeyNormalized ||
+                          receivedTask.replace(/-/g, '') === expectedName.replace(/-/g, '');
+
+      if (!isValidFrame) {
+        return;  // Don't display this frame
+      }
+
+      this.drawFrameToCanvas(frame);
       this.frameCount++;
       this.lastFrameTime = Date.now();
 
@@ -441,19 +464,10 @@ export class WsVideoPlayerComponent implements OnInit, OnDestroy, OnChanges {
 
     try {
       const wsUrl = this.getWsUrl();
-      console.log(`[${this.sessionId}] Connecting to WebSocket:`, {
-        url: wsUrl,
-        stream: this.stream,
-        mediaName: this.mediaName,
-        wsBaseUrl: this.wsBaseUrl
-      });
-
       this.websocket = new WebSocket(wsUrl);
 
       this.websocket.onopen = () => {
-        console.log(`[${this.sessionId}] WebSocket connected for stream: ${this.mediaName || this.stream}`);
         // Always send channel selection - BM-APP requires this message to switch streams
-        // URL media parameter alone is not sufficient
         this.statusMessage.set('Selecting channel...');
         this.sendChannelSelection();
       };
@@ -462,20 +476,17 @@ export class WsVideoPlayerComponent implements OnInit, OnDestroy, OnChanges {
         this.handleMessage(event);
       };
 
-      this.websocket.onclose = (event) => {
-        console.log(`[${this.sessionId}] WebSocket closed:`, event.code, event.reason);
+      this.websocket.onclose = () => {
         if (!this.isDestroyed) {
           this.handleConnectionError('Connection closed');
         }
       };
 
-      this.websocket.onerror = (error) => {
-        console.error(`[${this.sessionId}] WebSocket error:`, error);
+      this.websocket.onerror = () => {
         this.handleConnectionError('Connection error');
       };
 
     } catch (error: any) {
-      console.error('WebSocket connection error:', error);
       this.handleConnectionError(error.message || 'Failed to connect');
     }
   }
@@ -490,11 +501,6 @@ export class WsVideoPlayerComponent implements OnInit, OnDestroy, OnChanges {
     // This matches the "url" field from /api/app_preview_channel response
 
     const message = JSON.stringify({ chn: this.stream });
-
-    console.log(`[WsVideoPlayer] Sending channel selection:`, {
-      stream: this.stream,
-      message: message
-    });
     this.websocket.send(message);
   }
 
@@ -528,27 +534,14 @@ export class WsVideoPlayerComponent implements OnInit, OnDestroy, OnChanges {
         }
       }
 
-      if (data.task) {
-        // Task identifier from server - verify it matches our requested stream
-        // Note: BM-APP sends back task name, but we request by taskIdx number
-        // This mismatch is expected, only resend if we're getting a completely different channel
-        console.log(`[${this.sessionId}] Receiving stream: ${data.task} (requested: ${this.stream})`);
-      }
 
       if (data.error) {
-        console.error('Stream error:', data.error);
         this.handleConnectionError(data.error);
       }
 
     } catch (e) {
       // If JSON parse fails, the data might be raw binary sent as string
-      // This happens when server sends binary data without proper framing
       // Just silently ignore these malformed messages
-      if (event.data && typeof event.data === 'string' && event.data.length > 100) {
-        // Likely a corrupted/partial message, skip logging to avoid console spam
-        return;
-      }
-      console.warn('Failed to parse WebSocket message:', e);
     }
   }
 
@@ -592,8 +585,6 @@ export class WsVideoPlayerComponent implements OnInit, OnDestroy, OnChanges {
     const delay = Math.min(this.baseDelay * Math.pow(2, currentRetry), this.maxDelay);
     this.retryCount.set(currentRetry + 1);
 
-    console.log(`Scheduling reconnect in ${delay}ms (attempt ${this.retryCount()}/${this.maxRetries})`);
-
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       if (!this.isDestroyed && this.status() !== 'playing') {
@@ -611,6 +602,54 @@ export class WsVideoPlayerComponent implements OnInit, OnDestroy, OnChanges {
       }
       this.websocket = null;
     }
+  }
+
+  /**
+   * Draw frame to canvas - provides complete control over rendering
+   * and avoids browser img element caching/reuse issues
+   */
+  private drawFrameToCanvas(frameDataUrl: string) {
+    const canvas = this.canvasRef?.nativeElement;
+    if (!canvas) return;
+
+    // Initialize canvas context if needed
+    if (!this.canvasCtx) {
+      this.canvasCtx = canvas.getContext('2d');
+    }
+    if (!this.canvasCtx) return;
+
+    // Create NEW Image for each frame to avoid race conditions
+    const img = new Image();
+    const ctx = this.canvasCtx;
+
+    img.onload = () => {
+      // Resize canvas to match container (maintaining aspect ratio)
+      const containerWidth = canvas.parentElement?.clientWidth || 640;
+      const containerHeight = canvas.parentElement?.clientHeight || 480;
+
+      // Set canvas size to container size
+      if (canvas.width !== containerWidth || canvas.height !== containerHeight) {
+        canvas.width = containerWidth;
+        canvas.height = containerHeight;
+      }
+
+      // Calculate scaled dimensions to maintain aspect ratio
+      const scale = Math.min(
+        containerWidth / img.width,
+        containerHeight / img.height
+      );
+      const scaledWidth = img.width * scale;
+      const scaledHeight = img.height * scale;
+      const offsetX = (containerWidth - scaledWidth) / 2;
+      const offsetY = (containerHeight - scaledHeight) / 2;
+
+      // Clear and draw
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, containerWidth, containerHeight);
+      ctx.drawImage(img, offsetX, offsetY, scaledWidth, scaledHeight);
+    };
+
+    img.src = frameDataUrl;
   }
 
   toggleFullscreen() {

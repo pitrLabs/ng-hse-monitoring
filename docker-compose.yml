@@ -3,6 +3,7 @@ version: "3.9"
 services:
   ui:
     build: .
+    restart: always
     ports:
       - "4222:4222"
     env_file:

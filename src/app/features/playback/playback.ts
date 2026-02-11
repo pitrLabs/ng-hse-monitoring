@@ -212,6 +212,9 @@ interface CalendarDayDisplay {
                         <button mat-icon-button matTooltip="Play" (click)="playRecording(rec)">
                           <mat-icon>play_arrow</mat-icon>
                         </button>
+                        <button mat-icon-button matTooltip="Download" (click)="downloadRecording(rec)">
+                          <mat-icon>download</mat-icon>
+                        </button>
                         @if (rec.alarm_id) {
                           <button mat-icon-button matTooltip="View Alarm" (click)="viewAlarm(rec)">
                             <mat-icon>warning</mat-icon>
@@ -286,6 +289,9 @@ interface CalendarDayDisplay {
                       <span class="time-display">{{ currentTimeStr() }} / {{ totalTimeStr() }}</span>
                     </div>
                     <div class="right-controls">
+                      <button mat-icon-button matTooltip="Download" (click)="downloadRecording(selectedRecording()!)">
+                        <mat-icon>download</mat-icon>
+                      </button>
                       <button mat-icon-button matTooltip="Speed" [matMenuTriggerFor]="speedMenu">
                         <mat-icon>speed</mat-icon>
                       </button>
@@ -1233,6 +1239,11 @@ export class PlaybackComponent implements OnInit, OnDestroy {
     if (recording) {
       this.loadVideoUrl(recording);
     }
+  }
+
+  // Download
+  downloadRecording(recording: Recording): void {
+    this.recordingService.downloadRecording(recording.id);
   }
 
   // Navigation

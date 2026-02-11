@@ -150,6 +150,41 @@ export class RecordingService {
   }
 
   /**
+   * Get download URL for a recording
+   */
+  getDownloadUrl(recordingId: string): Observable<{ id: string; file_name: string; download_url: string; file_size?: number }> {
+    return this.http.get<{ id: string; file_name: string; download_url: string; file_size?: number }>(
+      `${this.apiUrl}/recordings/download/${recordingId}`
+    ).pipe(
+      catchError(error => {
+        console.error('[RecordingService] Failed to get download URL:', error);
+        return throwError(() => error);
+      })
+    );
+  }
+
+  /**
+   * Download a recording file
+   */
+  downloadRecording(recordingId: string): void {
+    this.getDownloadUrl(recordingId).subscribe({
+      next: (response) => {
+        // Open download URL in new tab/window
+        const link = document.createElement('a');
+        link.href = response.download_url;
+        link.download = response.file_name;
+        link.target = '_blank';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      },
+      error: (err) => {
+        console.error('Failed to download recording:', err);
+      }
+    });
+  }
+
+  /**
    * Sync recordings from alarms
    */
   syncFromAlarms(): Observable<any> {

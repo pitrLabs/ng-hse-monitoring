@@ -1,4 +1,4 @@
-import { Component, inject, OnInit, signal } from '@angular/core';
+import { Component, inject, OnInit, signal, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormBuilder, FormGroup, Validators, ReactiveFormsModule } from '@angular/forms';
 import { MatDialogRef, MAT_DIALOG_DATA, MatDialogModule } from '@angular/material/dialog';
@@ -9,6 +9,7 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
+import { MatCheckboxModule } from '@angular/material/checkbox';
 import { User, Role } from '../../core/models/user.model';
 import { UserService } from '../../core/services/user.service';
 import { RoleService } from '../../core/services/role.service';
@@ -26,7 +27,8 @@ import { RoleService } from '../../core/services/role.service';
     MatButtonModule,
     MatIconModule,
     MatProgressSpinnerModule,
-    MatSnackBarModule
+    MatSnackBarModule,
+    MatCheckboxModule
   ],
   template: `
     <div class="dialog-container">
@@ -73,10 +75,15 @@ import { RoleService } from '../../core/services/role.service';
           }
         </mat-form-field>
 
+        <div class="checkbox-field">
+          <mat-checkbox formControlName="is_superadmin">Super Admin</mat-checkbox>
+          <span class="checkbox-hint">Super Admin has full access to all features</span>
+        </div>
+
         <mat-form-field appearance="outline" class="full-width">
-          <mat-label>Roles</mat-label>
-          <mat-select formControlName="role_ids" multiple>
-            @for (role of roles(); track role.id) {
+          <mat-label>Role</mat-label>
+          <mat-select formControlName="role_id">
+            @for (role of filteredRoles(); track role.id) {
               <mat-option [value]="role.id">{{ role.name }}</mat-option>
             }
           </mat-select>
@@ -131,6 +138,19 @@ import { RoleService } from '../../core/services/role.service';
       width: 100%;
     }
 
+    .checkbox-field {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 8px 0;
+
+      .checkbox-hint {
+        font-size: 12px;
+        color: var(--text-secondary);
+        margin-left: 32px;
+      }
+    }
+
     .dialog-actions {
       display: flex;
       justify-content: flex-end;
@@ -164,6 +184,14 @@ export class UserFormDialogComponent implements OnInit {
   roles = signal<Role[]>([]);
   isSubmitting = signal(false);
 
+  // Filter out Super Admin from the role list
+  filteredRoles = computed(() =>
+    this.roles().filter(role => {
+      const name = role.name.toLowerCase().replace(/[\s_-]/g, '');
+      return name !== 'superadmin';
+    })
+  );
+
   get isEditMode(): boolean {
     return !!this.data?.user;
   }
@@ -171,16 +199,46 @@ export class UserFormDialogComponent implements OnInit {
   ngOnInit(): void {
     this.initForm();
     this.loadRoles();
+    this.setupSuperAdminToggle();
+  }
+
+  private setupSuperAdminToggle(): void {
+    // Watch for changes to is_superadmin checkbox
+    this.form.get('is_superadmin')?.valueChanges.subscribe(isSuperAdmin => {
+      const roleControl = this.form.get('role_id');
+      if (isSuperAdmin) {
+        roleControl?.disable();
+        roleControl?.setValue(null);
+      } else {
+        roleControl?.enable();
+      }
+    });
+
+    // Apply initial state
+    if (this.form.get('is_superadmin')?.value) {
+      this.form.get('role_id')?.disable();
+    }
   }
 
   private initForm(): void {
     const user = this.data?.user;
+
+    // Check if user is superadmin (has superadmin role, is_superadmin flag, or is_superuser flag)
+    const isSuperAdmin = user?.is_superadmin || user?.is_superuser ||
+      user?.roles?.some(r => r.name.toLowerCase() === 'superadmin' || r.name.toLowerCase() === 'super admin');
+
+    // Get the first non-superadmin role id
+    const roleId = user?.roles?.find(r =>
+      r.name.toLowerCase() !== 'superadmin' && r.name.toLowerCase() !== 'super admin'
+    )?.id || null;
+
     this.form = this.fb.group({
       username: [user?.username || '', [Validators.required, Validators.minLength(3)]],
       email: [user?.email || '', [Validators.required, Validators.email]],
       full_name: [user?.full_name || ''],
       password: ['', this.isEditMode ? [Validators.minLength(6)] : [Validators.required, Validators.minLength(6)]],
-      role_ids: [user?.roles?.map(r => r.id) || []]
+      is_superadmin: [isSuperAdmin || false],
+      role_id: [roleId]
     });
 
     if (this.isEditMode) {
@@ -204,6 +262,28 @@ export class UserFormDialogComponent implements OnInit {
       delete formData.password;
     }
     delete formData.username;
+
+    // Convert role_id to role_ids array for the API
+    const roleIds: string[] = [];
+
+    // Add superadmin role if checked
+    if (formData.is_superadmin) {
+      const superAdminRole = this.roles().find(r =>
+        r.name.toLowerCase() === 'superadmin' || r.name.toLowerCase() === 'super admin'
+      );
+      if (superAdminRole) {
+        roleIds.push(superAdminRole.id);
+      }
+    }
+
+    // Add selected role if not superadmin
+    if (!formData.is_superadmin && formData.role_id) {
+      roleIds.push(formData.role_id);
+    }
+
+    // Replace role_id with role_ids for API
+    delete formData.role_id;
+    formData.role_ids = roleIds;
 
     const request = this.isEditMode
       ? this.userService.updateUser(this.data.user!.id, formData)

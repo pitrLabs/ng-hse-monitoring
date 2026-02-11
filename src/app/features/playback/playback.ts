@@ -86,6 +86,7 @@ interface CalendarDayDisplay {
           <mat-form-field appearance="outline" class="filter-field">
             <mat-select [(ngModel)]="filterTriggerType" (ngModelChange)="loadRecordingsForDate()" placeholder="All Types">
               <mat-option [value]="null">All Types</mat-option>
+              <mat-option value="auto">Auto</mat-option>
               <mat-option value="alarm">Alarm</mat-option>
               <mat-option value="manual">Manual</mat-option>
               <mat-option value="schedule">Scheduled</mat-option>

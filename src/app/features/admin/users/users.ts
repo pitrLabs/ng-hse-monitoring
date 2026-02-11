@@ -26,7 +26,7 @@ interface UserFormData {
   password: string;
   is_active: boolean;
   is_superuser: boolean;
-  role_ids: string[];
+  role_id: string | null;
 }
 
 @Component({
@@ -245,8 +245,8 @@ interface UserFormData {
 
               <mat-form-field appearance="outline" class="full-width">
                 <mat-label>Role</mat-label>
-                <mat-select [(ngModel)]="userForm.role_ids" name="role_ids" multiple>
-                  @for (role of roles(); track role.id) {
+                <mat-select [(ngModel)]="userForm.role_id" name="role_id" [disabled]="userForm.is_superuser">
+                  @for (role of filteredRoles(); track role.id) {
                     <mat-option [value]="role.id">{{ formatRoleName(role.name) }}</mat-option>
                   }
                 </mat-select>
@@ -691,6 +691,14 @@ export class AdminUsersComponent implements OnInit {
   formError = signal('');
   userForm: UserFormData = this.getEmptyUserForm();
 
+  // Filter out Super Admin from role list
+  filteredRoles = computed(() => {
+    return this.roles().filter(role => {
+      const name = role.name.toLowerCase().replace(/[\s_-]/g, '');
+      return name !== 'superadmin';
+    });
+  });
+
   // Computed for checkbox states
   allCamerasSelected = computed(() => {
     const all = this.allCameras();
@@ -717,7 +725,7 @@ export class AdminUsersComponent implements OnInit {
       password: '',
       is_active: true,
       is_superuser: false,
-      role_ids: []
+      role_id: null
     };
   }
 
@@ -799,6 +807,13 @@ export class AdminUsersComponent implements OnInit {
   editUser(user: any) {
     this.isEditMode.set(true);
     this.selectedUser.set(user);
+
+    // Get first non-superadmin role
+    const regularRole = user.roles?.find((r: Role) => {
+      const name = r.name.toLowerCase().replace(/[\s_-]/g, '');
+      return name !== 'superadmin';
+    });
+
     this.userForm = {
       username: user.username,
       email: user.email,
@@ -806,7 +821,7 @@ export class AdminUsersComponent implements OnInit {
       password: '',
       is_active: user.is_active,
       is_superuser: user.is_superuser || false,
-      role_ids: user.roles?.map((r: Role) => r.id) || []
+      role_id: regularRole?.id || null
     };
     this.formError.set('');
     this.showUserModal.set(true);
@@ -838,6 +853,12 @@ export class AdminUsersComponent implements OnInit {
 
     this.savingUser.set(true);
 
+    // Build role_ids array for API
+    const roleIds: string[] = [];
+    if (!this.userForm.is_superuser && this.userForm.role_id) {
+      roleIds.push(this.userForm.role_id);
+    }
+
     if (this.isEditMode()) {
       // Update existing user
       const user = this.selectedUser();
@@ -846,7 +867,7 @@ export class AdminUsersComponent implements OnInit {
         full_name: this.userForm.full_name || null,
         is_active: this.userForm.is_active,
         is_superuser: this.userForm.is_superuser,
-        role_ids: this.userForm.role_ids
+        role_ids: roleIds
       };
 
       if (this.userForm.password) {
@@ -872,8 +893,11 @@ export class AdminUsersComponent implements OnInit {
         full_name: this.userForm.full_name || null,
         password: this.userForm.password,
         is_superuser: this.userForm.is_superuser,
-        role_ids: this.userForm.role_ids
+        role_ids: roleIds
       };
+
+      console.log('Creating user with payload:', createPayload);
+      console.log('Form data:', this.userForm);
 
       this.http.post<any>(`${this.apiUrl}/users`, createPayload).subscribe({
         next: () => {
@@ -883,7 +907,17 @@ export class AdminUsersComponent implements OnInit {
         },
         error: (err) => {
           this.savingUser.set(false);
-          this.formError.set(err.error?.detail || 'Failed to create user');
+          console.error('Create user error:', err.error);
+          const detail = err.error?.detail;
+          if (Array.isArray(detail)) {
+            // Pydantic validation error format
+            const msg = detail.map((d: any) => `${d.loc?.join('.')}: ${d.msg}`).join(', ');
+            this.formError.set(msg);
+          } else if (typeof detail === 'string') {
+            this.formError.set(detail);
+          } else {
+            this.formError.set('Failed to create user');
+          }
         }
       });
     }

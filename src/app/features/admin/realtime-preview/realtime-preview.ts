@@ -113,6 +113,27 @@ interface ChannelGroup {
               </button>
             }
           </div>
+
+          <!-- Active Only Filter -->
+          <div class="filter-row">
+            <label class="filter-checkbox">
+              <input type="checkbox" [(ngModel)]="showActiveOnly">
+              <span class="checkmark"></span>
+              <span class="filter-label">Active Only</span>
+            </label>
+          </div>
+
+          <!-- Selected Camera Indicator -->
+          @if (selectedChannel()) {
+            <div class="selected-indicator">
+              <mat-icon>videocam</mat-icon>
+              <span class="selected-name">{{ selectedChannel()!.name }}</span>
+              <button mat-icon-button class="clear-selection-btn" (click)="clearSelection()" matTooltip="Clear selection">
+                <mat-icon>close</mat-icon>
+              </button>
+            </div>
+          }
+
           <div class="device-list">
             @if (loading) {
               <div class="loading-devices">
@@ -138,7 +159,7 @@ interface ChannelGroup {
                       <mat-icon class="expand-icon" [class.expanded]="group.expanded">chevron_right</mat-icon>
                       <mat-icon class="folder-icon">folder</mat-icon>
                       <span class="node-name">{{ group.displayName }}</span>
-                      <span class="node-count">({{ group.channels.length }})</span>
+                      <span class="node-count">({{ getFilteredChannels(group.channels).length }})</span>
                       @if (canRenameGroups()) {
                         <div class="folder-actions">
                           <button mat-icon-button class="folder-action-btn" matTooltip="Rename" (click)="openRenameDialog(group); $event.stopPropagation()">
@@ -152,10 +173,11 @@ interface ChannelGroup {
                     </div>
                     @if (group.expanded) {
                       <div class="node-children">
-                        @for (channel of group.channels; track channel.id) {
+                        @for (channel of getFilteredChannels(group.channels); track channel.id) {
                           <div class="device-item"
                                [class.online]="channel.status === 'online'"
                                [class.connecting]="channel.isConnecting"
+                               [class.selected]="selectedChannel()?.id === channel.id"
                                [class.dragging]="draggingChannel?.id === channel.id"
                                draggable="true"
                                (dragstart)="onChannelDragStart($event, channel, group)"
@@ -178,13 +200,14 @@ interface ChannelGroup {
                     <div class="aibox-separator">
                       <mat-icon class="aibox-icon">dns</mat-icon>
                       <span class="aibox-name">{{ group.aiboxName }}</span>
-                      <span class="node-count">({{ group.channels.length }})</span>
+                      <span class="node-count">({{ getFilteredChannels(group.channels).length }})</span>
                     </div>
                     <div class="aibox-cameras">
-                      @for (channel of group.channels; track channel.id) {
+                      @for (channel of getFilteredChannels(group.channels); track channel.id) {
                         <div class="device-item"
                              [class.online]="channel.status === 'online'"
                              [class.connecting]="channel.isConnecting"
+                             [class.selected]="selectedChannel()?.id === channel.id"
                              [class.dragging]="draggingChannel?.id === channel.id"
                              draggable="true"
                              (dragstart)="onChannelDragStart($event, channel, group)"
@@ -246,9 +269,11 @@ interface ChannelGroup {
                     </div>
                   </div>
                 } @else {
-                  <div class="empty-slot">
-                    <mat-icon>add_to_queue</mat-icon>
-                    <span>Click a camera to add</span>
+                  <div class="empty-slot"
+                       [class.ready]="selectedChannel()"
+                       (click)="playInSlot(i)">
+                    <mat-icon>{{ selectedChannel() ? 'add_circle' : 'add_to_queue' }}</mat-icon>
+                    <span>{{ selectedChannel() ? 'Click to play ' + selectedChannel()!.name : 'Select a camera first' }}</span>
                   </div>
                 }
               </div>
@@ -737,6 +762,88 @@ interface ChannelGroup {
       }
     }
 
+    .filter-row {
+      display: flex;
+      align-items: center;
+      padding: 8px 16px;
+      border-bottom: 1px solid var(--glass-border);
+    }
+
+    .filter-checkbox {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      font-size: 12px;
+      color: var(--text-secondary);
+      user-select: none;
+
+      input[type="checkbox"] {
+        width: 16px;
+        height: 16px;
+        accent-color: var(--accent-primary, #00d4ff);
+        cursor: pointer;
+      }
+
+      .filter-label {
+        font-size: 12px;
+      }
+
+      &:hover {
+        color: var(--text-primary);
+      }
+    }
+
+    .selected-indicator {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 12px;
+      margin: 8px 12px;
+      background: rgba(0, 212, 255, 0.15);
+      border: 1px solid rgba(0, 212, 255, 0.3);
+      border-radius: 8px;
+      animation: pulse-selected 2s infinite;
+
+      mat-icon {
+        font-size: 18px;
+        width: 18px;
+        height: 18px;
+        color: var(--accent-primary, #00d4ff);
+      }
+
+      .selected-name {
+        flex: 1;
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--accent-primary, #00d4ff);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .clear-selection-btn {
+        width: 24px;
+        height: 24px;
+        color: var(--text-secondary);
+
+        mat-icon {
+          font-size: 16px;
+          width: 16px;
+          height: 16px;
+        }
+
+        &:hover {
+          color: var(--error, #ef4444);
+        }
+      }
+    }
+
+    @keyframes pulse-selected {
+      0%, 100% { border-color: rgba(0, 212, 255, 0.3); }
+      50% { border-color: rgba(0, 212, 255, 0.6); }
+    }
+
     .device-list {
       flex: 1;
       overflow-y: auto;
@@ -970,6 +1077,21 @@ interface ChannelGroup {
       &:hover {
         background: rgba(0, 212, 255, 0.1);
       }
+
+      &.selected {
+        background: rgba(0, 212, 255, 0.2);
+        border: 2px solid var(--accent-primary, #00d4ff);
+        box-shadow: 0 0 12px rgba(0, 212, 255, 0.3);
+
+        mat-icon {
+          color: var(--accent-primary, #00d4ff);
+        }
+
+        .device-name {
+          color: var(--text-primary);
+          font-weight: 500;
+        }
+      }
     }
 
     .video-grid {
@@ -1135,6 +1257,8 @@ interface ChannelGroup {
       background: rgba(0, 0, 0, 0.1);
       border: 2px dashed var(--glass-border);
       border-radius: 10px;
+      cursor: default;
+      transition: all 0.2s ease;
 
       mat-icon {
         font-size: 36px;
@@ -1146,6 +1270,27 @@ interface ChannelGroup {
       span {
         font-size: 13px;
         color: var(--text-muted);
+        text-align: center;
+        padding: 0 12px;
+      }
+
+      &.ready {
+        cursor: pointer;
+        border-color: var(--accent-primary, #00d4ff);
+        background: rgba(0, 212, 255, 0.05);
+
+        mat-icon {
+          color: var(--accent-primary, #00d4ff);
+        }
+
+        span {
+          color: var(--accent-primary, #00d4ff);
+        }
+
+        &:hover {
+          background: rgba(0, 212, 255, 0.15);
+          border-style: solid;
+        }
       }
     }
 
@@ -1417,6 +1562,12 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
   // AI Box multi-selection (like Monitor page)
   aiBoxes = this.aiBoxService.aiBoxes;
   selectedAiBoxIds = signal<Set<string>>(new Set());
+
+  // Two-step click mechanism: select first, then click slot to play
+  selectedChannel = signal<VideoChannel | null>(null);
+
+  // Active Only filter - show only green (online/streaming) cameras
+  showActiveOnly = false;
 
   private fullscreenChangeHandler = () => this.onFullscreenChange();
   private recordingTimerInterval: any = null;
@@ -2136,12 +2287,40 @@ export class AdminRealtimePreviewComponent implements OnInit, OnDestroy {
     this.initializeGrid();
   }
 
+  // Two-step click: First click selects the channel
   selectChannel(channel: VideoChannel) {
-    const emptyIndex = this.gridSlots.findIndex(slot => slot === null);
-    if (emptyIndex !== -1) {
-      this.gridSlots[emptyIndex] = channel;
+    // Toggle selection if clicking same channel
+    if (this.selectedChannel()?.id === channel.id) {
+      this.selectedChannel.set(null);
+    } else {
+      this.selectedChannel.set(channel);
+    }
+  }
+
+  // Second step: Click empty slot to play selected channel
+  playInSlot(index: number) {
+    const channel = this.selectedChannel();
+    if (!channel) return;
+
+    // Check if slot is empty
+    if (this.gridSlots[index] === null) {
+      this.gridSlots[index] = channel;
+      this.selectedChannel.set(null); // Clear selection after playing
       this.updateSharedServiceMode();
     }
+  }
+
+  // Clear selection
+  clearSelection() {
+    this.selectedChannel.set(null);
+  }
+
+  // Filter channels by Active Only
+  getFilteredChannels(channels: VideoChannel[]): VideoChannel[] {
+    if (!this.showActiveOnly) {
+      return channels;
+    }
+    return channels.filter(c => c.status === 'online');
   }
 
   getChannelForSlot(index: number): VideoChannel | null {

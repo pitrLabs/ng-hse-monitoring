@@ -9,7 +9,7 @@ import { MatDividerModule } from '@angular/material/divider';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { AlarmService } from '../../core/services/alarm.service';
 import { AlarmNotification, getAlarmImageUrl, getBestAlarmImageUrl } from '../../core/models/alarm.model';
-import { LocationsService, CameraLocation } from '../../core/services/locations.service';
+import { LocationsService, CameraLocation, LiveKoperItem } from '../../core/services/locations.service';
 import { AuthService } from '../../core/services/auth.service';
 import { VideoSourceService, VideoSource } from '../../core/services/video-source.service';
 import { AITaskService, BmappTask } from '../../core/services/ai-task.service';
@@ -191,7 +191,7 @@ interface DeviceClass {
             <button mat-icon-button class="map-tool-btn" matTooltip="Fit All Markers" (click)="fitAllMarkers()">
               <mat-icon>fit_screen</mat-icon>
             </button>
-            <div class="auto-label">{{ mapMarkers().length }} locations</div>
+            <div class="auto-label">{{ mapMarkers().length }} online</div>
           </div>
 
           <div class="map-toolbar-right">
@@ -1342,7 +1342,8 @@ export class HomeComponent implements OnInit, OnDestroy {
   // Map related
   mapMarkers = signal<MapMarker[]>([]);
   mapTileLayer = signal<'dark' | 'standard' | 'satellite'>('dark');
-  mapCenter: [number, number] = [-6.2088, 106.8456]; // Jakarta default
+  mapCenter: [number, number] = [-7.0, 110.4]; // Central Java default
+  liveDevices = signal<LiveKoperItem[]>([]);
 
   ngOnInit(): void {
     // Load initial alarms and stats
@@ -1380,21 +1381,26 @@ export class HomeComponent implements OnInit, OnDestroy {
   }
 
   async loadLocations(): Promise<void> {
-    const locations = await this.locationsService.loadLocations({ limit: 500 });
-    this.updateMapMarkers(locations);
+    // Load live data from tim_koper API (only show online devices with GPS)
+    const response = await this.locationsService.getLiveTimKoper();
+    if (response) {
+      this.liveDevices.set(response.data);
+      this.updateMapMarkersFromLive(response.data);
+    }
   }
 
-  private updateMapMarkers(locations: CameraLocation[]): void {
-    const markers: MapMarker[] = locations
-      .filter(loc => loc.latitude && loc.longitude)
-      .map(loc => ({
-        id: loc.id,
-        name: loc.name,
-        latitude: loc.latitude,
-        longitude: loc.longitude,
-        type: loc.location_type || loc.source,
-        isOnline: loc.is_active,
-        data: loc
+  private updateMapMarkersFromLive(devices: LiveKoperItem[]): void {
+    // Filter: only online devices with valid GPS coordinates
+    const markers: MapMarker[] = devices
+      .filter(d => d.is_online && d.has_gps && d.latitude && d.longitude)
+      .map(d => ({
+        id: d.id,
+        name: d.name,
+        latitude: d.latitude,
+        longitude: d.longitude,
+        type: d.jenis_har || 'Koper CCTV',
+        isOnline: d.is_online,
+        data: d
       }));
     this.mapMarkers.set(markers);
   }
@@ -1423,7 +1429,7 @@ export class HomeComponent implements OnInit, OnDestroy {
   }
 
   async syncLocations(): Promise<void> {
-    await this.locationsService.syncLocations('gps_tim_har');
+    // Just reload live data (no database sync needed for live view)
     await this.loadLocations();
   }
 

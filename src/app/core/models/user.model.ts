@@ -22,6 +22,7 @@ export interface User {
   full_name?: string;
   is_active: boolean;
   is_superuser: boolean;
+  is_superadmin?: boolean;
   created_at: string;
   updated_at: string;
   roles: Role[];

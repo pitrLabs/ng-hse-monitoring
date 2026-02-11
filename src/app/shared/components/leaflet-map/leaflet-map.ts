@@ -23,6 +23,14 @@ export interface MapMarker {
   data?: unknown;
 }
 
+export interface TrackPoint {
+  lat: number;
+  lng: number;
+  status?: string;
+  is_online?: boolean;
+  recorded_at?: string;
+}
+
 @Component({
   selector: 'app-leaflet-map',
   standalone: true,
@@ -137,6 +145,7 @@ export class LeafletMapComponent implements OnInit, OnDestroy, AfterViewInit {
 
   // Inputs
   markers = input<MapMarker[]>([]);
+  track = input<TrackPoint[]>([]);  // GPS track to display as polyline
   center = input<[number, number]>([-6.2088, 106.8456]); // Default: Jakarta
   zoom = input<number>(10);
   showZoomControl = input<boolean>(true);
@@ -150,6 +159,7 @@ export class LeafletMapComponent implements OnInit, OnDestroy, AfterViewInit {
   loading = signal(true);
   private map: L.Map | null = null;
   private markerLayer: L.LayerGroup | null = null;
+  private trackLayer: L.LayerGroup | null = null;
   private tileLayerInstance: L.TileLayer | null = null;
 
   // Custom marker icons
@@ -206,6 +216,14 @@ export class LeafletMapComponent implements OnInit, OnDestroy, AfterViewInit {
       }
     });
 
+    // React to track changes
+    effect(() => {
+      const trackPoints = this.track();
+      if (this.map && this.trackLayer) {
+        this.updateTrack(trackPoints);
+      }
+    });
+
     // React to tile layer changes
     effect(() => {
       const layer = this.tileLayer();
@@ -244,8 +262,14 @@ export class LeafletMapComponent implements OnInit, OnDestroy, AfterViewInit {
     // Create marker layer group
     this.markerLayer = L.layerGroup().addTo(this.map);
 
+    // Create track layer group
+    this.trackLayer = L.layerGroup().addTo(this.map);
+
     // Add initial markers
     this.updateMarkers(this.markers());
+
+    // Add initial track
+    this.updateTrack(this.track());
 
     // Map click handler
     this.map.on('click', (e: L.LeafletMouseEvent) => {
@@ -327,6 +351,84 @@ export class LeafletMapComponent implements OnInit, OnDestroy, AfterViewInit {
         this.map?.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
       }
     }
+  }
+
+  private updateTrack(trackPoints: TrackPoint[]): void {
+    if (!this.trackLayer) return;
+
+    // Clear existing track
+    this.trackLayer.clearLayers();
+
+    if (trackPoints.length < 2) return;
+
+    // Create polyline from track points
+    const latLngs = trackPoints.map(p => [p.lat, p.lng] as [number, number]);
+
+    // Main track line (gradient effect with multiple polylines)
+    const polyline = L.polyline(latLngs, {
+      color: '#00d4ff',
+      weight: 3,
+      opacity: 0.8,
+      smoothFactor: 1
+    });
+    this.trackLayer.addLayer(polyline);
+
+    // Add glow effect
+    const glowLine = L.polyline(latLngs, {
+      color: '#00d4ff',
+      weight: 8,
+      opacity: 0.2,
+      smoothFactor: 1
+    });
+    this.trackLayer.addLayer(glowLine);
+
+    // Add small circles at each point to show history
+    trackPoints.forEach((point, index) => {
+      const isFirst = index === 0;
+      const isLast = index === trackPoints.length - 1;
+
+      // Show circles for first, last, and every 10th point
+      if (isFirst || isLast || index % 10 === 0) {
+        const color = point.is_online ? '#10b981' : '#ef4444';
+        const radius = isLast ? 8 : isFirst ? 6 : 4;
+
+        const circle = L.circleMarker([point.lat, point.lng], {
+          radius: radius,
+          fillColor: isLast ? '#00d4ff' : color,
+          fillOpacity: isLast ? 1 : 0.7,
+          color: isLast ? '#fff' : color,
+          weight: isLast ? 2 : 1
+        });
+
+        // Add popup with timestamp
+        if (point.recorded_at) {
+          const time = new Date(point.recorded_at).toLocaleString('id-ID');
+          const label = isLast ? 'Posisi Terakhir' : isFirst ? 'Posisi Awal' : 'Posisi';
+          circle.bindPopup(`
+            <div style="padding: 4px;">
+              <div style="font-weight: 600; font-size: 12px;">${label}</div>
+              <div style="font-size: 11px; color: rgba(255,255,255,0.7);">${time}</div>
+              <div style="font-size: 10px; color: rgba(255,255,255,0.5); margin-top: 4px;">
+                ${point.lat.toFixed(6)}, ${point.lng.toFixed(6)}
+              </div>
+            </div>
+          `);
+        }
+
+        this.trackLayer?.addLayer(circle);
+      }
+    });
+
+    // Fit bounds to track
+    if (latLngs.length > 0) {
+      const bounds = L.latLngBounds(latLngs);
+      this.map?.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
+    }
+  }
+
+  // Clear track from map
+  clearTrack(): void {
+    this.trackLayer?.clearLayers();
   }
 
   private createPopupContent(marker: MapMarker): string {

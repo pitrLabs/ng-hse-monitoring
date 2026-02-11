@@ -33,6 +33,43 @@ export interface SyncResult {
   errors: string[];
 }
 
+export interface LiveKoperItem {
+  id: string;
+  name: string;
+  latitude: number;
+  longitude: number;
+  status: string;
+  is_online: boolean;
+  has_gps?: boolean;
+  keypoint_name?: string;
+  jenis_har?: string;
+  extra_data?: Record<string, unknown>;
+}
+
+export interface LiveKoperResponse {
+  count: number;
+  online: number;
+  with_gps?: number;
+  data: LiveKoperItem[];
+}
+
+export interface TrackPoint {
+  lat: number;
+  lng: number;
+  status: string;
+  is_online: boolean;
+  recorded_at: string;
+}
+
+export interface DeviceHistoryResponse {
+  device_id: string;
+  from_time: string;
+  to_time: string;
+  count: number;
+  track: TrackPoint[];
+  latest: TrackPoint | null;
+}
+
 @Injectable({
   providedIn: 'root'
 })
@@ -116,6 +153,57 @@ export class LocationsService {
       );
     } catch (err) {
       console.error('Failed to get location:', err);
+      return null;
+    }
+  }
+
+  /**
+   * Get live tim koper data directly from RTU API (real-time, not from DB)
+   * Returns all koper CCTV with status ON/OFF
+   */
+  async getLiveTimKoper(): Promise<LiveKoperResponse | null> {
+    try {
+      return await firstValueFrom(
+        this.http.get<LiveKoperResponse>(`${this.baseUrl}/live/tim-koper`)
+      );
+    } catch (err) {
+      console.error('Failed to get live tim koper:', err);
+      return null;
+    }
+  }
+
+  /**
+   * Get live GPS tim har data directly from RTU API (real-time, not from DB)
+   * Returns koper CCTV that are at scheduled Har locations with GPS
+   */
+  async getLiveGpsTimHar(): Promise<LiveKoperResponse | null> {
+    try {
+      return await firstValueFrom(
+        this.http.get<LiveKoperResponse>(`${this.baseUrl}/live/gps-tim-har`)
+      );
+    } catch (err) {
+      console.error('Failed to get live gps tim har:', err);
+      return null;
+    }
+  }
+
+  /**
+   * Get historical GPS track for a device
+   * @param deviceId - The device ID (id_alat)
+   * @param hours - Number of hours of history to retrieve (default 24)
+   * @param limit - Maximum number of data points (default 1000)
+   */
+  async getDeviceHistory(deviceId: string, hours: number = 24, limit: number = 1000): Promise<DeviceHistoryResponse | null> {
+    try {
+      const params = new HttpParams()
+        .set('hours', hours.toString())
+        .set('limit', limit.toString());
+
+      return await firstValueFrom(
+        this.http.get<DeviceHistoryResponse>(`${this.baseUrl}/history/${deviceId}`, { params })
+      );
+    } catch (err) {
+      console.error('Failed to get device history:', err);
       return null;
     }
   }

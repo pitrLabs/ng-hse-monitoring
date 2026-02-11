@@ -10,12 +10,18 @@ export interface Recording {
   task_session?: string;
   start_time: string;
   end_time?: string;
-  trigger_type: 'alarm' | 'manual' | 'schedule';
+  trigger_type: 'alarm' | 'manual' | 'schedule' | 'auto';
   alarm_id?: string;
   thumbnail_url?: string;
   is_available: boolean;
   created_at: string;
   synced_at?: string;
+  // MinIO storage fields
+  minio_file_path?: string;
+  minio_thumbnail_path?: string;
+  minio_synced_at?: string;
+  minio_file_url?: string;  // Presigned URL
+  minio_thumbnail_url?: string;  // Presigned URL
 }
 
 export interface RecordingFilter {
@@ -26,6 +32,7 @@ export interface RecordingFilter {
   start_date?: string;
   end_date?: string;
   is_available?: boolean;
+  minio_only?: boolean;  // Only show recordings stored in MinIO (can play/download)
 }
 
 export interface CalendarDay {
@@ -84,6 +91,7 @@ export function getTriggerTypeLabel(triggerType: string): string {
     case 'alarm': return 'Alarm';
     case 'manual': return 'Manual';
     case 'schedule': return 'Scheduled';
+    case 'auto': return 'Auto';
     default: return triggerType;
   }
 }
@@ -96,6 +104,7 @@ export function getTriggerTypeColor(triggerType: string): string {
     case 'alarm': return 'error';
     case 'manual': return 'info';
     case 'schedule': return 'success';
+    case 'auto': return 'accent';
     default: return 'info';
   }
 }

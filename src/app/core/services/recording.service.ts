@@ -59,13 +59,17 @@ export class RecordingService {
   /**
    * Load calendar data for a specific month
    */
-  loadCalendar(year: number, month: number, cameraId?: string): Observable<CalendarDay[]> {
+  loadCalendar(year: number, month: number, cameraId?: string, minioOnly: boolean = true): Observable<CalendarDay[]> {
     let httpParams = new HttpParams()
       .set('year', year.toString())
       .set('month', month.toString());
 
     if (cameraId) {
       httpParams = httpParams.set('camera_id', cameraId);
+    }
+
+    if (minioOnly) {
+      httpParams = httpParams.set('minio_only', 'true');
     }
 
     return this.http.get<CalendarDay[]>(`${this.apiUrl}/recordings/calendar`, { params: httpParams }).pipe(
@@ -82,12 +86,15 @@ export class RecordingService {
   /**
    * Load recordings for a specific date
    */
-  loadRecordingsByDate(date: string, cameraId?: string): Observable<Recording[]> {
+  loadRecordingsByDate(date: string, cameraId?: string, minioOnly: boolean = true): Observable<Recording[]> {
     this._isLoading.set(true);
 
     let httpParams = new HttpParams().set('date', date);
     if (cameraId) {
       httpParams = httpParams.set('camera_id', cameraId);
+    }
+    if (minioOnly) {
+      httpParams = httpParams.set('minio_only', 'true');
     }
 
     return this.http.get<Recording[]>(`${this.apiUrl}/recordings/by-date`, { params: httpParams }).pipe(

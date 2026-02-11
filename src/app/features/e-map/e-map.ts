@@ -1,4 +1,4 @@
-import { Component, signal, OnInit, inject, ViewChild, computed, effect } from '@angular/core';
+import { Component, signal, OnInit, OnDestroy, inject, ViewChild, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MatIconModule } from '@angular/material/icon';
@@ -9,23 +9,20 @@ import { MatCheckboxModule } from '@angular/material/checkbox';
 import { MatInputModule } from '@angular/material/input';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
-import { LocationsService, CameraLocation } from '../../core/services/locations.service';
-import { LeafletMapComponent, MapMarker } from '../../shared/components/leaflet-map/leaflet-map';
+import { MatSelectModule } from '@angular/material/select';
+import { LocationsService, CameraLocation, LiveKoperItem, TrackPoint as ServiceTrackPoint } from '../../core/services/locations.service';
+import { LeafletMapComponent, MapMarker, TrackPoint } from '../../shared/components/leaflet-map/leaflet-map';
 
 interface DeviceItem {
   id: string;
   name: string;
   online: boolean;
-  location: CameraLocation;
+  hasGps: boolean;
+  location: CameraLocation | null;
+  liveData?: LiveKoperItem;
 }
 
-interface RegionGroup {
-  id: string;
-  name: string;
-  expanded: boolean;
-  visible: boolean;
-  devices: DeviceItem[];
-}
+type SortOption = 'status' | 'name' | 'id';
 
 @Component({
   selector: 'app-e-map',
@@ -41,6 +38,7 @@ interface RegionGroup {
     MatInputModule,
     MatFormFieldModule,
     MatProgressSpinnerModule,
+    MatSelectModule,
     LeafletMapComponent
   ],
   template: `
@@ -53,58 +51,105 @@ interface RegionGroup {
           <input type="text" placeholder="Search devices..." [(ngModel)]="searchQuery" class="search-input">
         </div>
 
-        <!-- Filters -->
-        <div class="filter-options">
-          <mat-checkbox [(ngModel)]="onlineOnly" color="primary">Online Only</mat-checkbox>
-          <mat-checkbox [(ngModel)]="onlineInGroup" color="primary">Online in Group</mat-checkbox>
+        <!-- Stats Bar -->
+        <div class="stats-bar">
+          <div class="stat-item">
+            <span class="stat-value">{{ totalDevices() }}</span>
+            <span class="stat-label">Total</span>
+          </div>
+          <div class="stat-item online">
+            <span class="stat-value">{{ onlineDevices() }}</span>
+            <span class="stat-label">Online</span>
+          </div>
+          <div class="stat-item offline">
+            <span class="stat-value">{{ totalDevices() - onlineDevices() }}</span>
+            <span class="stat-label">Offline</span>
+          </div>
+          <div class="stat-item gps">
+            <span class="stat-value">{{ withGpsDevices() }}</span>
+            <span class="stat-label">With GPS</span>
+          </div>
         </div>
 
-        <!-- Device Groups - Region > Device -->
-        <div class="device-tree">
-          @if (loading()) {
-            <div class="tree-loading">
-              <mat-spinner diameter="24"></mat-spinner>
-              <span>Loading locations...</span>
+        <!-- Filters -->
+        <div class="filter-options">
+          <mat-checkbox [(ngModel)]="liveMode" (change)="onLiveModeChange()" color="primary">
+            <span class="live-label">
+              <span class="live-dot" [class.active]="liveMode"></span>
+              Live Mode
+            </span>
+          </mat-checkbox>
+          <mat-checkbox [(ngModel)]="onlineOnly" color="primary">Online Only</mat-checkbox>
+          <mat-checkbox [(ngModel)]="showOnlyWithGps" color="primary">With GPS Only</mat-checkbox>
+        </div>
+
+        <!-- Sort Options -->
+        <div class="sort-options">
+          <mat-form-field appearance="outline" class="sort-select">
+            <mat-label>Sort by</mat-label>
+            <mat-select [(ngModel)]="sortBy">
+              <mat-option value="status">Status (ON first)</mat-option>
+              <mat-option value="name">Name</mat-option>
+              <mat-option value="id">ID Alat</mat-option>
+            </mat-select>
+          </mat-form-field>
+        </div>
+
+        <!-- Selected Device Info -->
+        @if (selectedDeviceId) {
+          <div class="selected-device-bar">
+            <div class="selected-info">
+              <mat-icon>timeline</mat-icon>
+              <span>Track: {{ selectedDeviceId }}</span>
+              @if (loadingTrack()) {
+                <mat-spinner diameter="14"></mat-spinner>
+              }
             </div>
-          } @else if (filteredRegionGroups().length === 0) {
-            <div class="tree-empty">
+            <button mat-icon-button (click)="clearSelection()" matTooltip="Clear Track">
+              <mat-icon>close</mat-icon>
+            </button>
+          </div>
+        }
+
+        <!-- Device List -->
+        <div class="device-list">
+          @if (loading()) {
+            <div class="list-loading">
+              <mat-spinner diameter="24"></mat-spinner>
+              <span>Loading devices...</span>
+            </div>
+          } @else if (sortedDevices().length === 0) {
+            <div class="list-empty">
               <mat-icon>location_off</mat-icon>
-              <span>No locations found</span>
+              <span>No devices found</span>
               <button mat-stroked-button (click)="syncLocations()">
                 <mat-icon>sync</mat-icon>
                 Sync from API
               </button>
             </div>
           } @else {
-            @for (region of filteredRegionGroups(); track region.id) {
-              <div class="tree-node region-node">
-                <div class="node-header region-header">
-                  <mat-icon class="expand-icon" [class.expanded]="region.expanded" (click)="toggleRegionGroup(region)">
-                    chevron_right
-                  </mat-icon>
-                  <mat-checkbox
-                    [checked]="region.visible"
-                    (change)="toggleRegionVisibility(region)"
-                    color="primary"
-                    class="visibility-check"
-                  ></mat-checkbox>
-                  <mat-icon class="folder-icon region-folder">folder</mat-icon>
-                  <span class="node-name" (click)="toggleRegionGroup(region)">{{ region.name }}</span>
-                  <span class="node-count">({{ region.devices.length }})</span>
+            @for (device of sortedDevices(); track device.id) {
+              <div
+                class="device-item"
+                [class.selected]="selectedDeviceId === device.id"
+                [class.online]="device.online"
+                [class.no-gps]="!device.hasGps"
+                (click)="selectDevice(device)"
+              >
+                <div class="device-status">
+                  <span class="status-indicator" [class.online]="device.online"></span>
                 </div>
-                @if (region.expanded) {
-                  <div class="node-children">
-                    @for (device of getFilteredDevices(region); track device.id) {
-                      <div class="device-item" (click)="focusOnDevice(device)">
-                        <mat-icon class="device-icon" [class.online]="device.online">
-                          {{ device.online ? 'location_on' : 'location_off' }}
-                        </mat-icon>
-                        <span class="device-name">{{ device.name }}</span>
-                        <span class="status-dot" [class.online]="device.online"></span>
-                      </div>
-                    }
-                  </div>
-                }
+                <div class="device-info">
+                  <span class="device-id">{{ device.id }}</span>
+                  <span class="device-name">{{ device.name }}</span>
+                </div>
+                <div class="device-actions">
+                  @if (!device.hasGps) {
+                    <mat-icon class="no-gps-icon" matTooltip="No GPS">gps_off</mat-icon>
+                  } @else {
+                    <mat-icon class="gps-icon" matTooltip="Has GPS">gps_fixed</mat-icon>
+                  }
+                </div>
               </div>
             }
           }
@@ -171,6 +216,7 @@ interface RegionGroup {
         <app-leaflet-map
           #mapComponent
           [markers]="mapMarkers()"
+          [track]="deviceTrack()"
           [tileLayer]="mapTileLayer()"
           [center]="mapCenter"
           [zoom]="10"
@@ -226,12 +272,44 @@ interface RegionGroup {
       }
     }
 
+    .stats-bar {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+      padding: 12px;
+      background: var(--glass-bg);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius-sm);
+    }
+
+    .stat-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+
+      .stat-value {
+        font-size: 18px;
+        font-weight: 600;
+        color: var(--text-primary);
+      }
+
+      .stat-label {
+        font-size: 10px;
+        color: var(--text-tertiary);
+        text-transform: uppercase;
+      }
+
+      &.online .stat-value { color: var(--success); }
+      &.offline .stat-value { color: var(--error); }
+      &.gps .stat-value { color: var(--accent-primary); }
+    }
+
     .filter-options {
       display: flex;
       flex-direction: column;
       gap: 8px;
       padding: 8px 0;
-      border-bottom: 1px solid var(--glass-border);
 
       ::ng-deep .mat-mdc-checkbox-label {
         font-size: 13px;
@@ -239,12 +317,110 @@ interface RegionGroup {
       }
     }
 
-    .device-tree {
-      flex: 1;
-      overflow-y: auto;
+    .live-label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
     }
 
-    .tree-loading, .tree-empty {
+    .live-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--text-muted);
+      transition: all 0.3s ease;
+
+      &.active {
+        background: var(--error);
+        box-shadow: 0 0 8px var(--error);
+        animation: pulse 1.5s infinite;
+      }
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    .sort-options {
+      padding: 8px 0;
+      border-bottom: 1px solid var(--glass-border);
+
+      .sort-select {
+        width: 100%;
+
+        ::ng-deep .mat-mdc-form-field-subscript-wrapper {
+          display: none;
+        }
+
+        ::ng-deep .mat-mdc-text-field-wrapper {
+          background: var(--glass-bg);
+        }
+
+        ::ng-deep .mdc-notched-outline__leading,
+        ::ng-deep .mdc-notched-outline__notch,
+        ::ng-deep .mdc-notched-outline__trailing {
+          border-color: var(--glass-border) !important;
+        }
+
+        ::ng-deep .mat-mdc-select-value {
+          color: var(--text-primary);
+          font-size: 13px;
+        }
+
+        ::ng-deep .mat-mdc-floating-label {
+          color: var(--text-tertiary);
+        }
+      }
+    }
+
+    .selected-device-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      background: rgba(0, 212, 255, 0.15);
+      border: 1px solid var(--accent-primary);
+      border-radius: var(--radius-sm);
+      margin-top: 8px;
+
+      .selected-info {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+        color: var(--accent-primary);
+
+        mat-icon {
+          font-size: 16px;
+          width: 16px;
+          height: 16px;
+        }
+      }
+
+      button {
+        width: 24px;
+        height: 24px;
+        line-height: 24px;
+
+        mat-icon {
+          font-size: 16px;
+          width: 16px;
+          height: 16px;
+        }
+      }
+    }
+
+    .device-list {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding-top: 8px;
+    }
+
+    .list-loading, .list-empty {
       display: flex;
       flex-direction: column;
       align-items: center;
@@ -266,152 +442,104 @@ interface RegionGroup {
       }
     }
 
-    .tree-node {
-      margin-bottom: 4px;
-    }
-
-    .node-header {
-      display: flex;
-      align-items: center;
-      gap: 4px;
-      padding: 8px;
-      border-radius: var(--radius-sm);
-      cursor: pointer;
-      transition: background 0.2s ease;
-
-      &:hover {
-        background: var(--glass-bg-hover);
-      }
-    }
-
-    .expand-icon {
-      font-size: 18px;
-      width: 18px;
-      height: 18px;
-      min-width: 18px;
-      color: var(--text-tertiary);
-      transition: transform 0.2s ease;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-
-      &.expanded {
-        transform: rotate(90deg);
-      }
-    }
-
-    .visibility-check {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      width: 24px;
-      min-width: 24px;
-      height: 24px;
-      margin: 0;
-
-      ::ng-deep .mdc-form-field {
-        padding: 0;
-      }
-
-      ::ng-deep .mdc-checkbox {
-        width: 18px;
-        height: 18px;
-        padding: 0;
-        margin: 0;
-        flex: 0 0 18px;
-      }
-
-      ::ng-deep .mdc-checkbox__background {
-        width: 16px;
-        height: 16px;
-        top: 1px;
-        left: 1px;
-      }
-
-      ::ng-deep .mat-mdc-checkbox-touch-target {
-        width: 24px;
-        height: 24px;
-      }
-    }
-
-    .folder-icon {
-      font-size: 18px;
-      width: 18px;
-      height: 18px;
-      min-width: 18px;
-      color: var(--warning);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-
-    .node-name {
-      flex: 1;
-      font-size: 13px;
-      color: var(--text-primary);
-      line-height: 24px;
-      margin-left: 4px;
-    }
-
-    .node-count {
-      font-size: 11px;
-      color: var(--text-tertiary);
-      line-height: 24px;
-      margin-left: 4px;
-    }
-
-    .node-children {
-      padding-left: 24px;
-    }
-
-    .region-header {
-      background: rgba(0, 212, 255, 0.05);
-      border-radius: var(--radius-sm);
-    }
-
-    .region-folder {
-      color: var(--accent-primary) !important;
-    }
-
     .device-item {
       display: flex;
       align-items: center;
-      gap: 8px;
-      padding: 6px 8px;
+      gap: 10px;
+      padding: 10px 12px;
       border-radius: var(--radius-sm);
       cursor: pointer;
+      background: var(--glass-bg);
+      border: 1px solid transparent;
+      transition: all 0.2s ease;
 
       &:hover {
-        background: var(--glass-bg);
+        background: var(--glass-bg-hover);
+        border-color: var(--glass-border);
       }
-    }
 
-    .device-icon {
-      font-size: 16px;
-      width: 16px;
-      height: 16px;
-      color: var(--text-tertiary);
+      &.selected {
+        background: rgba(0, 212, 255, 0.15);
+        border-color: var(--accent-primary);
+      }
 
       &.online {
-        color: var(--success);
+        border-left: 3px solid var(--success);
+      }
+
+      &:not(.online) {
+        border-left: 3px solid var(--text-muted);
       }
     }
 
-    .device-name {
-      flex: 1;
-      font-size: 12px;
-      color: var(--text-secondary);
+    .device-status {
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
 
-    .status-dot {
-      width: 8px;
-      height: 8px;
+    .status-indicator {
+      width: 10px;
+      height: 10px;
       border-radius: 50%;
       background: var(--text-muted);
 
       &.online {
         background: var(--success);
-        box-shadow: 0 0 6px var(--success);
+        box-shadow: 0 0 8px var(--success);
+      }
+    }
+
+    .device-info {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+    }
+
+    .device-id {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--accent-primary);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .device-name {
+      font-size: 12px;
+      color: var(--text-secondary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .device-actions {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .gps-icon {
+      font-size: 16px;
+      width: 16px;
+      height: 16px;
+      color: var(--success);
+    }
+
+    .no-gps-icon {
+      font-size: 16px;
+      width: 16px;
+      height: 16px;
+      color: var(--warning);
+      opacity: 0.7;
+    }
+
+    .device-item.no-gps {
+      opacity: 0.7;
+
+      .device-name {
+        color: var(--text-tertiary);
       }
     }
 
@@ -540,104 +668,198 @@ interface RegionGroup {
     }
   `]
 })
-export class EMapComponent implements OnInit {
+export class EMapComponent implements OnInit, OnDestroy {
   @ViewChild('mapComponent') mapComponent!: LeafletMapComponent;
 
   private locationsService = inject(LocationsService);
+  private refreshInterval: ReturnType<typeof setInterval> | null = null;
 
   searchQuery = '';
   onlineOnly = false;
-  onlineInGroup = false;
+  showOnlyWithGps = false; // Default: show all devices
+  liveMode = true; // Default: live mode on
+  sortBy: SortOption = 'status'; // Default: sort by status (ON first)
+  selectedDeviceId: string | null = null;
   loading = signal(false);
   syncing = signal(false);
 
   // Map state
   mapTileLayer = signal<'dark' | 'standard' | 'satellite'>('dark');
-  mapCenter: [number, number] = [-6.2088, 106.8456]; // Jakarta default
+  mapCenter: [number, number] = [-7.0, 110.4]; // Central Java default
   locations = signal<CameraLocation[]>([]);
+  liveDevices = signal<LiveKoperItem[]>([]);
+  deviceTrack = signal<TrackPoint[]>([]);
+  loadingTrack = signal(false);
 
-  // Track visibility state per region
-  private visibleRegions = signal<Set<string>>(new Set());
-  private visibilityInitialized = false;
+  // Stats computed signals
+  totalDevices = computed(() => this.liveMode ? this.liveDevices().length : this.locations().length);
+  onlineDevices = computed(() => this.liveMode
+    ? this.liveDevices().filter(d => d.is_online).length
+    : this.locations().filter(l => l.is_active).length
+  );
+  withGpsDevices = computed(() => this.liveMode
+    ? this.liveDevices().filter(d => d.has_gps).length
+    : this.locations().filter(l => l.latitude && l.longitude).length
+  );
 
-  // Effect to initialize visibility when locations change
-  private visibilityEffect = effect(() => {
-    const locs = this.locations();
-    if (locs.length > 0 && !this.visibilityInitialized) {
-      const allRegionIds = new Set<string>();
-      for (const loc of locs) {
-        const regionName = this.extractRegion(loc);
-        allRegionIds.add(regionName);
-      }
-      this.visibleRegions.set(allRegionIds);
-      this.visibilityInitialized = true;
-    }
-  }, { allowSignalWrites: true });
+  // Sorted and filtered device list
+  sortedDevices = computed(() => {
+    let devices: DeviceItem[] = [];
 
-  // Flat region groups: Region > Devices
-  regionGroups = computed(() => {
-    const locs = this.locations();
-    const visibleSet = this.visibleRegions();
-    const regionMap = new Map<string, RegionGroup>();
-
-    for (const loc of locs) {
-      const regionName = this.extractRegion(loc);
-
-      // Get or create region group
-      if (!regionMap.has(regionName)) {
-        regionMap.set(regionName, {
-          id: regionName,
-          name: regionName,
-          expanded: false,
-          visible: visibleSet.has(regionName),
-          devices: []
-        });
-      }
-
-      const region = regionMap.get(regionName)!;
-      region.devices.push({
+    if (this.liveMode) {
+      // Convert live data to DeviceItem
+      devices = this.liveDevices().map(item => ({
+        id: item.id,
+        name: item.name,
+        online: item.is_online,
+        hasGps: item.has_gps || false,
+        location: null,
+        liveData: item
+      }));
+    } else {
+      // Convert locations to DeviceItem
+      devices = this.locations().map(loc => ({
         id: loc.id,
         name: loc.name,
         online: loc.is_active,
-        location: loc
-      });
+        hasGps: !!(loc.latitude && loc.longitude),
+        location: loc,
+        liveData: undefined
+      }));
     }
 
-    return Array.from(regionMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+    // Apply filters
+    if (this.onlineOnly) {
+      devices = devices.filter(d => d.online);
+    }
+    if (this.showOnlyWithGps) {
+      devices = devices.filter(d => d.hasGps);
+    }
+    if (this.searchQuery) {
+      const query = this.searchQuery.toLowerCase();
+      devices = devices.filter(d =>
+        d.id.toLowerCase().includes(query) ||
+        d.name.toLowerCase().includes(query)
+      );
+    }
+
+    // Apply sorting
+    switch (this.sortBy) {
+      case 'status':
+        // Online first, then by name
+        devices.sort((a, b) => {
+          if (a.online !== b.online) return a.online ? -1 : 1;
+          return a.name.localeCompare(b.name);
+        });
+        break;
+      case 'name':
+        devices.sort((a, b) => a.name.localeCompare(b.name));
+        break;
+      case 'id':
+        devices.sort((a, b) => a.id.localeCompare(b.id));
+        break;
+    }
+
+    return devices;
   });
 
-  // Computed markers from locations (filtered by visibility)
+  // Computed markers from locations
   mapMarkers = computed(() => {
-    const visibleSet = this.visibleRegions();
-    let locs = this.locations();
+    if (this.liveMode) {
+      let devices = this.liveDevices();
 
-    // If visibility is initialized, filter by visible regions
-    if (visibleSet.size > 0) {
-      locs = locs.filter(loc => {
-        const regionName = this.extractRegion(loc);
-        return visibleSet.has(regionName);
-      });
+      // Filter by online only
+      if (this.onlineOnly) {
+        devices = devices.filter(d => d.is_online);
+      }
+
+      // Filter by has GPS (required for map markers)
+      if (this.showOnlyWithGps) {
+        devices = devices.filter(d => d.has_gps && d.latitude && d.longitude);
+      }
+
+      return devices
+        .filter(d => d.latitude && d.longitude)
+        .map(d => ({
+          id: d.id,
+          name: d.name,
+          latitude: d.latitude,
+          longitude: d.longitude,
+          type: d.jenis_har || 'Koper CCTV',
+          isOnline: d.is_online,
+          data: d
+        }));
+    } else {
+      let locs = this.locations();
+
+      if (this.onlineOnly) {
+        locs = locs.filter(l => l.is_active);
+      }
+
+      return locs
+        .filter(loc => loc.latitude && loc.longitude)
+        .map(loc => ({
+          id: loc.id,
+          name: loc.name,
+          latitude: loc.latitude,
+          longitude: loc.longitude,
+          type: loc.location_type || loc.source,
+          isOnline: loc.is_active,
+          data: loc
+        }));
     }
-
-    if (this.onlineOnly) {
-      locs = locs.filter(l => l.is_active);
-    }
-
-    return locs
-      .filter(loc => loc.latitude && loc.longitude)
-      .map(loc => ({
-        id: loc.id,
-        name: loc.name,
-        latitude: loc.latitude,
-        longitude: loc.longitude,
-        type: loc.location_type || loc.source,
-        isOnline: loc.is_active,
-        data: loc
-      }));
   });
 
   ngOnInit(): void {
-    this.loadLocations();
+    if (this.liveMode) {
+      this.loadLiveData();
+      this.startAutoRefresh();
+    } else {
+      this.loadLocations();
+    }
+  }
+
+  ngOnDestroy(): void {
+    this.stopAutoRefresh();
+  }
+
+  onLiveModeChange(): void {
+    if (this.liveMode) {
+      this.loadLiveData();
+      this.startAutoRefresh();
+    } else {
+      this.stopAutoRefresh();
+      this.loadLocations();
+    }
+  }
+
+  private startAutoRefresh(): void {
+    this.stopAutoRefresh();
+    // Refresh every 30 seconds in live mode
+    this.refreshInterval = setInterval(() => {
+      if (this.liveMode) {
+        this.loadLiveData();
+      }
+    }, 30000);
+  }
+
+  private stopAutoRefresh(): void {
+    if (this.refreshInterval) {
+      clearInterval(this.refreshInterval);
+      this.refreshInterval = null;
+    }
+  }
+
+  async loadLiveData(): Promise<void> {
+    this.loading.set(true);
+    try {
+      const response = await this.locationsService.getLiveTimKoper();
+      if (response) {
+        this.liveDevices.set(response.data);
+      }
+    } finally {
+      this.loading.set(false);
+    }
   }
 
   async loadLocations(): Promise<void> {
@@ -653,111 +875,59 @@ export class EMapComponent implements OnInit {
   async syncLocations(): Promise<void> {
     this.syncing.set(true);
     try {
-      await this.locationsService.syncLocations('gps_tim_har');
-      await this.loadLocations();
+      if (this.liveMode) {
+        await this.loadLiveData();
+      } else {
+        await this.locationsService.syncLocations('tim_koper');
+        await this.loadLocations();
+      }
     } finally {
       this.syncing.set(false);
     }
   }
 
-  private extractRegion(loc: CameraLocation): string {
-    // Try to extract region from extra_data fields
-    const extraData = loc.extra_data as Record<string, unknown> | null;
+  // Select device and focus on map + load history
+  async selectDevice(device: DeviceItem): Promise<void> {
+    this.selectedDeviceId = device.id;
 
-    if (extraData) {
-      // Try FEEDER_01 first (common in keypoint data)
-      if (extraData['FEEDER_01']) {
-        return String(extraData['FEEDER_01']).trim();
-      }
-      // Try TYPE_KP
-      if (extraData['TYPE_KP']) {
-        return String(extraData['TYPE_KP']).trim();
-      }
-      // Try KEYPOINT_SCADA and extract region part
-      if (extraData['KEYPOINT_SCADA']) {
-        const scada = String(extraData['KEYPOINT_SCADA']);
-        // Extract first part before underscore or dash
-        const match = scada.match(/^([A-Za-z]+)/);
-        if (match) {
-          return match[1].toUpperCase();
-        }
-      }
-    }
+    // Clear previous track
+    this.deviceTrack.set([]);
 
-    // Try location_type
-    if (loc.location_type) {
-      return loc.location_type;
-    }
+    // Load device history (last 24 hours)
+    this.loadingTrack.set(true);
+    try {
+      const history = await this.locationsService.getDeviceHistory(device.id, 24, 500);
+      if (history && history.track.length > 0) {
+        // Convert service TrackPoint to leaflet TrackPoint
+        const track: TrackPoint[] = history.track.map(p => ({
+          lat: p.lat,
+          lng: p.lng,
+          status: p.status,
+          is_online: p.is_online,
+          recorded_at: p.recorded_at
+        }));
+        this.deviceTrack.set(track);
 
-    // Fallback: try to extract from address
-    if (loc.address) {
-      // Common Indonesian city/region patterns
-      const addressLower = loc.address.toLowerCase();
-      const regions = ['jakarta', 'bogor', 'depok', 'tangerang', 'bekasi', 'bandung', 'surabaya', 'semarang', 'yogyakarta', 'malang'];
-      for (const region of regions) {
-        if (addressLower.includes(region)) {
-          return region.charAt(0).toUpperCase() + region.slice(1);
-        }
-      }
-      // Return first word of address
-      const firstWord = loc.address.split(/[\s,]+/)[0];
-      if (firstWord && firstWord.length > 2) {
-        return firstWord;
-      }
-    }
-
-    // Fallback: extract from name
-    if (loc.name) {
-      const parts = loc.name.split(/[-_\s]/);
-      if (parts.length > 0 && parts[0].length > 2) {
-        return parts[0].toUpperCase();
-      }
-    }
-
-    return 'Other';
-  }
-
-  filteredRegionGroups(): RegionGroup[] {
-    let regions = this.regionGroups();
-    if (this.searchQuery) {
-      const query = this.searchQuery.toLowerCase();
-      regions = regions.filter(region =>
-        region.name.toLowerCase().includes(query) ||
-        region.devices.some(d => d.name.toLowerCase().includes(query))
-      );
-    }
-    return regions;
-  }
-
-  getFilteredDevices(region: RegionGroup): DeviceItem[] {
-    let devices = region.devices;
-    if (this.onlineOnly) {
-      devices = devices.filter(d => d.online);
-    }
-    if (this.searchQuery) {
-      devices = devices.filter(d =>
-        d.name.toLowerCase().includes(this.searchQuery.toLowerCase())
-      );
-    }
-    return devices;
-  }
-
-  toggleRegionGroup(region: RegionGroup): void {
-    region.expanded = !region.expanded;
-  }
-
-  toggleRegionVisibility(region: RegionGroup): void {
-    this.visibleRegions.update(s => {
-      const newSet = new Set(s);
-      if (newSet.has(region.id)) {
-        newSet.delete(region.id);
-        region.visible = false;
+        // If track exists, fit bounds to show the entire track
+        // The leaflet-map component will handle this
       } else {
-        newSet.add(region.id);
-        region.visible = true;
+        // No history, just focus on current position
+        this.focusOnDevice(device);
       }
-      return newSet;
-    });
+    } catch (err) {
+      console.error('Failed to load device history:', err);
+      // Fallback to just focusing on device
+      this.focusOnDevice(device);
+    } finally {
+      this.loadingTrack.set(false);
+    }
+  }
+
+  // Clear selected device and track
+  clearSelection(): void {
+    this.selectedDeviceId = null;
+    this.deviceTrack.set([]);
+    this.mapComponent?.clearTrack();
   }
 
   // Map controls
@@ -790,8 +960,19 @@ export class EMapComponent implements OnInit {
   }
 
   focusOnDevice(device: DeviceItem): void {
-    if (device.location.latitude && device.location.longitude) {
-      this.mapComponent?.setView(device.location.latitude, device.location.longitude, 15);
+    let lat: number | undefined;
+    let lng: number | undefined;
+
+    if (device.liveData) {
+      lat = device.liveData.latitude;
+      lng = device.liveData.longitude;
+    } else if (device.location) {
+      lat = device.location.latitude;
+      lng = device.location.longitude;
+    }
+
+    if (lat && lng) {
+      this.mapComponent?.setView(lat, lng, 15);
     }
   }
 }

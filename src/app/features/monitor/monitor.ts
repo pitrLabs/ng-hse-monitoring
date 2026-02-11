@@ -104,7 +104,7 @@ interface CameraGroup {
                   <mat-icon>create_new_folder</mat-icon>
                 </button>
               }
-              <mat-checkbox [(ngModel)]="showActiveOnly" color="primary" (change)="loadVideoSources()">
+              <mat-checkbox [(ngModel)]="showActiveOnly" color="primary">
                 Active Only
               </mat-checkbox>
             </div>
@@ -141,7 +141,7 @@ interface CameraGroup {
                     <mat-icon class="expand-icon" [class.expanded]="group.expanded">chevron_right</mat-icon>
                     <mat-icon class="folder-icon">{{ group.aiboxId ? 'dns' : 'folder' }}</mat-icon>
                     <span class="node-name">{{ group.displayName }}</span>
-                    <span class="node-count">({{ group.cameras.length }})</span>
+                    <span class="node-count">({{ getFilteredCameras(group).length }})</span>
                     @if (canRenameGroups() && !group.aiboxId) {
                       <div class="folder-actions">
                         <button mat-icon-button class="folder-action-btn" matTooltip="Rename folder" (click)="openRenameDialog(group); $event.stopPropagation()">
@@ -1403,8 +1403,9 @@ export class MonitorComponent implements OnInit {
 
   loadVideoSources() {
     this.loading.set(true);
-    const activeOnly = this.showActiveOnly ? true : undefined;
-    this.videoSourceService.loadVideoSources(activeOnly).subscribe({
+    // Always load all sources - filtering by active status is done client-side
+    // based on real-time camera status (getCameraStatus)
+    this.videoSourceService.loadVideoSources().subscribe({
       next: (sources) => {
         this.videoSources.set(sources);
         this.buildCameraGroups(sources);
@@ -1613,14 +1614,23 @@ export class MonitorComponent implements OnInit {
   }
 
   getFilteredCameras(group: CameraGroup): VideoSource[] {
-    if (!this.searchQuery) {
-      return group.cameras;
+    let cameras = group.cameras;
+
+    // Filter by Active Only (real-time camera status = 'online')
+    if (this.showActiveOnly) {
+      cameras = cameras.filter(c => this.getCameraStatus(c) === 'online');
     }
-    const query = this.searchQuery.toLowerCase();
-    return group.cameras.filter(c =>
-      c.name.toLowerCase().includes(query) ||
-      c.location?.toLowerCase().includes(query)
-    );
+
+    // Filter by search query
+    if (this.searchQuery) {
+      const query = this.searchQuery.toLowerCase();
+      cameras = cameras.filter(c =>
+        c.name.toLowerCase().includes(query) ||
+        c.location?.toLowerCase().includes(query)
+      );
+    }
+
+    return cameras;
   }
 
   filteredVideoSources(): VideoSource[] {

@@ -154,7 +154,7 @@ interface AlarmPicture {
             @for (pic of paginatedPictures(); track pic.alarm.id) {
               <div class="picture-card" [class.selected]="pic.selected" (click)="toggleSelection(pic)">
                 <div class="picture-checkbox" (click)="$event.stopPropagation()">
-                  <mat-checkbox [(ngModel)]="pic.selected" color="primary"></mat-checkbox>
+                  <mat-checkbox [ngModel]="pic.selected" (ngModelChange)="onCheckboxChange(pic, $event)" color="primary"></mat-checkbox>
                 </div>
                 <div class="picture-image" (click)="openViewer(pic); $event.stopPropagation()">
                   <app-bbox-image
@@ -1016,6 +1016,12 @@ export class PictureComponent implements OnInit {
     this.allPictures.update(pics => [...pics]);
   }
 
+  onCheckboxChange(pic: AlarmPicture, checked: boolean) {
+    pic.selected = checked;
+    // Trigger signal update so computed signals recalculate
+    this.allPictures.update(pics => [...pics]);
+  }
+
   toggleSelectAll() {
     const pics = this.filteredPictures();
     pics.forEach(p => p.selected = this.selectAll);
@@ -1193,8 +1199,10 @@ export class PictureComponent implements OnInit {
       if (this.selectedCamera) params.append('camera_id', this.selectedCamera);
       if (this.startDate) params.append('start_date', this.startDate);
       if (this.endDate) params.append('end_date', this.endDate);
+      params.append('limit', '50'); // Limit to 50 images for faster export
 
       const url = `${this.apiUrl}/alarms/export/excel-images${params.toString() ? '?' + params.toString() : ''}`;
+      console.log('[Export] Starting Excel export:', url);
 
       const response = await fetch(url, {
         headers: {
@@ -1203,10 +1211,17 @@ export class PictureComponent implements OnInit {
       });
 
       if (!response.ok) {
-        throw new Error('Failed to export');
+        const errorText = await response.text();
+        console.error('[Export] Server error:', response.status, errorText);
+        throw new Error(`Server error: ${response.status}`);
       }
 
       const blob = await response.blob();
+      if (blob.size === 0) {
+        throw new Error('Empty response from server');
+      }
+
+      console.log('[Export] Received blob:', blob.size, 'bytes');
       const downloadUrl = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = downloadUrl;
@@ -1215,9 +1230,10 @@ export class PictureComponent implements OnInit {
       a.click();
       document.body.removeChild(a);
       window.URL.revokeObjectURL(downloadUrl);
+      console.log('[Export] Download triggered successfully');
     } catch (err) {
       console.error('Failed to export:', err);
-      alert('Failed to export to Excel');
+      alert('Gagal export ke Excel. Silakan coba lagi atau kurangi jumlah data dengan filter.');
     } finally {
       this.downloading.set(false);
     }

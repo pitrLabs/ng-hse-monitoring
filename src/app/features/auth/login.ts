@@ -76,6 +76,18 @@ import { AuthService } from '../../core/services/auth.service';
             </div>
           }
 
+          @if (showForceLogin()) {
+            <button type="button" class="btn-warning force-login-btn" (click)="forceLogin()" [disabled]="isLoading()">
+              @if (isLoading()) {
+                <mat-spinner diameter="20"></mat-spinner>
+                <span>Force Login...</span>
+              } @else {
+                <mat-icon>logout</mat-icon>
+                <span>Force Login (Kick Session Lama)</span>
+              }
+            </button>
+          }
+
           <button type="submit" class="btn-gradient login-btn" [disabled]="isLoading() || loginForm.invalid">
             @if (isLoading()) {
               <mat-spinner diameter="20"></mat-spinner>
@@ -186,8 +198,8 @@ import { AuthService } from '../../core/services/auth.service';
 
     .info-message {
       display: flex;
-      align-items: center;
-      gap: 8px;
+      align-items: flex-start;
+      gap: 10px;
       padding: 12px 16px;
       background: rgba(59, 130, 246, 0.1);
       border: 1px solid rgba(59, 130, 246, 0.3);
@@ -195,18 +207,26 @@ import { AuthService } from '../../core/services/auth.service';
       color: #3b82f6;
       font-size: 14px;
       margin-bottom: 8px;
+      line-height: 1.5;
 
       mat-icon {
         font-size: 20px;
         width: 20px;
         height: 20px;
+        min-width: 20px;
+        flex-shrink: 0;
+        margin-top: 2px;
+      }
+
+      span {
+        flex: 1;
       }
     }
 
     .error-message {
       display: flex;
-      align-items: center;
-      gap: 8px;
+      align-items: flex-start;
+      gap: 10px;
       padding: 12px 16px;
       background: rgba(239, 68, 68, 0.1);
       border: 1px solid rgba(239, 68, 68, 0.3);
@@ -214,11 +234,19 @@ import { AuthService } from '../../core/services/auth.service';
       color: var(--error);
       font-size: 14px;
       margin-bottom: 8px;
+      line-height: 1.5;
 
       mat-icon {
         font-size: 20px;
         width: 20px;
         height: 20px;
+        min-width: 20px;
+        flex-shrink: 0;
+        margin-top: 2px;
+      }
+
+      span {
+        flex: 1;
       }
     }
 
@@ -244,6 +272,38 @@ import { AuthService } from '../../core/services/auth.service';
 
       &:hover:not(:disabled) mat-icon {
         transform: translateX(4px);
+      }
+    }
+
+    .force-login-btn {
+      width: 100%;
+      height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      margin-top: 8px;
+      font-size: 14px;
+      background: #f59e0b;
+      color: white;
+      border: none;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: background 0.2s;
+
+      &:hover:not(:disabled) {
+        background: #d97706;
+      }
+
+      &:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+
+      mat-spinner {
+        ::ng-deep circle {
+          stroke: white !important;
+        }
       }
     }
 
@@ -296,6 +356,7 @@ export class LoginComponent implements OnInit {
   isLoading = signal(false);
   errorMessage = signal('');
   infoMessage = signal('');
+  showForceLogin = signal(false);
 
   constructor(
     private fb: FormBuilder,
@@ -330,6 +391,7 @@ export class LoginComponent implements OnInit {
     this.isLoading.set(true);
     this.errorMessage.set('');
     this.infoMessage.set('');
+    this.showForceLogin.set(false);
 
     const { username, password } = this.loginForm.value;
     this.authService.login(username, password).subscribe({
@@ -339,7 +401,48 @@ export class LoginComponent implements OnInit {
       },
       error: (err) => {
         this.isLoading.set(false);
-        this.errorMessage.set(err.error?.detail || 'Login failed. Please check your credentials.');
+        const detail = err.error?.detail;
+
+        // Handle specific error cases
+        if (detail?.code === 'already_logged_in') {
+          // New format: {code: "already_logged_in", is_admin: boolean}
+          if (detail.is_admin) {
+            this.errorMessage.set('Anda sudah login di perangkat lain. Gunakan Force Login untuk mengeluarkan session lama.');
+            this.showForceLogin.set(true);
+          } else {
+            this.errorMessage.set('Anda sudah login di perangkat lain. Silakan logout terlebih dahulu atau hubungi admin.');
+          }
+        } else if (detail === 'already_logged_in') {
+          // Old format fallback
+          this.errorMessage.set('Anda sudah login di perangkat lain. Silakan logout terlebih dahulu atau hubungi admin.');
+        } else if (detail === 'Incorrect username or password') {
+          this.errorMessage.set('Username atau password salah.');
+        } else if (detail === 'Inactive user') {
+          this.errorMessage.set('Akun Anda tidak aktif. Hubungi admin.');
+        } else {
+          this.errorMessage.set(typeof detail === 'string' ? detail : 'Login gagal. Silakan coba lagi.');
+        }
+      }
+    });
+  }
+
+  forceLogin(): void {
+    if (this.loginForm.invalid) return;
+
+    this.isLoading.set(true);
+    this.errorMessage.set('');
+    this.showForceLogin.set(false);
+
+    const { username, password } = this.loginForm.value;
+    this.authService.login(username, password, true).subscribe({
+      next: () => {
+        this.isLoading.set(false);
+        this.router.navigate(['/home']);
+      },
+      error: (err) => {
+        this.isLoading.set(false);
+        const detail = err.error?.detail;
+        this.errorMessage.set(typeof detail === 'string' ? detail : 'Force login gagal. Silakan coba lagi.');
       }
     });
   }

@@ -112,14 +112,16 @@ export class AuthService {
    * Login and fetch user data.
    * Returns Observable that completes only after user data is loaded.
    */
-  login(username: string, password: string): Observable<User> {
+  login(username: string, password: string, force: boolean = false): Observable<User> {
     this.isLoadingSignal.set(true);
     const formData = new FormData();
     formData.append('username', username);
     formData.append('password', password);
 
+    const url = force ? `${this.apiUrl}/auth/login?force=true` : `${this.apiUrl}/auth/login`;
+
     return new Observable<User>(observer => {
-      this.http.post<LoginResponse>(`${this.apiUrl}/auth/login`, formData).subscribe({
+      this.http.post<LoginResponse>(url, formData).subscribe({
         next: async (response) => {
           this.setToken(response.access_token);
           // Reset init state for fresh login
@@ -166,6 +168,11 @@ export class AuthService {
   }
 
   logout(): void {
+    // Call backend to clear active_session_id (fire and forget, don't block on response)
+    this.http.post(`${this.apiUrl}/auth/logout`, {}).subscribe({
+      error: () => {} // Ignore errors - token might already be invalid
+    });
+
     // Emit logout event so other services can cleanup (e.g., disconnect WebSocket)
     this.logoutSubject.next();
 

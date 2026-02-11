@@ -29,6 +29,17 @@ interface UserFormData {
   role_id: string | null;
 }
 
+interface UserSession {
+  id: string;
+  username: string;
+  full_name?: string;
+  email: string;
+  is_active: boolean;
+  is_superuser: boolean;
+  is_logged_in: boolean;
+  last_login_at?: string;
+}
+
 @Component({
   standalone: true,
   selector: 'app-admin-users',
@@ -64,6 +75,7 @@ interface UserFormData {
             <div class="col-role">Role</div>
             <div class="col-cameras">Cameras</div>
             <div class="col-status">Status</div>
+            <div class="col-login">Login</div>
             <div class="col-actions">Actions</div>
           </div>
           @for (user of filteredUsers(); track user.id) {
@@ -95,7 +107,17 @@ interface UserFormData {
                   {{ user.is_active ? 'Active' : 'Inactive' }}
                 </span>
               </div>
+              <div class="col-login">
+                <span class="login-badge" [class.online]="isUserLoggedIn(user.id)">
+                  {{ isUserLoggedIn(user.id) ? 'Online' : 'Offline' }}
+                </span>
+              </div>
               <div class="col-actions">
+                @if (isUserLoggedIn(user.id)) {
+                  <button mat-icon-button matTooltip="Force Logout" (click)="openForceLogoutModal(user)" class="force-logout-btn">
+                    <mat-icon>logout</mat-icon>
+                  </button>
+                }
                 @if (!user.is_superuser && !isManagerOrAbove(user)) {
                   <button mat-icon-button matTooltip="Assign Cameras" (click)="openCameraAssignment(user)">
                     <mat-icon>videocam</mat-icon>
@@ -203,6 +225,41 @@ interface UserFormData {
                   <mat-spinner diameter="18"></mat-spinner>
                 } @else {
                   Delete
+                }
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    }
+
+    <!-- Force Logout Confirmation Modal -->
+    @if (showForceLogoutModal()) {
+      <div class="modal-overlay" (click)="closeForceLogoutModal()">
+        <div class="modal-content delete-modal" (click)="$event.stopPropagation()">
+          <div class="modal-header delete-header">
+            <div class="delete-icon-wrapper logout-icon">
+              <mat-icon>logout</mat-icon>
+            </div>
+            <h3>Force Logout User</h3>
+            <button mat-icon-button (click)="closeForceLogoutModal()">
+              <mat-icon>close</mat-icon>
+            </button>
+          </div>
+          <div class="modal-body">
+            <p class="delete-message">
+              Apakah Anda yakin ingin memaksa logout <strong>{{ userToForceLogout()?.full_name || userToForceLogout()?.username }}</strong>?
+            </p>
+            <p class="delete-warning">User akan bisa login kembali setelah ini.</p>
+          </div>
+          <div class="modal-footer">
+            <div class="modal-actions">
+              <button mat-button (click)="closeForceLogoutModal()">Cancel</button>
+              <button mat-raised-button class="btn-warning" (click)="confirmForceLogout()" [disabled]="forcingLogout()">
+                @if (forcingLogout()) {
+                  <mat-spinner diameter="18"></mat-spinner>
+                } @else {
+                  Force Logout
                 }
               </button>
             </div>
@@ -351,9 +408,9 @@ interface UserFormData {
 
     .table-header, .table-row {
       display: grid;
-      grid-template-columns: 2fr 2fr 1fr 1fr 1fr 120px;
-      gap: 16px;
-      padding: 16px 20px;
+      grid-template-columns: minmax(150px, 1.5fr) minmax(120px, 1.5fr) minmax(80px, 0.8fr) minmax(70px, 0.7fr) 70px 70px 130px;
+      gap: 12px;
+      padding: 14px 16px;
       align-items: center;
     }
 
@@ -371,32 +428,59 @@ interface UserFormData {
     }
 
     .col-user {
-      display: flex; align-items: center; gap: 12px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
     }
 
     .user-avatar {
-      width: 40px; height: 40px;
+      width: 36px; height: 36px;
       border-radius: 8px;
       background: var(--accent-gradient);
       display: flex; align-items: center; justify-content: center;
-      font-weight: 600; color: white; font-size: 14px;
+      font-weight: 600; color: white; font-size: 13px;
+      flex-shrink: 0;
     }
 
     .user-info {
-      display: flex; flex-direction: column;
-      .user-name { font-weight: 500; color: var(--text-primary); }
-      .user-username { font-size: 12px; color: var(--text-tertiary); }
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+
+      .user-name {
+        font-weight: 500;
+        color: var(--text-primary);
+        font-size: 13px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .user-username {
+        font-size: 11px;
+        color: var(--text-tertiary);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
     }
 
-    .col-email { color: var(--text-secondary); }
+    .col-email {
+      color: var(--text-secondary);
+      font-size: 13px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
 
     .role-badge {
-      padding: 4px 12px;
-      border-radius: 20px;
-      font-size: 12px;
+      padding: 3px 8px;
+      border-radius: 12px;
+      font-size: 11px;
       font-weight: 500;
       background: var(--glass-border);
       color: var(--text-secondary);
+      white-space: nowrap;
 
       &.role-superadmin { background: rgba(168, 85, 247, 0.2); color: #a855f7; }
       &.role-manager { background: rgba(59, 130, 246, 0.2); color: #3b82f6; }
@@ -405,19 +489,47 @@ interface UserFormData {
     }
 
     .status-badge {
-      padding: 4px 12px;
-      border-radius: 20px;
-      font-size: 12px;
+      padding: 3px 8px;
+      border-radius: 12px;
+      font-size: 11px;
       font-weight: 500;
       background: rgba(239, 68, 68, 0.2);
       color: #ef4444;
+      white-space: nowrap;
 
       &.active { background: rgba(34, 197, 94, 0.2); color: #22c55e; }
     }
 
+    .login-badge {
+      padding: 3px 8px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 500;
+      background: rgba(107, 114, 128, 0.2);
+      color: #6b7280;
+      white-space: nowrap;
+
+      &.online { background: rgba(34, 197, 94, 0.2); color: #22c55e; }
+    }
+
     .col-actions {
-      display: flex; gap: 4px;
-      button { color: var(--text-secondary); &:hover { color: var(--accent-primary); } }
+      display: flex;
+      gap: 2px;
+      justify-content: flex-end;
+
+      button {
+        color: var(--text-secondary);
+        width: 32px;
+        height: 32px;
+
+        &:hover { color: var(--accent-primary); }
+
+        mat-icon {
+          font-size: 18px;
+          width: 18px;
+          height: 18px;
+        }
+      }
     }
 
     .empty-state {
@@ -427,12 +539,13 @@ interface UserFormData {
     }
 
     .cameras-badge {
-      padding: 4px 12px;
-      border-radius: 20px;
-      font-size: 12px;
+      padding: 3px 8px;
+      border-radius: 12px;
+      font-size: 11px;
       font-weight: 500;
       background: rgba(59, 130, 246, 0.2);
       color: #3b82f6;
+      white-space: nowrap;
 
       &.all { background: rgba(34, 197, 94, 0.2); color: #22c55e; }
       &.none { background: rgba(107, 114, 128, 0.2); color: #6b7280; }
@@ -569,6 +682,24 @@ interface UserFormData {
       &:hover { background: #dc2626 !important; }
     }
 
+    .btn-warning {
+      background: #f59e0b !important;
+      color: white !important;
+
+      &:hover { background: #d97706 !important; }
+    }
+
+    .logout-icon {
+      background: rgba(245, 158, 11, 0.15) !important;
+
+      mat-icon { color: #f59e0b !important; }
+    }
+
+    .force-logout-btn {
+      color: #f59e0b !important;
+      &:hover { color: #d97706 !important; }
+    }
+
     /* User Form Modal */
     .user-form-modal {
       max-width: 480px;
@@ -691,6 +822,12 @@ export class AdminUsersComponent implements OnInit {
   formError = signal('');
   userForm: UserFormData = this.getEmptyUserForm();
 
+  // Session management
+  userSessions = signal<UserSession[]>([]);
+  showForceLogoutModal = signal(false);
+  userToForceLogout = signal<any>(null);
+  forcingLogout = signal(false);
+
   // Filter out Super Admin from role list
   filteredRoles = computed(() => {
     return this.roles().filter(role => {
@@ -715,6 +852,7 @@ export class AdminUsersComponent implements OnInit {
   ngOnInit() {
     this.loadUsers();
     this.loadRoles();
+    this.loadUserSessions();
   }
 
   getEmptyUserForm(): UserFormData {
@@ -733,6 +871,47 @@ export class AdminUsersComponent implements OnInit {
     this.http.get<Role[]>(`${this.apiUrl}/roles`).subscribe({
       next: (res) => this.roles.set(res),
       error: () => console.error('Failed to load roles')
+    });
+  }
+
+  loadUserSessions() {
+    this.http.get<UserSession[]>(`${this.apiUrl}/users/sessions`).subscribe({
+      next: (res) => this.userSessions.set(res),
+      error: () => console.error('Failed to load user sessions')
+    });
+  }
+
+  isUserLoggedIn(userId: string): boolean {
+    const session = this.userSessions().find(s => s.id === userId);
+    return session?.is_logged_in || false;
+  }
+
+  openForceLogoutModal(user: any) {
+    this.userToForceLogout.set(user);
+    this.showForceLogoutModal.set(true);
+  }
+
+  closeForceLogoutModal() {
+    this.showForceLogoutModal.set(false);
+    this.userToForceLogout.set(null);
+  }
+
+  confirmForceLogout() {
+    const user = this.userToForceLogout();
+    if (!user) return;
+
+    this.forcingLogout.set(true);
+    this.http.post(`${this.apiUrl}/users/${user.id}/force-logout`, {}).subscribe({
+      next: () => {
+        this.forcingLogout.set(false);
+        this.closeForceLogoutModal();
+        this.loadUserSessions(); // Refresh session data
+      },
+      error: (err) => {
+        this.forcingLogout.set(false);
+        console.error('Failed to force logout user:', err);
+        alert(err.error?.detail || 'Failed to force logout user');
+      }
     });
   }
 

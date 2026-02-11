@@ -19,8 +19,7 @@ import {
   AlarmSeverity,
   getAlarmSeverity,
   getAlarmImageUrl,
-  getBestAlarmImageUrl,
-  ALARM_TYPE_SEVERITY
+  getBestAlarmImageUrl
 } from '../../core/models/alarm.model';
 
 @Component({
@@ -1087,14 +1086,14 @@ export class EventComponent implements OnInit, OnDestroy {
   });
 
   severityData = computed(() => {
-    const counts: Record<AlarmSeverity, number> = { critical: 0, high: 0, medium: 0, low: 0 };
+    const counts: Record<AlarmSeverity, number> = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
     this.alarms().forEach(a => {
       const severity = getAlarmSeverity(a.alarm_type);
       counts[severity]++;
     });
     const total = this.alarms().length || 1;
 
-    return (['critical', 'high', 'medium', 'low'] as AlarmSeverity[]).map(level => ({
+    return (['critical', 'high', 'medium', 'low', 'info'] as AlarmSeverity[]).map(level => ({
       level,
       count: counts[level],
       percentage: (counts[level] / total) * 100

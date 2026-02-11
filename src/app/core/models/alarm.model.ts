@@ -46,25 +46,27 @@ export interface AlarmNotification {
   alarm?: Alarm;
 }
 
-export type AlarmSeverity = 'low' | 'medium' | 'high' | 'critical';
+export type AlarmSeverity = 'low' | 'medium' | 'high' | 'critical' | 'info';
 
-export const ALARM_TYPE_SEVERITY: Record<string, AlarmSeverity> = {
-  'NoHelmet': 'high',
-  'NoMask': 'medium',
-  'NoVest': 'high',
-  'Smoking': 'high',
-  'Fire': 'critical',
-  'Smoke': 'critical',
-  'Intrusion': 'high',
-  'Climbing': 'high',
-  'Falling': 'critical',
-  'Crowd': 'medium',
-  'Loitering': 'low',
-  'default': 'medium'
-};
-
+/**
+ * Get severity for an alarm type by deriving from keywords in type name.
+ * BM-APP doesn't send severity info, so we derive it from the type name.
+ * For cached API data, use AlarmTypesService.getSeverity() instead.
+ */
 export function getAlarmSeverity(alarmType: string): AlarmSeverity {
-  return ALARM_TYPE_SEVERITY[alarmType] || ALARM_TYPE_SEVERITY['default'];
+  if (!alarmType) return 'info';
+  const t = alarmType.toLowerCase();
+
+  // Critical - immediate danger
+  if (['fire', 'smoke', 'fall', 'falling'].some(k => t.includes(k))) return 'critical';
+  // High - safety violations
+  if (['helmet', 'vest', 'intrusion', 'smoking', 'climb', 'goggle', 'glove'].some(k => t.includes(k))) return 'high';
+  // Medium - minor violations
+  if (['mask', 'crowd'].some(k => t.includes(k))) return 'medium';
+  // Low - informational
+  if (['loiter', 'person', 'vehicle'].some(k => t.includes(k))) return 'low';
+
+  return 'info';  // Green for unknown types
 }
 
 export function getAlarmNotificationType(alarmType: string): 'warning' | 'error' | 'info' {

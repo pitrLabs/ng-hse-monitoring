@@ -35,12 +35,14 @@ export const authInterceptor: HttpInterceptorFn = (req, next) => {
         );
 
         if (!isPublicEndpoint && token) {
-          // Check if session was invalidated (logged in from another device)
-          const isSessionInvalid = error.error?.detail === 'session_invalid';
+          const errorDetail = error.error?.detail;
 
-          if (isSessionInvalid) {
+          if (errorDetail === 'session_invalid_another_device') {
             // Session invalidated - user logged in from another device
             authService.forceLogout('Sesi Anda telah berakhir karena login dari perangkat lain.');
+          } else if (errorDetail === 'session_invalid_force_logout') {
+            // Session invalidated - force logged out by admin
+            authService.forceLogout('Sesi Anda telah diakhiri oleh admin.');
           } else if (req.url.includes('/auth/me')) {
             // Token expired or invalid
             authService.logout();

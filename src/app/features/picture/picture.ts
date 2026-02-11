@@ -11,7 +11,8 @@ import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { AlarmService } from '../../core/services/alarm.service';
-import { Alarm, getBestAlarmImageUrl, getAlarmSeverity, AlarmSeverity } from '../../core/models/alarm.model';
+import { AlarmTypesService } from '../../core/services/alarm-types.service';
+import { Alarm, getBestAlarmImageUrl } from '../../core/models/alarm.model';
 import { environment } from '../../../environments/environment';
 import { BboxImageComponent } from '../../shared/components/bbox-image/bbox-image.component';
 
@@ -19,6 +20,7 @@ interface AlarmPicture {
   alarm: Alarm;
   imageUrl: string;
   selected: boolean;
+  isLabeledImage: boolean;  // True if using labeled image (already has boxes from AI)
 }
 
 @Component({
@@ -160,7 +162,7 @@ interface AlarmPicture {
                   <app-bbox-image
                     [src]="pic.imageUrl"
                     [alt]="pic.alarm.alarm_type"
-                    [rawData]="pic.alarm.raw_data"
+                    [rawData]="pic.isLabeledImage ? null : pic.alarm.raw_data"
                     [showLabels]="false">
                   </app-bbox-image>
                   <div class="picture-overlay">
@@ -227,7 +229,7 @@ interface AlarmPicture {
               <app-bbox-image
                 [src]="pic.imageUrl"
                 [alt]="pic.alarm.alarm_type"
-                [rawData]="pic.alarm.raw_data"
+                [rawData]="pic.isLabeledImage ? null : pic.alarm.raw_data"
                 [showLabels]="true">
               </app-bbox-image>
             </div>
@@ -240,6 +242,13 @@ interface AlarmPicture {
                 <span class="viewer-time">{{ formatDateTime(pic.alarm.alarm_time) }}</span>
               </div>
               <div class="viewer-details">
+                <!-- Description from AI detection -->
+                @if (getAlarmDescription(pic.alarm)) {
+                  <div class="detail-row description">
+                    <mat-icon>info</mat-icon>
+                    <span>{{ getAlarmDescription(pic.alarm) }}</span>
+                  </div>
+                }
                 <div class="detail-row">
                   <mat-icon>videocam</mat-icon>
                   <span>{{ pic.alarm.camera_name || 'Unknown Camera' }}</span>
@@ -254,6 +263,20 @@ interface AlarmPicture {
                   <div class="detail-row">
                     <mat-icon>analytics</mat-icon>
                     <span>Confidence: {{ (pic.alarm.confidence * 100).toFixed(1) }}%</span>
+                  </div>
+                }
+                <!-- Task/Session info -->
+                @if (getTaskSession(pic.alarm)) {
+                  <div class="detail-row">
+                    <mat-icon>assignment</mat-icon>
+                    <span>Task: {{ getTaskSession(pic.alarm) }}</span>
+                  </div>
+                }
+                <!-- Bounding box info -->
+                @if (getBoundingBoxInfo(pic.alarm)) {
+                  <div class="detail-row">
+                    <mat-icon>crop</mat-icon>
+                    <span>Detection Area: {{ getBoundingBoxInfo(pic.alarm) }}</span>
                   </div>
                 }
               </div>
@@ -802,6 +825,19 @@ interface AlarmPicture {
         height: 16px;
         color: var(--text-tertiary);
       }
+
+      &.description {
+        background: rgba(0, 212, 255, 0.1);
+        padding: 8px 12px;
+        border-radius: 6px;
+        margin-bottom: 4px;
+        color: var(--text-primary);
+        font-weight: 500;
+
+        mat-icon {
+          color: var(--accent-primary);
+        }
+      }
     }
 
     .viewer-actions {
@@ -882,6 +918,7 @@ interface AlarmPicture {
 })
 export class PictureComponent implements OnInit {
   private alarmService = inject(AlarmService);
+  private alarmTypesService = inject(AlarmTypesService);
   private http = inject(HttpClient);
   private apiUrl = environment.apiUrl;
 
@@ -992,10 +1029,15 @@ export class PictureComponent implements OnInit {
         // Use getBestAlarmImageUrl to prefer labeled images (with detection boxes)
         const imageUrl = getBestAlarmImageUrl(alarm);
         if (imageUrl) {
+          // Check if using labeled image (already has boxes from AI)
+          // Labeled image = minio_labeled_image_url is being used
+          const isLabeledImage = !!alarm.minio_labeled_image_url &&
+                                  imageUrl === alarm.minio_labeled_image_url;
           pictures.push({
             alarm,
             imageUrl,
-            selected: false
+            selected: false,
+            isLabeledImage
           });
         }
       }
@@ -1030,7 +1072,11 @@ export class PictureComponent implements OnInit {
   }
 
   getSeverityClass(alarmType: string): string {
-    return getAlarmSeverity(alarmType);
+    return this.alarmTypesService.getSeverityClass(alarmType);
+  }
+
+  getAlarmTypeLabel(alarmType: string): string {
+    return this.alarmTypesService.getDescription(alarmType);
   }
 
   formatTime(dateStr: string | undefined): string {
@@ -1063,6 +1109,45 @@ export class PictureComponent implements OnInit {
   onImageError(event: Event) {
     const img = event.target as HTMLImageElement;
     img.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%23666"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>';
+  }
+
+  // ============ Raw Data Parsing Helpers ============
+
+  private parseRawData(alarm: Alarm): any {
+    if (!alarm.raw_data) return null;
+    try {
+      return typeof alarm.raw_data === 'string' ? JSON.parse(alarm.raw_data) : alarm.raw_data;
+    } catch {
+      return null;
+    }
+  }
+
+  getAlarmDescription(alarm: Alarm): string | null {
+    const data = this.parseRawData(alarm);
+    if (!data) return null;
+    return data.Result?.Description || data.Summary || null;
+  }
+
+  getTaskSession(alarm: Alarm): string | null {
+    const data = this.parseRawData(alarm);
+    if (!data) return null;
+    return data.TaskSession || data.TaskDesc || null;
+  }
+
+  getBoundingBoxInfo(alarm: Alarm): string | null {
+    const data = this.parseRawData(alarm);
+    if (!data) return null;
+
+    const relBox = data.Result?.RelativeBox;
+    if (!relBox || relBox.length < 4) return null;
+
+    const [x, y, w, h] = relBox;
+    const xPct = (x * 100).toFixed(0);
+    const yPct = (y * 100).toFixed(0);
+    const wPct = (w * 100).toFixed(0);
+    const hPct = (h * 100).toFixed(0);
+
+    return `${wPct}% x ${hPct}% at (${xPct}%, ${yPct}%)`;
   }
 
   // Pagination

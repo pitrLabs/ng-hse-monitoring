@@ -128,15 +128,6 @@ interface CalendarDayDisplay {
           </div>
         }
 
-        <!-- Sync Button -->
-        <button mat-stroked-button class="sync-btn" (click)="syncRecordings()" [disabled]="isSyncing()">
-          @if (isSyncing()) {
-            <mat-spinner diameter="16"></mat-spinner>
-          } @else {
-            <mat-icon>sync</mat-icon>
-          }
-          Sync from Alarms
-        </button>
       </div>
 
       <!-- Center Panel -->
@@ -538,19 +529,6 @@ interface CalendarDayDisplay {
 
       span {
         font-size: 12px;
-      }
-    }
-
-    .sync-btn {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-
-      mat-icon {
-        font-size: 18px;
-        width: 18px;
-        height: 18px;
       }
     }
 

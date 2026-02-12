@@ -19,6 +19,8 @@ interface VideoSource {
   description?: string;
   location?: string;
   group_id?: string | null;
+  aibox_id?: string | null;
+  task_session?: string | null;
   is_active: boolean;
   sound_alert: boolean;
   is_synced_bmapp: boolean;
@@ -30,6 +32,14 @@ interface CameraGroup {
   id: string;
   name: string;
   display_name: string;
+}
+
+interface AIBox {
+  id: string;
+  name: string;
+  code: string;
+  api_url: string;
+  is_active: boolean;
 }
 
 interface BmAppMedia {
@@ -93,6 +103,8 @@ interface BmAppMedia {
         <div class="sources-table">
           <div class="table-header">
             <div class="col-name">Name</div>
+            <div class="col-aibox">AI Box</div>
+            <div class="col-task">Task ID</div>
             <div class="col-url">Stream URL</div>
             <div class="col-type">Type</div>
             <div class="col-status">Status</div>
@@ -107,6 +119,20 @@ interface BmAppMedia {
                   <span class="source-name">{{ source.name }}</span>
                   <span class="source-stream">{{ source.stream_name }}</span>
                 </div>
+              </div>
+              <div class="col-aibox">
+                @if (getAIBoxName(source.aibox_id)) {
+                  <span class="aibox-badge">{{ getAIBoxName(source.aibox_id) }}</span>
+                } @else {
+                  <span class="aibox-badge unassigned">Not assigned</span>
+                }
+              </div>
+              <div class="col-task">
+                @if (source.task_session) {
+                  <span class="task-badge" [matTooltip]="source.task_session">{{ truncateTaskId(source.task_session) }}</span>
+                } @else {
+                  <span class="task-badge none">-</span>
+                }
               </div>
               <div class="col-url">
                 <span class="url-text" [matTooltip]="source.url">{{ truncateUrl(source.url) }}</span>
@@ -215,6 +241,17 @@ interface BmAppMedia {
                     </button>
                   </div>
                 </div>
+              </div>
+
+              <div class="form-group">
+                <label>AI Box *</label>
+                <select [(ngModel)]="formData.aibox_id">
+                  <option [ngValue]="null">-- Select AI Box --</option>
+                  @for (box of aiboxes(); track box.id) {
+                    <option [ngValue]="box.id">{{ box.name }} ({{ box.code }})</option>
+                  }
+                </select>
+                <span class="hint">Select which AI Box will process this camera</span>
               </div>
 
               <div class="form-row">
@@ -332,8 +369,8 @@ interface BmAppMedia {
 
     .table-header, .table-row {
       display: grid;
-      grid-template-columns: 2fr 2.5fr 80px 100px 70px 120px;
-      gap: 16px; padding: 16px 20px; align-items: center;
+      grid-template-columns: 1.5fr 90px 100px 2fr 70px 90px 60px 100px;
+      gap: 12px; padding: 14px 16px; align-items: center;
     }
 
     .table-header {
@@ -359,8 +396,29 @@ interface BmAppMedia {
 
     .source-info {
       display: flex; flex-direction: column;
-      .source-name { font-weight: 500; color: var(--text-primary); }
-      .source-stream { font-size: 12px; color: var(--text-tertiary); font-family: monospace; }
+      .source-name { font-weight: 500; color: var(--text-primary); font-size: 13px; }
+      .source-stream { font-size: 11px; color: var(--text-tertiary); font-family: monospace; }
+    }
+
+    .aibox-badge {
+      padding: 4px 8px; border-radius: 4px;
+      font-size: 11px; font-weight: 600;
+      background: rgba(99, 102, 241, 0.2); color: #818cf8;
+      font-family: monospace;
+      &.unassigned {
+        background: rgba(156, 163, 175, 0.15); color: #9ca3af;
+        font-weight: 400;
+      }
+    }
+
+    .task-badge {
+      padding: 4px 8px; border-radius: 4px;
+      font-size: 11px; font-weight: 500;
+      background: rgba(34, 197, 94, 0.15); color: #22c55e;
+      font-family: monospace;
+      &.none {
+        background: transparent; color: var(--text-muted);
+      }
     }
 
     .col-url .url-text {
@@ -633,6 +691,7 @@ export class AdminVideoSourcesComponent implements OnInit {
   videoSources = signal<VideoSource[]>([]);
   bmappMedia = signal<BmAppMedia[]>([]);
   groups = signal<CameraGroup[]>([]);
+  aiboxes = signal<AIBox[]>([]);
 
   showNewFolderDialog = signal(false);
   newFolderName = '';
@@ -648,6 +707,7 @@ export class AdminVideoSourcesComponent implements OnInit {
     description: '',
     location: '',
     group_id: null as string | null,
+    aibox_id: null as string | null,
     is_active: true,
     sound_alert: false
   };
@@ -655,6 +715,7 @@ export class AdminVideoSourcesComponent implements OnInit {
   ngOnInit() {
     this.loadSources();
     this.loadGroups();
+    this.loadAIBoxes();
   }
 
   loadSources() {
@@ -673,6 +734,13 @@ export class AdminVideoSourcesComponent implements OnInit {
     this.http.get<CameraGroup[]>(`${this.apiUrl}/locations/groups`).subscribe({
       next: (res) => { this.groups.set(res); },
       error: (err) => { console.error('Load groups error:', err); }
+    });
+  }
+
+  loadAIBoxes() {
+    this.http.get<AIBox[]>(`${this.apiUrl}/ai-boxes`).subscribe({
+      next: (res) => { this.aiboxes.set(res.filter(b => b.is_active)); },
+      error: (err) => { console.error('Load AI boxes error:', err); }
     });
   }
 
@@ -761,6 +829,7 @@ export class AdminVideoSourcesComponent implements OnInit {
       description: source.description || '',
       location: source.location || '',
       group_id: source.group_id || null,
+      aibox_id: source.aibox_id || null,
       is_active: source.is_active,
       sound_alert: source.sound_alert || false
     };
@@ -781,6 +850,7 @@ export class AdminVideoSourcesComponent implements OnInit {
       description: '',
       location: '',
       group_id: null,
+      aibox_id: null,
       is_active: true,
       sound_alert: false
     };
@@ -823,6 +893,7 @@ export class AdminVideoSourcesComponent implements OnInit {
       this.formData.name.trim() &&
       this.formData.stream_name.trim() &&
       this.formData.url.trim() &&
+      this.formData.aibox_id &&
       /^[a-zA-Z0-9_-]+$/.test(this.formData.stream_name)
     );
   }
@@ -841,6 +912,7 @@ export class AdminVideoSourcesComponent implements OnInit {
       description: this.formData.description.trim() || null,
       location: this.formData.location.trim() || null,
       group_id: this.formData.group_id,
+      aibox_id: this.formData.aibox_id,
       is_active: this.formData.is_active,
       sound_alert: this.formData.sound_alert
     };
@@ -888,6 +960,20 @@ export class AdminVideoSourcesComponent implements OnInit {
       return url.substring(0, 42) + '...';
     }
     return url;
+  }
+
+  getAIBoxName(aiboxId: string | null | undefined): string {
+    if (!aiboxId) return '';
+    const box = this.aiboxes().find(b => b.id === aiboxId);
+    return box ? box.code : '';
+  }
+
+  truncateTaskId(taskId: string): string {
+    if (!taskId) return '-';
+    if (taskId.length > 15) {
+      return taskId.substring(0, 12) + '...';
+    }
+    return taskId;
   }
 
   private showSuccess(message: string) {

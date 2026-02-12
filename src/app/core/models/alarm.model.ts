@@ -17,6 +17,10 @@ export interface Alarm {
   created_at?: string;
   acknowledged_at?: string;
   resolved_at?: string;
+  // AI Box info
+  aibox_id?: string;
+  aibox_name?: string;
+  aibox_base_url?: string;  // Base URL for AI Box (e.g., http://103.75.84.183:2322)
   // MinIO storage fields
   minio_image_path?: string;
   minio_labeled_image_path?: string;
@@ -86,7 +90,7 @@ export function getAlarmNotificationType(alarmType: string): 'warning' | 'error'
  * Get the best available image URL for an alarm
  * Priority: 1) MinIO labeled image (with detection boxes)
  *           2) MinIO raw image
- *           3) BM-APP image_url (fallback)
+ *           3) BM-APP image_url (using aibox_base_url or fallback)
  */
 export function getBestAlarmImageUrl(alarm: Alarm | undefined | null): string | null {
   if (!alarm) return null;
@@ -101,16 +105,19 @@ export function getBestAlarmImageUrl(alarm: Alarm | undefined | null): string | 
     return alarm.minio_image_url;
   }
 
-  // Priority 3: Fallback to BM-APP image_url
-  return getAlarmImageUrl(alarm.image_url);
+  // Priority 3: Fallback to BM-APP image_url (using correct AI Box URL)
+  return getAlarmImageUrl(alarm.image_url, alarm.aibox_base_url);
 }
 
 /**
  * Get the full image URL for alarm images
  * BM-APP returns relative paths like "Images/DAY_20260131/IMAGE_xxx.jpg"
- * We need to prepend the BM-APP base URL
+ * We need to prepend the correct AI Box base URL
  */
-export function getAlarmImageUrl(imageUrl: string | undefined | null): string | null {
+export function getAlarmImageUrl(
+  imageUrl: string | undefined | null,
+  aiboxBaseUrl?: string | null
+): string | null {
   if (!imageUrl) return null;
 
   // If already a full URL, return as-is
@@ -118,14 +125,14 @@ export function getAlarmImageUrl(imageUrl: string | undefined | null): string | 
     return imageUrl;
   }
 
-  // Get BM-APP URL from environment
-  const bmappUrl = (window as any).__env?.BMAPP_URL || 'http://103.75.84.183:2323';
+  // Use AI Box base URL if provided, otherwise fallback to environment/default
+  const baseUrl = aiboxBaseUrl || (window as any).__env?.BMAPP_URL || 'http://103.75.84.183:2323';
 
   // Handle relative paths
   if (imageUrl.startsWith('/')) {
-    return `${bmappUrl}${imageUrl}`;
+    return `${baseUrl}${imageUrl}`;
   }
 
   // Handle paths without leading slash (e.g., "Images/...")
-  return `${bmappUrl}/${imageUrl}`;
+  return `${baseUrl}/${imageUrl}`;
 }

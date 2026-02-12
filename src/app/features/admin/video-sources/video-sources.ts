@@ -23,8 +23,6 @@ interface VideoSource {
   task_session?: string | null;
   is_active: boolean;
   sound_alert: boolean;
-  is_synced_bmapp: boolean;
-  bmapp_sync_error?: string | null;
   created_at: string;
 }
 
@@ -72,14 +70,6 @@ interface BmAppMedia {
             }
             Import from BM-APP
           </button>
-          <button mat-stroked-button (click)="syncBmApp()" [disabled]="syncing()">
-            @if (syncing()) {
-              <mat-spinner diameter="18"></mat-spinner>
-            } @else {
-              <mat-icon>cloud_upload</mat-icon>
-            }
-            Sync to BM-APP
-          </button>
           <button mat-stroked-button (click)="syncMediaMtx()" [disabled]="syncingMediaMtx()" matTooltip="Re-sync all streams to MediaMTX (use after MediaMTX restart)">
             @if (syncingMediaMtx()) {
               <mat-spinner diameter="18"></mat-spinner>
@@ -108,7 +98,6 @@ interface BmAppMedia {
             <div class="col-url">Stream URL</div>
             <div class="col-type">Type</div>
             <div class="col-status">Status</div>
-            <div class="col-sync">BM-APP</div>
             <div class="col-actions">Actions</div>
           </div>
           @for (source of videoSources(); track source.id) {
@@ -148,21 +137,6 @@ interface BmAppMedia {
                   [class.offline]="getRealStatus(source) === 'offline'">
                   {{ getRealStatus(source) | titlecase }}
                 </span>
-              </div>
-              <div class="col-sync">
-                @if (source.is_synced_bmapp) {
-                  <span class="sync-badge synced" matTooltip="Synced to BM-APP">
-                    <mat-icon>cloud_done</mat-icon>
-                  </span>
-                } @else if (source.bmapp_sync_error) {
-                  <span class="sync-badge error" [matTooltip]="source.bmapp_sync_error || 'Sync failed'">
-                    <mat-icon>cloud_off</mat-icon>
-                  </span>
-                } @else {
-                  <span class="sync-badge pending" matTooltip="Not synced">
-                    <mat-icon>cloud_queue</mat-icon>
-                  </span>
-                }
               </div>
               <div class="col-actions">
                 <button mat-icon-button [matTooltip]="source.is_active ? 'Deactivate' : 'Activate'" (click)="toggleSource(source)">
@@ -369,7 +343,7 @@ interface BmAppMedia {
 
     .table-header, .table-row {
       display: grid;
-      grid-template-columns: 1.5fr 90px 100px 2fr 70px 90px 60px 100px;
+      grid-template-columns: 1.5fr 90px 100px 2fr 70px 90px 100px;
       gap: 12px; padding: 14px 16px; align-items: center;
     }
 
@@ -450,25 +424,6 @@ interface BmAppMedia {
     @keyframes pulse-badge {
       0%, 100% { opacity: 1; }
       50% { opacity: 0.5; }
-    }
-
-    .col-sync { display: flex; justify-content: center; }
-
-    .sync-badge {
-      display: flex; align-items: center; justify-content: center;
-      width: 32px; height: 32px; border-radius: 8px;
-
-      mat-icon { font-size: 18px; width: 18px; height: 18px; }
-
-      &.synced {
-        background: rgba(34, 197, 94, 0.15); color: #22c55e;
-      }
-      &.pending {
-        background: rgba(156, 163, 175, 0.15); color: #9ca3af;
-      }
-      &.error {
-        background: rgba(239, 68, 68, 0.15); color: #ef4444;
-      }
     }
 
     .col-actions {
@@ -560,7 +515,18 @@ interface BmAppMedia {
 
       select {
         cursor: pointer;
-        option { background: #1a1a2e; color: var(--text-primary); }
+        appearance: none;
+        -webkit-appearance: none;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%239ca3af' d='M6 8.825a.5.5 0 0 1-.354-.146l-3.5-3.5a.5.5 0 1 1 .708-.708L6 7.618l3.146-3.147a.5.5 0 1 1 .708.708l-3.5 3.5A.5.5 0 0 1 6 8.825z'/%3E%3C/svg%3E");
+        background-repeat: no-repeat;
+        background-position: right 14px center;
+        padding-right: 36px;
+
+        option {
+          background: #1a1a2e;
+          color: var(--text-primary);
+          padding: 8px 12px;
+        }
       }
 
       .hint {
@@ -683,7 +649,6 @@ export class AdminVideoSourcesComponent implements OnInit {
   private apiUrl = environment.apiUrl;
 
   loading = signal(true);
-  syncing = signal(false);
   syncingMediaMtx = signal(false);
   importing = signal(false);
   saving = signal(false);
@@ -744,22 +709,6 @@ export class AdminVideoSourcesComponent implements OnInit {
     });
   }
 
-  syncBmApp() {
-    this.syncing.set(true);
-    this.http.post(`${this.apiUrl}/video-sources/sync-bmapp`, {}).subscribe({
-      next: (res: any) => {
-        this.syncing.set(false);
-        this.loadSources();
-        this.showSuccess(res.message || 'Synced to BM-APP successfully');
-      },
-      error: (err) => {
-        console.error('Sync error:', err);
-        this.syncing.set(false);
-        this.showError(err.error?.detail || 'Failed to sync with BM-APP');
-      }
-    });
-  }
-
   syncMediaMtx() {
     this.syncingMediaMtx.set(true);
     this.http.post(`${this.apiUrl}/video-sources/sync-mediamtx`, {}).subscribe({
@@ -777,25 +726,24 @@ export class AdminVideoSourcesComponent implements OnInit {
 
   importFromBmApp() {
     this.importing.set(true);
-    this.http.post<{ imported: number; skipped: number; errors: string[] }>(
+    this.http.post<{ message: string; imported: number; updated: number; removed: number; skipped: number; errors: string[] | null }>(
       `${this.apiUrl}/video-sources/import-from-bmapp`,
       {}
     ).subscribe({
       next: (res) => {
         this.importing.set(false);
         this.loadSources();
-        if (res.imported > 0) {
-          this.showSuccess(`Imported ${res.imported} camera(s) from BM-APP${res.skipped > 0 ? `, ${res.skipped} skipped (already exist)` : ''}`);
-        } else if (res.skipped > 0) {
-          this.showSuccess(`All ${res.skipped} camera(s) already exist locally`);
-        } else {
-          this.showSuccess('No cameras found in BM-APP to import');
-        }
+        const parts: string[] = [];
+        if (res.imported > 0) parts.push(`${res.imported} imported`);
+        if (res.updated > 0) parts.push(`${res.updated} updated`);
+        if (res.removed > 0) parts.push(`${res.removed} removed`);
+        if (res.skipped > 0) parts.push(`${res.skipped} unchanged`);
+        this.showSuccess(parts.length > 0 ? parts.join(', ') : 'No cameras found in AI Boxes');
       },
       error: (err) => {
         console.error('Import error:', err);
         this.importing.set(false);
-        this.showError(err.error?.detail || 'Failed to import from BM-APP');
+        this.showError(err.error?.detail || 'Failed to import from AI Boxes');
       }
     });
   }

@@ -1,5 +1,4 @@
 import { Injectable, signal, inject } from '@angular/core';
-import { Subject, BehaviorSubject } from 'rxjs';
 import { AIBoxService } from './aibox.service';
 
 interface StreamSubscription {
@@ -7,10 +6,27 @@ interface StreamSubscription {
   stream: string;           // Full stream ID: "task/AlgTaskSession" or "group/X"
   streamKey: string;        // Normalized key for matching: AlgTaskSession
   mediaName: string;        // MediaName for matching with data.task from BM-APP response
-  callback: (frame: string, task: string) => void;  // Include task for component-level verification
+  wsUrl: string;            // Which AI Box WebSocket this subscription belongs to
+  callback: (frame: string, task: string) => void;
   // Frame buffering for consistency check
   frameBuffer: { frame: string; task: string }[];
   consecutiveCount: number;  // Count of consecutive frames with same task
+}
+
+/**
+ * Per-AI Box WebSocket connection with its own cycling logic.
+ */
+interface BoxConnection {
+  wsUrl: string;
+  websocket: WebSocket | null;
+  isConnected: boolean;
+  subscriptions: Map<string, StreamSubscription>; // subscribers on this box
+  streamQueue: string[];
+  currentStream: string | null;
+  cycleTimer: any;
+  lastChannelSwitch: number;
+  expectedStream: string | null;
+  reconnectTimer: any;
 }
 
 /**
@@ -20,8 +36,8 @@ interface StreamSubscription {
  * all connected clients receive the same stream (the last selected channel).
  *
  * This service works around this by:
- * 1. Maintaining only ONE active WebSocket connection at a time
- * 2. Cycling through requested streams using time-division multiplexing
+ * 1. Maintaining ONE WebSocket connection PER AI Box
+ * 2. Cycling through requested streams per-box using time-division multiplexing
  * 3. Distributing frames to the correct subscribers based on task name
  */
 @Injectable({
@@ -29,25 +45,18 @@ interface StreamSubscription {
 })
 export class VideoStreamService {
   private aiBoxService = inject(AIBoxService);
-  private websocket: WebSocket | null = null;
-  private subscriptions: Map<string, StreamSubscription> = new Map();
-  private currentStream: string | null = null;
-  private streamQueue: string[] = [];
-  private cycleTimer: any = null;
+
+  // Map of wsUrl -> BoxConnection (one WebSocket per AI Box)
+  private connections: Map<string, BoxConnection> = new Map();
+
+  // Global subscription lookup by subscriber ID (for quick unsubscribe)
+  private allSubscriptions: Map<string, StreamSubscription> = new Map();
+
   private cycleInterval = 800; // 800ms per stream (more time for stable frames)
-  private isConnected = false;
-
-  // Channel switch settling - ignore frames briefly after switching to avoid stale frames
-  private lastChannelSwitch = 0;
-  private settlingPeriod = 200; // 200ms settling
-
-  // Frame consistency - require N consecutive frames with same task before delivering
+  private settlingPeriod = 200; // 200ms settling after channel switch
   private requiredConsecutiveFrames = 2;  // Need 2 consecutive matching frames
 
-  // Track which stream we're currently expecting frames from
-  private expectedStream: string | null = null;
-
-  // Observable for connection status
+  // Observable for connection status (reflects overall status)
   connectionStatus = signal<'disconnected' | 'connecting' | 'connected'>('disconnected');
 
   constructor() {}
@@ -59,11 +68,33 @@ export class VideoStreamService {
    * "AlgTaskSession" -> "AlgTaskSession"
    */
   private extractStreamKey(stream: string): string {
-    // Remove "task/" prefix if present to get the actual session name
     if (stream.startsWith('task/')) {
       return stream.substring(5).trim();
     }
     return stream.trim();
+  }
+
+  /**
+   * Resolve WebSocket URL - ensure it ends with /video/
+   */
+  private resolveWsUrl(wsBaseUrl?: string): string {
+    if (wsBaseUrl) {
+      let url = wsBaseUrl;
+      if (!url.endsWith('/')) url += '/';
+      if (!url.endsWith('video/')) url += 'video/';
+      return url;
+    }
+
+    // Fallback: try selected AI Box, then proxy
+    let url = this.aiBoxService.getSelectedStreamWsUrl();
+    if (url) {
+      if (!url.endsWith('/')) url += '/';
+      if (!url.endsWith('video/')) url += 'video/';
+      return url;
+    }
+
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${protocol}//${window.location.host}/bmapp-api/video/`;
   }
 
   /**
@@ -72,118 +103,172 @@ export class VideoStreamService {
    * @param stream Stream identifier (e.g., "task/AlgTaskSession")
    * @param callback Function to receive frame data with task name for verification
    * @param mediaName Optional MediaName for matching with data.task from BM-APP
+   * @param wsBaseUrl Optional WebSocket base URL for the AI Box this stream belongs to
    */
-  subscribe(id: string, stream: string, callback: (frame: string, task: string) => void, mediaName?: string): void {
+  subscribe(id: string, stream: string, callback: (frame: string, task: string) => void, mediaName?: string, wsBaseUrl?: string): void {
     const streamKey = this.extractStreamKey(stream);
     const resolvedMediaName = mediaName?.trim() || streamKey;
+    const wsUrl = this.resolveWsUrl(wsBaseUrl);
 
-    this.subscriptions.set(id, {
+    const sub: StreamSubscription = {
       id,
       stream,
       streamKey,
       mediaName: resolvedMediaName,
+      wsUrl,
       callback,
       frameBuffer: [],
       consecutiveCount: 0
-    });
-    this.updateStreamQueue();
+    };
 
-    if (!this.isConnected) {
-      this.connect();
-    } else {
-      // If already connected, start cycling if needed
-      this.startCycling();
+    // Remove previous subscription if re-subscribing
+    this.unsubscribe(id);
+
+    this.allSubscriptions.set(id, sub);
+
+    // Get or create BoxConnection for this wsUrl
+    let box = this.connections.get(wsUrl);
+    if (!box) {
+      box = this.createBoxConnection(wsUrl);
+      this.connections.set(wsUrl, box);
     }
+
+    box.subscriptions.set(id, sub);
+    this.updateBoxStreamQueue(box);
+
+    if (!box.isConnected && !box.websocket) {
+      this.connectBox(box);
+    } else if (box.isConnected) {
+      // Restart cycling with updated stream queue
+      this.stopBoxCycling(box);
+      this.startBoxCycling(box);
+    }
+
+    this.updateGlobalStatus();
   }
 
   /**
    * Unsubscribe from a video stream
    */
   unsubscribe(id: string): void {
-    this.subscriptions.delete(id);
-    this.updateStreamQueue();
+    const sub = this.allSubscriptions.get(id);
+    if (!sub) return;
 
-    if (this.subscriptions.size === 0) {
-      this.stopCycling();
-      this.disconnect();
+    this.allSubscriptions.delete(id);
+
+    const box = this.connections.get(sub.wsUrl);
+    if (!box) return;
+
+    box.subscriptions.delete(id);
+    this.updateBoxStreamQueue(box);
+
+    // If no more subscriptions for this box, disconnect
+    if (box.subscriptions.size === 0) {
+      this.stopBoxCycling(box);
+      this.disconnectBox(box);
+      this.connections.delete(sub.wsUrl);
     }
+
+    this.updateGlobalStatus();
   }
 
-  private updateStreamQueue() {
-    // Get unique streams from subscriptions
+  /**
+   * Get the number of active subscriptions
+   */
+  getSubscriptionCount(): number {
+    return this.allSubscriptions.size;
+  }
+
+  // ========== Per-Box Connection Management ==========
+
+  private createBoxConnection(wsUrl: string): BoxConnection {
+    return {
+      wsUrl,
+      websocket: null,
+      isConnected: false,
+      subscriptions: new Map(),
+      streamQueue: [],
+      currentStream: null,
+      cycleTimer: null,
+      lastChannelSwitch: 0,
+      expectedStream: null,
+      reconnectTimer: null
+    };
+  }
+
+  private updateBoxStreamQueue(box: BoxConnection) {
     const uniqueStreams = new Set<string>();
-    this.subscriptions.forEach(sub => uniqueStreams.add(sub.stream));
-    this.streamQueue = Array.from(uniqueStreams);
+    box.subscriptions.forEach(sub => uniqueStreams.add(sub.stream));
+    box.streamQueue = Array.from(uniqueStreams);
   }
 
-  private connect() {
-    if (this.websocket) return;
+  private connectBox(box: BoxConnection) {
+    if (box.websocket) return;
 
-    this.connectionStatus.set('connecting');
-
-    // Get WebSocket URL from selected AI Box
-    let wsUrl = this.aiBoxService.getSelectedStreamWsUrl();
-    if (wsUrl) {
-      // Ensure URL ends with /video/ path
-      if (!wsUrl.endsWith('/')) wsUrl += '/';
-      if (!wsUrl.endsWith('video/')) wsUrl += 'video/';
-    } else {
-      // Fallback to proxy
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      wsUrl = `${protocol}//${window.location.host}/bmapp-api/video/`;
-    }
+    this.updateGlobalStatus();
 
     try {
-      this.websocket = new WebSocket(wsUrl);
+      box.websocket = new WebSocket(box.wsUrl);
 
-      this.websocket.onopen = () => {
-        this.isConnected = true;
-        this.connectionStatus.set('connected');
-        this.startCycling();
+      box.websocket.onopen = () => {
+        box.isConnected = true;
+        this.updateGlobalStatus();
+        this.startBoxCycling(box);
       };
 
-      this.websocket.onmessage = (event) => {
-        this.handleMessage(event);
+      box.websocket.onmessage = (event) => {
+        this.handleBoxMessage(box, event);
       };
 
-      this.websocket.onclose = () => {
-        this.isConnected = false;
-        this.connectionStatus.set('disconnected');
-        this.websocket = null;
-        this.stopCycling();
+      box.websocket.onclose = () => {
+        box.isConnected = false;
+        box.websocket = null;
+        this.stopBoxCycling(box);
+        this.updateGlobalStatus();
 
         // Reconnect if there are active subscriptions
-        if (this.subscriptions.size > 0) {
-          setTimeout(() => this.connect(), 3000);
+        if (box.subscriptions.size > 0) {
+          box.reconnectTimer = setTimeout(() => {
+            box.reconnectTimer = null;
+            if (box.subscriptions.size > 0) {
+              this.connectBox(box);
+            }
+          }, 3000);
         }
       };
 
-      this.websocket.onerror = (error) => {
-        console.error('[VideoStreamService] WebSocket error:', error);
+      box.websocket.onerror = (error) => {
+        console.error(`[VideoStreamService] WebSocket error for ${box.wsUrl}:`, error);
       };
 
     } catch (e) {
-      console.error('[VideoStreamService] Connection error:', e);
-      this.connectionStatus.set('disconnected');
+      console.error(`[VideoStreamService] Connection error for ${box.wsUrl}:`, e);
+      this.updateGlobalStatus();
     }
   }
 
-  private disconnect() {
-    if (this.websocket) {
-      this.websocket.close();
-      this.websocket = null;
+  private disconnectBox(box: BoxConnection) {
+    if (box.reconnectTimer) {
+      clearTimeout(box.reconnectTimer);
+      box.reconnectTimer = null;
     }
-    this.isConnected = false;
-    this.connectionStatus.set('disconnected');
+    if (box.websocket) {
+      box.websocket.close();
+      box.websocket = null;
+    }
+    box.isConnected = false;
+    this.updateGlobalStatus();
   }
 
-  private startCycling() {
-    if (this.cycleTimer) return;
-    if (this.streamQueue.length === 0) return;
+  // ========== Per-Box Cycling ==========
+
+  private startBoxCycling(box: BoxConnection) {
+    if (box.cycleTimer) return;
+    if (box.streamQueue.length === 0) return;
 
     // If only one stream, just select it and don't cycle
-    if (this.streamQueue.length === 1) {
-      this.selectStream(this.streamQueue[0]);
+    if (box.streamQueue.length === 1) {
+      this.selectBoxStream(box, box.streamQueue[0]);
       return;
     }
 
@@ -191,70 +276,68 @@ export class VideoStreamService {
     let currentIndex = 0;
 
     const cycle = () => {
-      if (this.streamQueue.length === 0) {
-        this.stopCycling();
+      if (box.streamQueue.length === 0) {
+        this.stopBoxCycling(box);
         return;
       }
 
-      const stream = this.streamQueue[currentIndex];
-      this.selectStream(stream);
+      const stream = box.streamQueue[currentIndex];
+      this.selectBoxStream(box, stream);
 
-      currentIndex = (currentIndex + 1) % this.streamQueue.length;
+      currentIndex = (currentIndex + 1) % box.streamQueue.length;
     };
 
     // Select first stream immediately
     cycle();
 
     // Then cycle through streams
-    this.cycleTimer = setInterval(cycle, this.cycleInterval);
+    box.cycleTimer = setInterval(cycle, this.cycleInterval);
   }
 
-  private stopCycling() {
-    if (this.cycleTimer) {
-      clearInterval(this.cycleTimer);
-      this.cycleTimer = null;
+  private stopBoxCycling(box: BoxConnection) {
+    if (box.cycleTimer) {
+      clearInterval(box.cycleTimer);
+      box.cycleTimer = null;
     }
   }
 
-  private selectStream(stream: string) {
-    if (!this.websocket || this.websocket.readyState !== WebSocket.OPEN) return;
+  private selectBoxStream(box: BoxConnection, stream: string) {
+    if (!box.websocket || box.websocket.readyState !== WebSocket.OPEN) return;
 
-    // BM-APP expects just the channel identifier (TaskIdx number or "group/X")
-    // Don't prepend "task/" - the stream value should already be in the correct format
-    this.currentStream = stream;
-    this.lastChannelSwitch = Date.now(); // Record switch time for settling
+    box.currentStream = stream;
+    box.lastChannelSwitch = Date.now();
 
-    // Find the expected mediaName for this stream so we can validate incoming frames
-    const sub = Array.from(this.subscriptions.values()).find(s => s.stream === stream);
-    this.expectedStream = sub?.mediaName || this.extractStreamKey(stream);
+    // Find the expected mediaName for this stream
+    const sub = Array.from(box.subscriptions.values()).find(s => s.stream === stream);
+    box.expectedStream = sub?.mediaName || this.extractStreamKey(stream);
 
-    // Reset consecutive count for ALL subscribers when switching channels
-    // This ensures we need fresh consecutive frames after each switch
-    this.subscriptions.forEach(s => {
+    // Reset consecutive count for ALL subscribers on this box when switching channels
+    box.subscriptions.forEach(s => {
       s.consecutiveCount = 0;
     });
 
     const message = JSON.stringify({ chn: stream });
-    this.websocket.send(message);
+    box.websocket.send(message);
   }
 
-  private handleMessage(event: MessageEvent) {
-    // Check settling period - ignore frames briefly after channel switch
-    const timeSinceSwitch = Date.now() - this.lastChannelSwitch;
+  // ========== Per-Box Message Handling ==========
+
+  private handleBoxMessage(box: BoxConnection, event: MessageEvent) {
+    // Check settling period
+    const timeSinceSwitch = Date.now() - box.lastChannelSwitch;
     if (timeSinceSwitch < this.settlingPeriod) {
-      // Still settling after channel switch, ignore frame to avoid stale data
       return;
     }
 
-    // Handle binary data (Blob or ArrayBuffer)
+    // Handle binary data
     if (event.data instanceof Blob) {
-      this.handleBinaryFrame(event.data);
+      this.handleBoxBinaryFrame(box, event.data);
       return;
     }
 
     if (event.data instanceof ArrayBuffer) {
       const blob = new Blob([event.data], { type: 'image/jpeg' });
-      this.handleBinaryFrame(blob);
+      this.handleBoxBinaryFrame(box, blob);
       return;
     }
 
@@ -264,92 +347,89 @@ export class VideoStreamService {
 
       if (data.image) {
         const frameUrl = 'data:image/jpeg;base64,' + data.image;
-
-        // IMPORTANT: Use data.task from server response to identify which stream
-        // this frame actually belongs to, NOT this.currentStream
-        // This prevents frames from wrong streams being delivered during channel switching
         const frameTask = data.task?.trim();
 
         if (frameTask) {
-          // Normalize the frame task for matching (lowercase, trim whitespace)
-          // BM-APP returns data.task = MediaName (e.g., "KOPER02", "BWC SALATIGA 1")
           const frameTaskNormalized = frameTask.toLowerCase();
 
-          // Match frame to subscribers based on mediaName (which matches data.task from BM-APP)
-          this.subscriptions.forEach(sub => {
+          // Only match against subscribers on THIS box
+          box.subscriptions.forEach(sub => {
             const mediaNameNormalized = sub.mediaName.toLowerCase();
             const streamKeyNormalized = sub.streamKey.toLowerCase();
 
-            // Match by mediaName (primary) or streamKey (fallback)
             const isMatch = mediaNameNormalized === frameTaskNormalized || streamKeyNormalized === frameTaskNormalized;
 
             if (isMatch) {
-              // FRAME CONSISTENCY CHECK: Buffer frames and only deliver after N consecutive matches
-              // This prevents glitch where server sends wrong image with correct task during channel switch
               sub.consecutiveCount++;
 
               if (sub.consecutiveCount >= this.requiredConsecutiveFrames) {
-                // We have enough consecutive frames - deliver this one
                 sub.callback(frameUrl, frameTask);
               }
             } else {
-              // Different task - reset the consecutive counter for this subscriber
-              // This means we got a frame for a different stream, so reset the "confirmation"
               sub.consecutiveCount = 0;
             }
           });
         } else {
-          // No task info in response - this is problematic for multi-stream
-          // Only deliver if we have exactly 1 subscription (no ambiguity)
-          if (this.subscriptions.size === 1) {
-            const sub = this.subscriptions.values().next().value;
+          // No task info - only deliver if 1 subscription on this box
+          if (box.subscriptions.size === 1) {
+            const sub = box.subscriptions.values().next().value;
             if (sub) {
-              sub.callback(frameUrl, sub.mediaName);  // Use subscriber's mediaName as fallback
+              sub.callback(frameUrl, sub.mediaName);
             }
           }
-          // Don't log warning - just silently discard
         }
       }
 
       if (data.error) {
-        console.error('[VideoStreamService] Stream error:', data.error);
+        console.error(`[VideoStreamService] Stream error on ${box.wsUrl}:`, data.error);
       }
 
     } catch (e) {
-      // If JSON parse fails, the data might be raw binary sent as string
-      // This happens when server sends binary data without proper framing
-      // Just silently ignore these malformed messages
       if (event.data && typeof event.data === 'string' && event.data.length > 100) {
-        // Likely a corrupted/partial message, skip logging to avoid console spam
         return;
       }
-      console.warn('[VideoStreamService] Message parse error:', e);
+      console.warn(`[VideoStreamService] Message parse error on ${box.wsUrl}:`, e);
     }
   }
 
-  private handleBinaryFrame(blob: Blob) {
-    // Check settling period
-    const timeSinceSwitch = Date.now() - this.lastChannelSwitch;
+  private handleBoxBinaryFrame(box: BoxConnection, blob: Blob) {
+    const timeSinceSwitch = Date.now() - box.lastChannelSwitch;
     if (timeSinceSwitch < this.settlingPeriod) {
-      return; // Still settling, ignore frame
+      return;
     }
 
-    // Binary frames don't have task info - only safe to deliver if 1 subscriber
-    // AND we're not in cycling mode (multiple streams would cause ambiguity)
-    if (this.subscriptions.size === 1 && this.streamQueue.length === 1) {
+    // Binary frames don't have task info - only safe if 1 subscriber on this box
+    if (box.subscriptions.size === 1 && box.streamQueue.length === 1) {
       const frameUrl = URL.createObjectURL(blob);
-      const sub = this.subscriptions.values().next().value;
+      const sub = box.subscriptions.values().next().value;
       if (sub) {
-        sub.callback(frameUrl, sub.mediaName);  // Use subscriber's mediaName as fallback
+        sub.callback(frameUrl, sub.mediaName);
       }
     }
-    // For multiple subscribers, silently discard binary frames to prevent wrong delivery
   }
 
-  /**
-   * Get the number of active subscriptions
-   */
-  getSubscriptionCount(): number {
-    return this.subscriptions.size;
+  // ========== Global Status ==========
+
+  private updateGlobalStatus() {
+    if (this.connections.size === 0) {
+      this.connectionStatus.set('disconnected');
+      return;
+    }
+
+    let anyConnected = false;
+    let anyConnecting = false;
+
+    this.connections.forEach(box => {
+      if (box.isConnected) anyConnected = true;
+      else if (box.websocket) anyConnecting = true;
+    });
+
+    if (anyConnected) {
+      this.connectionStatus.set('connected');
+    } else if (anyConnecting) {
+      this.connectionStatus.set('connecting');
+    } else {
+      this.connectionStatus.set('disconnected');
+    }
   }
 }

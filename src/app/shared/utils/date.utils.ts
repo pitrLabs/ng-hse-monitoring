@@ -7,12 +7,27 @@ const TIMEZONE = 'Asia/Jakarta';
 const LOCALE = 'id-ID';
 
 /**
+ * Parse date string ensuring UTC interpretation.
+ * Backend returns UTC datetimes without 'Z' suffix (e.g., "2026-02-12T18:07:18").
+ * Without 'Z', JavaScript treats it as local time — this function appends 'Z'
+ * so it's correctly parsed as UTC before timezone conversion.
+ */
+function parseUTC(date: string | Date): Date {
+  if (date instanceof Date) return date;
+  // Datetime strings with 'T' but no timezone info → append 'Z' to force UTC
+  if (date.includes('T') && !date.endsWith('Z') && !/[+-]\d{2}(:\d{2})?$/.test(date)) {
+    return new Date(date + 'Z');
+  }
+  return new Date(date);
+}
+
+/**
  * Format date for display (date only)
  * Example: "28 Jan 2024"
  */
 export function formatDate(date: string | Date | undefined | null): string {
   if (!date) return '-';
-  const d = typeof date === 'string' ? new Date(date) : date;
+  const d = typeof date === 'string' ? parseUTC(date) : date;
   if (isNaN(d.getTime())) return '-';
 
   return d.toLocaleDateString(LOCALE, {
@@ -29,7 +44,7 @@ export function formatDate(date: string | Date | undefined | null): string {
  */
 export function formatDateShort(date: string | Date | undefined | null): string {
   if (!date) return '-';
-  const d = typeof date === 'string' ? new Date(date) : date;
+  const d = typeof date === 'string' ? parseUTC(date) : date;
   if (isNaN(d.getTime())) return '-';
 
   return d.toLocaleDateString(LOCALE, {
@@ -45,7 +60,7 @@ export function formatDateShort(date: string | Date | undefined | null): string 
  */
 export function formatDateTime(date: string | Date | undefined | null, includeSeconds = true): string {
   if (!date) return '-';
-  const d = typeof date === 'string' ? new Date(date) : date;
+  const d = typeof date === 'string' ? parseUTC(date) : date;
   if (isNaN(d.getTime())) return '-';
 
   const options: Intl.DateTimeFormatOptions = {
@@ -71,7 +86,7 @@ export function formatDateTime(date: string | Date | undefined | null, includeSe
  */
 export function formatTime(date: string | Date | undefined | null, includeSeconds = true): string {
   if (!date) return '-';
-  const d = typeof date === 'string' ? new Date(date) : date;
+  const d = typeof date === 'string' ? parseUTC(date) : date;
   if (isNaN(d.getTime())) return '-';
 
   const options: Intl.DateTimeFormatOptions = {
@@ -94,7 +109,7 @@ export function formatTime(date: string | Date | undefined | null, includeSecond
  */
 export function formatDateForChart(date: string | Date | undefined | null): string {
   if (!date) return '-';
-  const d = typeof date === 'string' ? new Date(date) : date;
+  const d = typeof date === 'string' ? parseUTC(date) : date;
   if (isNaN(d.getTime())) return '-';
 
   return d.toLocaleDateString(LOCALE, {
@@ -110,7 +125,7 @@ export function formatDateForChart(date: string | Date | undefined | null): stri
  */
 export function formatMonthYear(date: string | Date | undefined | null): string {
   if (!date) return '-';
-  const d = typeof date === 'string' ? new Date(date) : date;
+  const d = typeof date === 'string' ? parseUTC(date) : date;
   if (isNaN(d.getTime())) return '-';
 
   return d.toLocaleDateString(LOCALE, {
@@ -126,7 +141,7 @@ export function formatMonthYear(date: string | Date | undefined | null): string 
  */
 export function formatDateLong(date: string | Date | undefined | null): string {
   if (!date) return '-';
-  const d = typeof date === 'string' ? new Date(date) : date;
+  const d = typeof date === 'string' ? parseUTC(date) : date;
   if (isNaN(d.getTime())) return '-';
 
   return d.toLocaleDateString(LOCALE, {
@@ -150,7 +165,7 @@ export function nowWIB(): Date {
  */
 export function formatRelativeTime(date: string | Date | undefined | null): string {
   if (!date) return '-';
-  const d = typeof date === 'string' ? new Date(date) : date;
+  const d = typeof date === 'string' ? parseUTC(date) : date;
   if (isNaN(d.getTime())) return '-';
 
   const now = new Date();

@@ -405,7 +405,7 @@ export class WsVideoPlayerComponent implements OnInit, OnDestroy, OnChanges {
         this.status.set('playing');
         this.resetRetry();
       }
-    }, this.mediaName || undefined);
+    }, this.mediaName || undefined, this.wsBaseUrl || undefined);
   }
 
   private unsubscribeFromService() {

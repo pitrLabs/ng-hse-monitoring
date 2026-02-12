@@ -9,6 +9,7 @@ import { MatBadgeModule } from '@angular/material/badge';
 import { MatDialogModule, MatDialog } from '@angular/material/dialog';
 import { AlarmService } from '../../../core/services/alarm.service';
 import { Alarm, getAlarmSeverity, getBestAlarmImageUrl } from '../../../core/models/alarm.model';
+import { formatDate, formatTime, formatDateTime } from '../../../shared/utils/date.utils';
 
 @Component({
   standalone: true,
@@ -105,8 +106,8 @@ import { Alarm, getAlarmSeverity, getBestAlarmImageUrl } from '../../../core/mod
                 <input type="checkbox" [checked]="selectedIds().has(alarm.id)" (change)="toggleSelect(alarm.id)">
               </div>
               <div class="col-time">
-                <span class="time-date">{{ alarm.alarm_time | date:'MMM d, yyyy' }}</span>
-                <span class="time-hour">{{ alarm.alarm_time | date:'HH:mm:ss' }}</span>
+                <span class="time-date">{{ fmtDate(alarm.alarm_time) }}</span>
+                <span class="time-hour">{{ fmtTime(alarm.alarm_time) }}</span>
               </div>
               <div class="col-type">
                 <span class="type-badge" [attr.data-severity]="getSeverity(alarm.alarm_type)">
@@ -199,7 +200,7 @@ import { Alarm, getAlarmSeverity, getBestAlarmImageUrl } from '../../../core/mod
                 </div>
                 <div class="detail-row">
                   <span class="detail-label">Time</span>
-                  <span class="detail-value">{{ selectedAlarm()?.alarm_time | date:'medium' }}</span>
+                  <span class="detail-value">{{ fmtDateTime(selectedAlarm()?.alarm_time) }}</span>
                 </div>
                 <div class="detail-row">
                   <span class="detail-label">Confidence</span>
@@ -482,6 +483,10 @@ export class AdminAlarmsComponent implements OnInit, OnDestroy {
   getImageUrl(alarm: Alarm | undefined | null): string | null {
     return getBestAlarmImageUrl(alarm);
   }
+
+  fmtDate(d: string | undefined | null) { return formatDate(d); }
+  fmtTime(d: string | undefined | null) { return formatTime(d); }
+  fmtDateTime(d: string | undefined | null) { return formatDateTime(d); }
 
   toggleSelect(id: string) {
     this._selectedIds.update(ids => {

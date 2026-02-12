@@ -1,4 +1,4 @@
-import { Component, inject, signal, computed, OnInit } from '@angular/core';
+import { Component, inject, signal, computed, effect, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
@@ -52,7 +52,7 @@ interface AlarmPicture {
           <label>Search</label>
           <div class="search-box">
             <mat-icon>search</mat-icon>
-            <input type="text" placeholder="Search camera or location..." [(ngModel)]="searchQuery">
+            <input type="text" placeholder="Search camera or location..." [(ngModel)]="searchQuery" (input)="applyFilters()">
           </div>
         </div>
 
@@ -82,12 +82,14 @@ interface AlarmPicture {
 
         <div class="filter-section">
           <label>Date Range</label>
-          <mat-form-field appearance="outline" class="full-width">
-            <input matInput type="date" [(ngModel)]="startDate" (change)="applyFilters()">
-          </mat-form-field>
-          <mat-form-field appearance="outline" class="full-width">
-            <input matInput type="date" [(ngModel)]="endDate" (change)="applyFilters()">
-          </mat-form-field>
+          <div class="date-input-box">
+            <mat-icon>calendar_today</mat-icon>
+            <input type="date" [(ngModel)]="startDate" (ngModelChange)="applyFilters()" placeholder="Start date">
+          </div>
+          <div class="date-input-box">
+            <mat-icon>event</mat-icon>
+            <input type="date" [(ngModel)]="endDate" (ngModelChange)="applyFilters()" placeholder="End date">
+          </div>
         </div>
 
         <button mat-flat-button class="refresh-btn" (click)="loadAlarms()">
@@ -342,7 +344,7 @@ interface AlarmPicture {
       }
     }
 
-    .search-box {
+    .search-box, .date-input-box {
       display: flex;
       align-items: center;
       gap: 8px;
@@ -368,6 +370,11 @@ interface AlarmPicture {
 
         &::placeholder {
           color: var(--text-muted);
+        }
+
+        &::-webkit-calendar-picker-indicator {
+          filter: invert(0.7);
+          cursor: pointer;
         }
       }
     }
@@ -937,6 +944,9 @@ export class PictureComponent implements OnInit {
   currentPage = signal(1);
   pageSize = 20;
 
+  // Filter reactivity: increment to force filteredPictures recompute
+  private filterVersion = signal(0);
+
   // All pictures (alarms with images)
   private allPictures = signal<AlarmPicture[]>([]);
 
@@ -960,6 +970,9 @@ export class PictureComponent implements OnInit {
   });
 
   filteredPictures = computed(() => {
+    // Track filter version to react to filter changes (plain properties)
+    this.filterVersion();
+
     let pics = this.allPictures();
 
     // Search filter
@@ -982,15 +995,14 @@ export class PictureComponent implements OnInit {
       pics = pics.filter(p => p.alarm.camera_name === this.selectedCamera);
     }
 
-    // Date filters
+    // Date filters — user picks dates in WIB context, so boundaries must be WIB
     if (this.startDate) {
-      const start = new Date(this.startDate);
-      pics = pics.filter(p => new Date(p.alarm.alarm_time) >= start);
+      const start = new Date(this.startDate + 'T00:00:00+07:00'); // Start of day WIB
+      pics = pics.filter(p => this.parseAlarmTimeAsUTC(p.alarm.alarm_time) >= start.getTime());
     }
     if (this.endDate) {
-      const end = new Date(this.endDate);
-      end.setHours(23, 59, 59, 999);
-      pics = pics.filter(p => new Date(p.alarm.alarm_time) <= end);
+      const end = new Date(this.endDate + 'T23:59:59.999+07:00'); // End of day WIB
+      pics = pics.filter(p => this.parseAlarmTimeAsUTC(p.alarm.alarm_time) <= end.getTime());
     }
 
     return pics;
@@ -1014,41 +1026,37 @@ export class PictureComponent implements OnInit {
     this.loadAlarms();
   }
 
+  // Auto-rebuild pictures when alarms signal changes
+  private alarmsEffect = effect(() => {
+    const alarms = this.alarmService.alarms();
+    const pictures: AlarmPicture[] = [];
+
+    for (const alarm of alarms) {
+      const imageUrl = getBestAlarmImageUrl(alarm);
+      if (imageUrl) {
+        const isLabeledImage = !!alarm.minio_labeled_image_url &&
+                                imageUrl === alarm.minio_labeled_image_url;
+        pictures.push({
+          alarm,
+          imageUrl,
+          selected: false,
+          isLabeledImage
+        });
+      }
+    }
+
+    this.allPictures.set(pictures);
+    this.loading.set(false);
+    this.currentPage.set(1);
+  });
+
   loadAlarms() {
     this.loading.set(true);
-
-    // Load alarms with images (limit to recent 500)
     this.alarmService.loadAlarms({ limit: 500 });
-
-    // Subscribe to alarms and filter those with images
-    setTimeout(() => {
-      const alarms = this.alarmService.alarms();
-      const pictures: AlarmPicture[] = [];
-
-      for (const alarm of alarms) {
-        // Use getBestAlarmImageUrl to prefer labeled images (with detection boxes)
-        const imageUrl = getBestAlarmImageUrl(alarm);
-        if (imageUrl) {
-          // Check if using labeled image (already has boxes from AI)
-          // Labeled image = minio_labeled_image_url is being used
-          const isLabeledImage = !!alarm.minio_labeled_image_url &&
-                                  imageUrl === alarm.minio_labeled_image_url;
-          pictures.push({
-            alarm,
-            imageUrl,
-            selected: false,
-            isLabeledImage
-          });
-        }
-      }
-
-      this.allPictures.set(pictures);
-      this.loading.set(false);
-      this.currentPage.set(1);
-    }, 500);
   }
 
   applyFilters() {
+    this.filterVersion.update(v => v + 1);
     this.currentPage.set(1);
   }
 
@@ -1081,7 +1089,10 @@ export class PictureComponent implements OnInit {
 
   formatTime(dateStr: string | undefined): string {
     if (!dateStr) return '';
-    const date = new Date(dateStr);
+    // Ensure UTC parsing: append 'Z' if no timezone info
+    const utcStr = dateStr.includes('T') && !dateStr.endsWith('Z') && !/[+-]\d{2}(:\d{2})?$/.test(dateStr)
+      ? dateStr + 'Z' : dateStr;
+    const date = new Date(utcStr);
     const now = new Date();
     const diffMs = now.getTime() - date.getTime();
     const diffMins = Math.floor(diffMs / 60000);
@@ -1092,18 +1103,31 @@ export class PictureComponent implements OnInit {
       const hours = Math.floor(diffMins / 60);
       return `${hours}h ago`;
     }
-    return date.toLocaleDateString('id-ID', { day: '2-digit', month: 'short' });
+    return date.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', timeZone: 'Asia/Jakarta' });
   }
 
   formatDateTime(dateStr: string | undefined): string {
     if (!dateStr) return '';
-    return new Date(dateStr).toLocaleString('id-ID', {
+    // Ensure UTC parsing: append 'Z' if no timezone info
+    const utcStr = dateStr.includes('T') && !dateStr.endsWith('Z') && !/[+-]\d{2}(:\d{2})?$/.test(dateStr)
+      ? dateStr + 'Z' : dateStr;
+    return new Date(utcStr).toLocaleString('id-ID', {
       day: '2-digit',
       month: 'short',
       year: 'numeric',
       hour: '2-digit',
-      minute: '2-digit'
+      minute: '2-digit',
+      timeZone: 'Asia/Jakarta'
     });
+  }
+
+  private parseAlarmTimeAsUTC(dateStr: string): number {
+    if (!dateStr) return 0;
+    // Ensure UTC parsing: append 'Z' if no timezone info
+    if (dateStr.includes('T') && !dateStr.endsWith('Z') && !/[+-]\d{2}(:\d{2})?$/.test(dateStr)) {
+      return new Date(dateStr + 'Z').getTime();
+    }
+    return new Date(dateStr).getTime();
   }
 
   onImageError(event: Event) {

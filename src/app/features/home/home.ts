@@ -15,7 +15,7 @@ import { VideoSourceService, VideoSource } from '../../core/services/video-sourc
 import { AITaskService, BmappTask } from '../../core/services/ai-task.service';
 import { LeafletMapComponent, MapMarker } from '../../shared/components/leaflet-map/leaflet-map';
 import { WsVideoPlayerComponent } from '../../shared/components/ws-video-player/ws-video-player.component';
-import { formatDateForChart } from '../../shared/utils/date.utils';
+import { formatDateForChart, formatDateTime } from '../../shared/utils/date.utils';
 
 interface DeviceStatus {
   online: number;
@@ -340,7 +340,7 @@ interface DeviceClass {
               </div>
               <div class="popup-row">
                 <span class="popup-label">Time</span>
-                <span class="popup-value">{{ selectedNotification()?.alarm?.alarm_time | date:'medium' }}</span>
+                <span class="popup-value">{{ fmtDateTime(selectedNotification()?.alarm?.alarm_time) }}</span>
               </div>
               @if (selectedNotification()?.alarm?.confidence) {
                 <div class="popup-row">
@@ -1244,6 +1244,8 @@ interface DeviceClass {
 })
 export class HomeComponent implements OnInit, OnDestroy {
   @ViewChild('mapComponent') mapComponent!: LeafletMapComponent;
+
+  fmtDateTime = (d: string | undefined | null) => formatDateTime(d);
 
   alarmService = inject(AlarmService);
   locationsService = inject(LocationsService);

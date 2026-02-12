@@ -14,6 +14,7 @@ import { AuthService } from '../../core/services/auth.service';
 import { AlarmService } from '../../core/services/alarm.service';
 import { NotificationToastService } from '../../core/services/notification-toast.service';
 import { NotificationToastComponent } from './notification-toast/notification-toast.component';
+import { formatDate, formatTime } from '../utils/date.utils';
 
 interface NavItem {
   label: string;
@@ -1049,17 +1050,8 @@ export class LayoutComponent implements OnInit, OnDestroy {
 
   private updateDateTime(): void {
     const now = new Date();
-    const date = now.toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric'
-    });
-    const time = now.toLocaleTimeString('en-US', {
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false
-    });
+    const date = formatDate(now);
+    const time = formatTime(now);
     this.currentDateTime.set(`${date} ${time}`);
   }
 

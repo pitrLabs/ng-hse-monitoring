@@ -10,6 +10,7 @@ import { MatInputModule } from '@angular/material/input';
 import { MatSelectModule } from '@angular/material/select';
 import { AnalyticsService } from '../../../core/services/analytics.service';
 import { BmappSensor, SensorDeviceType } from '../../../core/models/analytics.model';
+import { formatDateTime } from '../../../shared/utils/date.utils';
 
 @Component({
   selector: 'app-admin-sensor',
@@ -564,6 +565,6 @@ export class AdminSensorComponent implements OnInit {
   }
 
   formatDate(ms: number): string {
-    return new Date(ms).toLocaleString();
+    return formatDateTime(new Date(ms));
   }
 }

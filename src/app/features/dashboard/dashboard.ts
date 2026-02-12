@@ -7,6 +7,7 @@ import { RouterModule } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
 import { UserService } from '../../core/services/user.service';
 import { RoleService } from '../../core/services/role.service';
+import { formatDateLong } from '../../shared/utils/date.utils';
 
 interface StatCard {
   title: string;
@@ -575,12 +576,7 @@ export class DashboardComponent implements OnInit {
     { title: 'Active Sessions', value: '1', icon: 'devices', color: 'orange' }
   ]);
 
-  today = new Date().toLocaleDateString('en-US', {
-    weekday: 'long',
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric'
-  });
+  today = formatDateLong(new Date());
 
   ngOnInit(): void {
     this.loadStats();

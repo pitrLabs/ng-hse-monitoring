@@ -4,6 +4,7 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatButtonModule } from '@angular/material/button';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { interval, Subscription } from 'rxjs';
+import { formatDateTime } from '../../../shared/utils/date.utils';
 
 @Component({
   standalone: true,
@@ -395,9 +396,6 @@ export class AdminDashboardComponent implements OnInit, OnDestroy {
   }
 
   private updateTime() {
-    this.currentTime.set(new Date().toLocaleString('en-US', {
-      year: 'numeric', month: '2-digit', day: '2-digit',
-      hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
-    }));
+    this.currentTime.set(formatDateTime(new Date()));
   }
 }

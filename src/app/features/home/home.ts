@@ -15,6 +15,7 @@ import { VideoSourceService, VideoSource } from '../../core/services/video-sourc
 import { AITaskService, BmappTask } from '../../core/services/ai-task.service';
 import { LeafletMapComponent, MapMarker } from '../../shared/components/leaflet-map/leaflet-map';
 import { WsVideoPlayerComponent } from '../../shared/components/ws-video-player/ws-video-player.component';
+import { formatDateForChart } from '../../shared/utils/date.utils';
 
 interface DeviceStatus {
   online: number;
@@ -1292,7 +1293,7 @@ export class HomeComponent implements OnInit, OnDestroy {
     const stats = this.alarmService.stats();
     if (stats?.daily_counts && stats.daily_counts.length > 0) {
       return stats.daily_counts.slice(-6).map(d => ({
-        date: new Date(d.date).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit' }),
+        date: formatDateForChart(d.date),
         count: d.count
       }));
     }
@@ -1300,7 +1301,7 @@ export class HomeComponent implements OnInit, OnDestroy {
     const alarms = this.alarmService.alarms();
     const countsByDate = new Map<string, number>();
     alarms.forEach(alarm => {
-      const date = new Date(alarm.alarm_time).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit' });
+      const date = formatDateForChart(alarm.alarm_time);
       countsByDate.set(date, (countsByDate.get(date) || 0) + 1);
     });
     return Array.from(countsByDate.entries())

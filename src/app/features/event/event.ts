@@ -21,6 +21,7 @@ import {
   getAlarmImageUrl,
   getBestAlarmImageUrl
 } from '../../core/models/alarm.model';
+import { formatDateTime as formatDateTimeUtil } from '../../shared/utils/date.utils';
 
 @Component({
   selector: 'app-event',
@@ -1271,25 +1272,11 @@ export class EventComponent implements OnInit, OnDestroy {
   }
 
   formatTime(dateStr: string): string {
-    const date = new Date(dateStr);
-    return date.toLocaleString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
+    return formatDateTimeUtil(dateStr, false);
   }
 
   formatDateTime(dateStr: string): string {
-    const date = new Date(dateStr);
-    return date.toLocaleString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit'
-    });
+    return formatDateTimeUtil(dateStr, true);
   }
 
   onImageError(event: Event): void {

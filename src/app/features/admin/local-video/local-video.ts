@@ -5,6 +5,7 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatButtonModule } from '@angular/material/button';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { LocalVideoService, LocalVideo } from '../../../core/services/local-video.service';
+import { formatDate as formatDateUtil } from '../../../shared/utils/date.utils';
 
 @Component({
   selector: 'app-admin-local-video',
@@ -654,11 +655,6 @@ export class AdminLocalVideoComponent implements OnInit {
   }
 
   formatDate(dateStr: string): string {
-    const date = new Date(dateStr);
-    return date.toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric'
-    });
+    return formatDateUtil(dateStr);
   }
 }

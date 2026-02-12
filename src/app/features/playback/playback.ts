@@ -21,6 +21,7 @@ import {
   getTriggerTypeLabel,
   getTriggerTypeColor
 } from '../../core/models/recording.model';
+import { formatMonthYear, formatDateLong, formatDateTime } from '../../shared/utils/date.utils';
 
 interface CalendarDayDisplay {
   day: number;
@@ -1044,7 +1045,7 @@ export class PlaybackComponent implements OnInit, OnDestroy {
   }
 
   currentMonthYear(): string {
-    return this.currentMonth().toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+    return formatMonthYear(this.currentMonth());
   }
 
   setViewMode(mode: 'calendar' | 'list' | 'window'): void {
@@ -1253,22 +1254,11 @@ export class PlaybackComponent implements OnInit, OnDestroy {
   formatSelectedDate(): string {
     const date = this.selectedDate();
     if (!date) return '';
-    return new Date(date).toLocaleDateString('en-US', {
-      weekday: 'long',
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric'
-    });
+    return formatDateLong(date);
   }
 
   formatRecordingTime(dateStr: string): string {
-    const date = new Date(dateStr);
-    return date.toLocaleString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
+    return formatDateTime(dateStr, false);
   }
 
   formatTime(seconds: number): string {

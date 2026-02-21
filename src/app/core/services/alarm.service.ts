@@ -383,10 +383,11 @@ export class AlarmService implements OnDestroy {
     });
   }
 
-  loadStats(startDate?: string, endDate?: string): void {
+  loadStats(startDate?: string, endDate?: string, aiboxId?: string): void {
     let params = new HttpParams();
     if (startDate) params = params.set('start_date', startDate);
     if (endDate) params = params.set('end_date', endDate);
+    if (aiboxId) params = params.set('aibox_id', aiboxId);
 
     this.http.get<AlarmStats>(`${this.apiUrl}/alarms/stats`, { params }).subscribe({
       next: (stats) => this._stats.set(stats),

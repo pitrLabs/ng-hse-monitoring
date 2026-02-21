@@ -3,11 +3,15 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MatIconModule } from '@angular/material/icon';
 import { MatButtonModule } from '@angular/material/button';
+import { MatSelectModule } from '@angular/material/select';
+import { MatFormFieldModule } from '@angular/material/form-field';
+import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { AlarmService } from '../../../core/services/alarm.service';
 import { VideoSourceService } from '../../../core/services/video-source.service';
 import { AITaskService } from '../../../core/services/ai-task.service';
 import { AnalyticsService } from '../../../core/services/analytics.service';
+import { AIBoxService } from '../../../core/services/aibox.service';
 import { PeopleCount, ZoneOccupancy, StoreCount } from '../../../core/models/analytics.model';
 import { HttpClient } from '@angular/common/http';
 import { environment } from '../../../../environments/environment';
@@ -15,18 +19,39 @@ import { environment } from '../../../../environments/environment';
 @Component({
   standalone: true,
   selector: 'app-admin-statistics',
-  imports: [CommonModule, FormsModule, MatIconModule, MatButtonModule, MatProgressSpinnerModule],
+  imports: [CommonModule, FormsModule, MatIconModule, MatButtonModule, MatSelectModule, MatFormFieldModule, MatProgressSpinnerModule, MatTooltipModule],
   template: `
     <div class="admin-statistics">
       <div class="page-header">
-        <h2>Statistics & Reports</h2>
+        <div class="header-left">
+          <h2>
+            Statistics & Reports
+            @if (selectedBoxName()) {
+              <span class="box-label">untuk {{ selectedBoxName() }}</span>
+            }
+          </h2>
+        </div>
         <div class="header-actions">
-          <select [(ngModel)]="selectedPeriod" (change)="loadStats()">
-            <option value="today">Today</option>
-            <option value="week">This Week</option>
-            <option value="month">This Month</option>
-            <option value="year">This Year</option>
-          </select>
+          <mat-form-field appearance="outline" class="aibox-field">
+            <mat-select [ngModel]="selectedAiBoxId()" (ngModelChange)="selectedAiBoxId.set($event); onAiBoxChange()">
+              <mat-option value="">All Boxes</mat-option>
+              @for (box of aiBoxService.aiBoxes(); track box.id) {
+                <mat-option [value]="box.id">{{ box.name }} ({{ box.code }})</mat-option>
+              }
+            </mat-select>
+          </mat-form-field>
+          <mat-form-field appearance="outline" class="period-field">
+            <mat-select [(ngModel)]="selectedPeriod" (ngModelChange)="loadStats()">
+              <mat-option value="today">Today</mat-option>
+              <mat-option value="week">This Week</mat-option>
+              <mat-option value="month">This Month</mat-option>
+              <mat-option value="year">This Year</mat-option>
+            </mat-select>
+          </mat-form-field>
+          <button mat-stroked-button (click)="runBackfill()" matTooltip="Fix alarms with missing AI Box association">
+            <mat-icon>build</mat-icon>
+            Fix Data
+          </button>
           <button mat-stroked-button (click)="exportReport()">
             <mat-icon>download</mat-icon>
             Export Report
@@ -222,19 +247,22 @@ import { environment } from '../../../../environments/environment';
 
     .page-header {
       display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px;
-      h2 { margin: 0; font-size: 20px; color: var(--text-primary); }
     }
 
-    .header-actions {
-      display: flex; gap: 12px;
-      select {
-        padding: 8px 16px;
-        background: var(--glass-bg);
-        border: 1px solid var(--glass-border);
-        border-radius: var(--radius-sm);
-        color: var(--text-primary);
-      }
+    .header-left h2 {
+      margin: 0; font-size: 20px; color: var(--text-primary);
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
     }
+
+    .box-label {
+      font-size: 14px; font-weight: 400;
+      color: var(--accent-primary);
+      background: rgba(0, 212, 255, 0.08);
+      border: 1px solid rgba(0, 212, 255, 0.2);
+      padding: 3px 10px; border-radius: 20px;
+    }
+
+    .header-actions { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 
     .summary-grid {
       display: grid;
@@ -338,19 +366,33 @@ export class AdminStatisticsComponent implements OnInit {
   private videoSourceService = inject(VideoSourceService);
   private aiTaskService = inject(AITaskService);
   private analyticsService = inject(AnalyticsService);
+  aiBoxService = inject(AIBoxService);
   private http = inject(HttpClient);
   private apiUrl = environment.apiUrl;
 
   selectedPeriod = 'today';
+  selectedAiBoxId = signal<string | null>(null);
   loading = signal(false);
+
+  // Computed name of the selected box for the title
+  selectedBoxName = computed(() => {
+    const id = this.selectedAiBoxId();
+    if (!id) return null;
+    const box = this.aiBoxService.aiBoxes().find(b => b.id === id);
+    return box ? box.name : null;
+  });
 
   // Real stats from services
   alarmStats = this.alarmService.stats;
 
-  // Computed stats
+  // Computed stats — filter cameras by selected aibox
   stats = computed(() => {
     const alarmStats = this.alarmStats();
-    const cameras = this.videoSourceService.videoSources();
+    const aiboxId = this.selectedAiBoxId();
+    const allCameras = this.videoSourceService.videoSources();
+    const cameras = aiboxId
+      ? allCameras.filter(c => c.aibox_id === aiboxId)
+      : allCameras;
     const tasks = this.aiTasks();
 
     const activeCameras = cameras.filter(c => c.is_active).length;
@@ -421,45 +463,50 @@ export class AdminStatisticsComponent implements OnInit {
   });
 
   ngOnInit(): void {
+    this.aiBoxService.loadAiBoxes().subscribe();
     this.loadStats();
     this.loadAiTasks();
-    this.loadAlarmsByCamera();
-    this.loadAnalyticsData();
 
     // Load video sources for camera stats
     this.videoSourceService.loadVideoSources();
   }
 
+  onAiBoxChange(): void {
+    this.loadStats();
+  }
+
+  private getStartDate(): string | undefined {
+    const now = new Date();
+    switch (this.selectedPeriod) {
+      case 'today':
+        return new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+      case 'week':
+        const weekStart = new Date(now);
+        weekStart.setDate(weekStart.getDate() - 7);
+        return weekStart.toISOString();
+      case 'month':
+        const monthStart = new Date(now);
+        monthStart.setMonth(monthStart.getMonth() - 1);
+        return monthStart.toISOString();
+      case 'year':
+        const yearStart = new Date(now);
+        yearStart.setFullYear(yearStart.getFullYear() - 1);
+        return yearStart.toISOString();
+      default:
+        return undefined;
+    }
+  }
+
   loadStats(): void {
     this.loading.set(true);
 
-    // Calculate date range based on period
-    const now = new Date();
-    let startDate: string | undefined;
+    const startDate = this.getStartDate();
+    const aiboxId = this.selectedAiBoxId() || undefined;
 
-    switch (this.selectedPeriod) {
-      case 'today':
-        startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
-        break;
-      case 'week':
-        const weekAgo = new Date(now);
-        weekAgo.setDate(weekAgo.getDate() - 7);
-        startDate = weekAgo.toISOString();
-        break;
-      case 'month':
-        const monthAgo = new Date(now);
-        monthAgo.setMonth(monthAgo.getMonth() - 1);
-        startDate = monthAgo.toISOString();
-        break;
-      case 'year':
-        const yearAgo = new Date(now);
-        yearAgo.setFullYear(yearAgo.getFullYear() - 1);
-        startDate = yearAgo.toISOString();
-        break;
-    }
-
-    this.alarmService.loadStats(startDate);
+    this.alarmService.loadStats(startDate, undefined, aiboxId);
     this.alarmService.loadAlarms({ limit: 100 });
+    this.loadAlarmsByCamera(startDate);
+    this.loadAnalyticsData();
     this.loading.set(false);
   }
 
@@ -470,9 +517,14 @@ export class AdminStatisticsComponent implements OnInit {
     });
   }
 
-  loadAlarmsByCamera(): void {
-    // Get alarm statistics by camera from backend
-    this.http.get<any>(`${this.apiUrl}/alarms/stats/by-camera`).subscribe({
+  loadAlarmsByCamera(startDate?: string): void {
+    const aiboxId = this.selectedAiBoxId();
+    const params: string[] = [];
+    if (aiboxId) params.push(`aibox_id=${aiboxId}`);
+    if (startDate) params.push(`start_date=${encodeURIComponent(startDate)}`);
+    const query = params.length ? `?${params.join('&')}` : '';
+    const url = `${this.apiUrl}/alarms/stats/by-camera${query}`;
+    this.http.get<any>(url).subscribe({
       next: (data) => {
         if (data?.by_camera) {
           const entries = Object.entries(data.by_camera) as [string, number][];
@@ -502,15 +554,17 @@ export class AdminStatisticsComponent implements OnInit {
   }
 
   loadAnalyticsData(): void {
-    this.analyticsService.getPeopleCount({ limit: 50 }).subscribe({
+    const aiboxId = this.selectedAiBoxId() || undefined;
+
+    this.analyticsService.getPeopleCount({ limit: 50, aibox_id: aiboxId }).subscribe({
       next: (data) => this.peopleCountData.set(data),
       error: () => {}
     });
-    this.analyticsService.getZoneOccupancy({ limit: 50 }).subscribe({
+    this.analyticsService.getZoneOccupancy({ limit: 50, aibox_id: aiboxId }).subscribe({
       next: (data) => this.zoneOccupancyData.set(data),
       error: () => {}
     });
-    this.analyticsService.getStoreCount({ limit: 50 }).subscribe({
+    this.analyticsService.getStoreCount({ limit: 50, aibox_id: aiboxId }).subscribe({
       next: (data) => this.storeCountData.set(data),
       error: () => {}
     });
@@ -537,6 +591,24 @@ export class AdminStatisticsComponent implements OnInit {
       .replace(/([A-Z])/g, ' $1')
       .replace(/^./, str => str.toUpperCase())
       .trim();
+  }
+
+  runBackfill(): void {
+    this.http.post<{ updated: number; message: string }>(`${this.apiUrl}/alarms/backfill-aibox`, {}).subscribe({
+      next: (result) => {
+        console.log('[Statistics] Backfill result:', result.message);
+        if (result.updated > 0) {
+          this.loadStats();
+          this.loadAlarmsByCamera();
+        }
+        // Also fetch debug info to help diagnose
+        this.http.get<any>(`${this.apiUrl}/alarms/debug/aibox-distribution`).subscribe({
+          next: (debug) => console.log('[Statistics] Alarm distribution:', JSON.stringify(debug, null, 2)),
+          error: () => {}
+        });
+      },
+      error: (err) => console.error('[Statistics] Backfill failed:', err)
+    });
   }
 
   exportReport(): void {

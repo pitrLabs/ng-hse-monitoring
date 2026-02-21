@@ -1,170 +1,87 @@
-import { Component, signal } from '@angular/core';
+import { Component, signal, inject, OnInit, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MatIconModule } from '@angular/material/icon';
 import { MatButtonModule } from '@angular/material/button';
-import { MatSlideToggleModule } from '@angular/material/slide-toggle';
-
-interface DatabaseInfo {
-  name: string;
-  type: string;
-  host: string;
-  port: number;
-  database: string;
-  status: 'connected' | 'disconnected' | 'error';
-  size: string;
-  tables: number;
-  lastBackup: string;
-}
+import { MatSelectModule } from '@angular/material/select';
+import { MatFormFieldModule } from '@angular/material/form-field';
+import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
+import { AIBoxService } from '../../../core/services/aibox.service';
+import { PreferencesService, SystemPreference } from '../../../core/services/preferences.service';
 
 @Component({
   selector: 'app-admin-database',
   standalone: true,
-  imports: [CommonModule, FormsModule, MatIconModule, MatButtonModule, MatSlideToggleModule],
+  imports: [CommonModule, FormsModule, MatIconModule, MatButtonModule, MatProgressSpinnerModule,  MatSelectModule, MatFormFieldModule],
   template: `
     <div class="database-page">
       <div class="page-header">
         <div class="header-left">
           <h2>Database Configuration</h2>
-          <p class="subtitle">Manage database connections and backups</p>
+          <p class="subtitle">Manage external database connection settings per AI Box</p>
         </div>
         <div class="header-actions">
-          <button class="action-btn secondary" (click)="testConnection()">
-            <mat-icon>sync</mat-icon>
-            Test Connection
+          <mat-form-field appearance="outline" class="aibox-field">
+          <mat-select [ngModel]="selectedAiBoxId()" (ngModelChange)="selectedAiBoxId.set($event); onAiBoxChange()">
+            <mat-option value="">Select AI Box</mat-option>
+            @for (box of aiBoxService.aiBoxes(); track box.id) {
+              <mat-option [value]="box.id">{{ box.name }} ({{ box.code }})</mat-option>
+            }
+          </mat-select>
+        </mat-form-field>
+          <button class="action-btn secondary" [disabled]="!selectedAiBoxId() || syncing()" (click)="syncFromBmapp()">
+            <mat-icon>cloud_download</mat-icon>
+            Sync
           </button>
-          <button class="action-btn primary" (click)="createBackup()">
-            <mat-icon>backup</mat-icon>
-            Create Backup
+          <button class="action-btn secondary" [disabled]="!selectedAiBoxId() || saving()" (click)="saveAndApply()">
+            <mat-icon>cloud_upload</mat-icon>
+            Save & Apply
           </button>
         </div>
       </div>
 
-      <div class="stats-grid">
-        <div class="stat-card">
+      @if (!selectedAiBoxId()) {
+        <div class="empty-state">
           <mat-icon>storage</mat-icon>
-          <div class="stat-info">
-            <span class="value">{{ dbInfo().size }}</span>
-            <span class="label">Database Size</span>
-          </div>
+          <h3>Select an AI Box</h3>
+          <p>Choose an AI Box to configure its database settings</p>
         </div>
-        <div class="stat-card">
-          <mat-icon>table_chart</mat-icon>
-          <div class="stat-info">
-            <span class="value">{{ dbInfo().tables }}</span>
-            <span class="label">Tables</span>
+      } @else if (loading()) {
+        <div class="loading-state"><mat-progress-spinner mode="indeterminate" diameter="40"></mat-progress-spinner></div>
+      } @else {
+        @if (syncMessage()) {
+          <div class="sync-message" [class.success]="syncSuccess()">
+            <mat-icon>{{ syncSuccess() ? 'check_circle' : 'error' }}</mat-icon>
+            {{ syncMessage() }}
           </div>
-        </div>
-        <div class="stat-card" [class]="dbInfo().status">
-          <mat-icon>{{ dbInfo().status === 'connected' ? 'check_circle' : 'error' }}</mat-icon>
-          <div class="stat-info">
-            <span class="value status-text">{{ dbInfo().status | titlecase }}</span>
-            <span class="label">Connection Status</span>
-          </div>
-        </div>
-        <div class="stat-card">
-          <mat-icon>schedule</mat-icon>
-          <div class="stat-info">
-            <span class="value">{{ dbInfo().lastBackup }}</span>
-            <span class="label">Last Backup</span>
-          </div>
-        </div>
-      </div>
+        }
 
-      <div class="config-grid">
-        <div class="config-card">
-          <h3><mat-icon>settings</mat-icon> Connection Settings</h3>
-          <div class="form-group">
-            <label>Database Type</label>
-            <select [(ngModel)]="dbInfo().type">
-              <option value="postgresql">PostgreSQL</option>
-              <option value="mysql">MySQL</option>
-              <option value="mongodb">MongoDB</option>
-              <option value="sqlite">SQLite</option>
-            </select>
+        @if (dbPrefs().length === 0) {
+          <div class="empty-state">
+            <mat-icon>info</mat-icon>
+            <h3>No database settings</h3>
+            <p>Sync from BM-APP to import database configuration</p>
+            <button class="action-btn primary" (click)="syncFromBmapp()">
+              <mat-icon>cloud_download</mat-icon>
+              Sync Now
+            </button>
           </div>
-          <div class="form-group">
-            <label>Host</label>
-            <input type="text" [(ngModel)]="dbInfo().host" placeholder="localhost">
-          </div>
-          <div class="form-group">
-            <label>Port</label>
-            <input type="number" [(ngModel)]="dbInfo().port" placeholder="5432">
-          </div>
-          <div class="form-group">
-            <label>Database Name</label>
-            <input type="text" [(ngModel)]="dbInfo().database" placeholder="hse_monitoring">
-          </div>
-          <div class="form-group">
-            <label>Username</label>
-            <input type="text" [(ngModel)]="username" placeholder="admin">
-          </div>
-          <div class="form-group">
-            <label>Password</label>
-            <input type="password" [(ngModel)]="password" placeholder="••••••••">
-          </div>
-          <button class="action-btn primary full-width" (click)="saveConnection()">
-            <mat-icon>save</mat-icon>
-            Save Connection
-          </button>
-        </div>
-
-        <div class="config-card">
-          <h3><mat-icon>backup</mat-icon> Backup Settings</h3>
-          <div class="setting-row">
-            <div class="setting-info">
-              <span class="setting-label">Auto Backup</span>
-              <span class="setting-desc">Enable automatic database backups</span>
-            </div>
-            <mat-slide-toggle [(ngModel)]="autoBackup" color="primary"></mat-slide-toggle>
-          </div>
-          @if (autoBackup) {
-            <div class="form-group">
-              <label>Backup Schedule</label>
-              <select [(ngModel)]="backupSchedule">
-                <option value="hourly">Every Hour</option>
-                <option value="daily">Daily</option>
-                <option value="weekly">Weekly</option>
-                <option value="monthly">Monthly</option>
-              </select>
-            </div>
-            <div class="form-group">
-              <label>Retention Period</label>
-              <select [(ngModel)]="retentionPeriod">
-                <option value="7">7 Days</option>
-                <option value="14">14 Days</option>
-                <option value="30">30 Days</option>
-                <option value="90">90 Days</option>
-              </select>
-            </div>
-          }
-          <div class="setting-row">
-            <div class="setting-info">
-              <span class="setting-label">Compress Backups</span>
-              <span class="setting-desc">Compress backup files to save space</span>
-            </div>
-            <mat-slide-toggle [(ngModel)]="compressBackups" color="primary"></mat-slide-toggle>
-          </div>
-          <div class="backup-list">
-            <h4>Recent Backups</h4>
-            @for (backup of recentBackups(); track backup.id) {
-              <div class="backup-item">
-                <mat-icon>archive</mat-icon>
-                <div class="backup-info">
-                  <span class="backup-name">{{ backup.name }}</span>
-                  <span class="backup-date">{{ backup.date }} - {{ backup.size }}</span>
-                </div>
-                <button mat-icon-button (click)="restoreBackup(backup)">
-                  <mat-icon>restore</mat-icon>
-                </button>
-                <button mat-icon-button (click)="downloadBackup(backup)">
-                  <mat-icon>download</mat-icon>
-                </button>
+        } @else {
+          <div class="config-grid">
+            @for (pref of dbPrefs(); track pref.id) {
+              <div class="config-field">
+                <label>{{ formatKey(pref.key) }}</label>
+                <input
+                  class="field-input"
+                  [type]="isPasswordField(pref.key) ? 'password' : (pref.value_type === 'int' || pref.value_type === 'float' ? 'number' : 'text')"
+                  [value]="getEditValue(pref)"
+                  (change)="onValueChange(pref.id, $event)"
+                  [placeholder]="pref.key">
               </div>
             }
           </div>
-        </div>
-      </div>
+        }
+      }
     </div>
   `,
   styles: [`
@@ -172,82 +89,123 @@ interface DatabaseInfo {
     .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; flex-wrap: wrap; gap: 16px; }
     .header-left h2 { margin: 0; font-size: 24px; color: var(--text-primary); }
     .subtitle { margin: 4px 0 0; color: var(--text-secondary); font-size: 14px; }
-    .header-actions { display: flex; gap: 12px; }
-    .action-btn { display: flex; align-items: center; gap: 8px; padding: 10px 20px; border: none; border-radius: 8px; font-size: 14px; cursor: pointer; }
+    .header-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+    .aibox-select { padding: 8px 12px; background: var(--glass-bg); border: 1px solid var(--glass-border); border-radius: 8px; color: var(--text-primary); font-size: 14px; min-width: 180px; }
+    .empty-state, .loading-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 80px 20px; gap: 16px; color: var(--text-muted); }
+    .empty-state mat-icon { font-size: 64px; width: 64px; height: 64px; opacity: 0.3; }
+    .empty-state h3 { margin: 0; font-size: 20px; color: var(--text-primary); }
+    .sync-message { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); color: #ef4444; font-size: 14px; }
+    .sync-message.success { background: rgba(34, 197, 94, 0.1); border-color: rgba(34, 197, 94, 0.3); color: #22c55e; }
+    .config-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+    .config-field { display: flex; flex-direction: column; gap: 6px; }
+    .config-field label { font-size: 13px; color: var(--text-muted); font-weight: 500; }
+    .field-input { padding: 10px 14px; background: var(--glass-bg); border: 1px solid var(--glass-border); border-radius: 8px; color: var(--text-primary); font-size: 14px; font-family: monospace; }
+    .field-input:focus { outline: none; border-color: var(--accent-primary); }
+    .action-btn { display: flex; align-items: center; gap: 8px; padding: 8px 14px; border: none; border-radius: 8px; font-size: 13px; cursor: pointer; }
+    .action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
     .action-btn.primary { background: var(--accent-primary); color: white; }
     .action-btn.secondary { background: var(--glass-bg); color: var(--text-primary); border: 1px solid var(--glass-border); }
-    .action-btn.full-width { width: 100%; justify-content: center; margin-top: 16px; }
-    .action-btn mat-icon { font-size: 18px; width: 18px; height: 18px; }
-
-    .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
-    .stat-card { display: flex; align-items: center; gap: 16px; padding: 20px; background: var(--glass-bg); border: 1px solid var(--glass-border); border-radius: 12px; }
-    .stat-card mat-icon { font-size: 32px; width: 32px; height: 32px; color: var(--accent-primary); }
-    .stat-card.connected mat-icon { color: #22c55e; }
-    .stat-card.disconnected mat-icon, .stat-card.error mat-icon { color: #ef4444; }
-    .stat-info { display: flex; flex-direction: column; }
-    .stat-info .value { font-size: 20px; font-weight: 600; color: var(--text-primary); }
-    .stat-info .label { font-size: 12px; color: var(--text-muted); }
-
-    .config-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 24px; }
-    .config-card { background: var(--glass-bg); border: 1px solid var(--glass-border); border-radius: 16px; padding: 24px; }
-    .config-card h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 20px; font-size: 16px; color: var(--text-primary); }
-    .config-card h3 mat-icon { color: var(--accent-primary); }
-    .config-card h4 { margin: 20px 0 12px; font-size: 14px; color: var(--text-secondary); }
-
-    .form-group { margin-bottom: 16px; }
-    .form-group label { display: block; font-size: 13px; color: var(--text-secondary); margin-bottom: 6px; }
-    .form-group input, .form-group select { width: 100%; padding: 10px 14px; background: rgba(0,0,0,0.2); border: 1px solid var(--glass-border); border-radius: 8px; color: var(--text-primary); font-size: 14px; }
-    .form-group input:focus, .form-group select:focus { outline: none; border-color: var(--accent-primary); }
-
-    .setting-row { display: flex; justify-content: space-between; align-items: center; padding: 16px 0; border-bottom: 1px solid var(--glass-border); }
-    .setting-row:last-of-type { border-bottom: none; }
-    .setting-info { display: flex; flex-direction: column; gap: 2px; }
-    .setting-label { font-size: 14px; color: var(--text-primary); }
-    .setting-desc { font-size: 12px; color: var(--text-muted); }
-
-    .backup-list { margin-top: 16px; }
-    .backup-item { display: flex; align-items: center; gap: 12px; padding: 12px; background: rgba(0,0,0,0.1); border-radius: 8px; margin-bottom: 8px; }
-    .backup-item mat-icon { color: var(--accent-primary); }
-    .backup-info { flex: 1; display: flex; flex-direction: column; }
-    .backup-name { font-size: 13px; color: var(--text-primary); }
-    .backup-date { font-size: 11px; color: var(--text-muted); }
-    .backup-item button { color: var(--text-secondary); }
-
-    @media (max-width: 1024px) {
-      .stats-grid { grid-template-columns: repeat(2, 1fr); }
-      .config-grid { grid-template-columns: 1fr; }
-    }
+    .action-btn mat-icon { font-size: 15px; width: 15px; height: 15px; }
   `]
 })
-export class AdminDatabaseComponent {
-  username = 'admin';
-  password = '';
-  autoBackup = true;
-  backupSchedule = 'daily';
-  retentionPeriod = '30';
-  compressBackups = true;
+export class AdminDatabaseComponent implements OnInit {
+  aiBoxService = inject(AIBoxService);
+  private prefsService = inject(PreferencesService);
 
-  dbInfo = signal<DatabaseInfo>({
-    name: 'Primary Database',
-    type: 'postgresql',
-    host: 'localhost',
-    port: 5432,
-    database: 'hse_monitoring',
-    status: 'connected',
-    size: '2.4 GB',
-    tables: 45,
-    lastBackup: '2 hours ago'
-  });
+  selectedAiBoxId = signal<string | null>(null);
+  preferences = signal<SystemPreference[]>([]);
+  loading = signal(false);
+  saving = signal(false);
+  syncing = signal(false);
+  syncMessage = signal('');
+  syncSuccess = signal(false);
 
-  recentBackups = signal([
-    { id: 1, name: 'backup_2024_01_15.sql.gz', date: 'Jan 15, 2024 08:00', size: '256 MB' },
-    { id: 2, name: 'backup_2024_01_14.sql.gz', date: 'Jan 14, 2024 08:00', size: '254 MB' },
-    { id: 3, name: 'backup_2024_01_13.sql.gz', date: 'Jan 13, 2024 08:00', size: '252 MB' }
-  ]);
+  private editValues = new Map<string, string>();
 
-  testConnection() { console.log('Testing database connection...'); }
-  createBackup() { console.log('Creating backup...'); }
-  saveConnection() { console.log('Saving connection settings...'); }
-  restoreBackup(backup: any) { console.log('Restoring backup:', backup.name); }
-  downloadBackup(backup: any) { console.log('Downloading backup:', backup.name); }
+  dbPrefs = computed(() => this.preferences().filter(p => p.category === 'database'));
+
+  ngOnInit() {
+    this.aiBoxService.loadAiBoxes().subscribe();
+  }
+
+  onAiBoxChange() {
+    this.editValues.clear();
+    this.preferences.set([]);
+    this.loadPreferences();
+  }
+
+  loadPreferences() {
+    const id = this.selectedAiBoxId();
+    if (!id) return;
+    this.loading.set(true);
+    this.prefsService.getPreferences({ aibox_id: id, category: 'database' }).subscribe({
+      next: (data) => { this.preferences.set(data); this.loading.set(false); },
+      error: () => this.loading.set(false)
+    });
+  }
+
+  getEditValue(pref: SystemPreference): string {
+    return this.editValues.get(pref.id) ?? pref.value;
+  }
+
+  onValueChange(id: string, event: Event) {
+    this.editValues.set(id, (event.target as HTMLInputElement).value);
+  }
+
+  isPasswordField(key: string): boolean {
+    return key.toLowerCase().includes('password') || key.toLowerCase().includes('passwd');
+  }
+
+  formatKey(key: string): string {
+    return key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  }
+
+  saveAndApply() {
+    const id = this.selectedAiBoxId();
+    if (!id) return;
+    this.saving.set(true);
+    const updates = Array.from(this.editValues.entries()).map(([prefId, value]) => {
+      const pref = this.preferences().find(p => p.id === prefId);
+      return { key: pref?.key || '', value };
+    }).filter(u => u.key);
+
+    if (updates.length === 0) {
+      this.prefsService.applyToBmapp(id).subscribe({
+        next: (r) => { this.saving.set(false); this.showMsg(r.message, r.success); },
+        error: (err) => { this.saving.set(false); this.showMsg(err.error?.detail, false); }
+      });
+      return;
+    }
+
+    this.prefsService.bulkUpdate(id, updates).subscribe({
+      next: () => {
+        this.editValues.clear();
+        this.prefsService.applyToBmapp(id).subscribe({
+          next: (r) => { this.saving.set(false); this.showMsg(r.message, r.success); },
+          error: (err) => { this.saving.set(false); this.showMsg(err.error?.detail, false); }
+        });
+      },
+      error: (err) => { this.saving.set(false); this.showMsg(err.error?.detail, false); }
+    });
+  }
+
+  syncFromBmapp() {
+    const id = this.selectedAiBoxId();
+    if (!id) return;
+    this.syncing.set(true);
+    this.prefsService.syncFromBmapp(id).subscribe({
+      next: (result) => {
+        this.syncing.set(false);
+        this.loadPreferences();
+        this.showMsg(result.message, result.success);
+      },
+      error: (err) => { this.syncing.set(false); this.showMsg(err.error?.detail, false); }
+    });
+  }
+
+  private showMsg(msg: string, success: boolean) {
+    this.syncMessage.set(msg);
+    this.syncSuccess.set(success);
+    setTimeout(() => this.syncMessage.set(''), 5000);
+  }
 }

@@ -7,7 +7,10 @@ import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatTooltipModule } from '@angular/material/tooltip';
 import { MatBadgeModule } from '@angular/material/badge';
 import { MatDialogModule, MatDialog } from '@angular/material/dialog';
+import { MatSelectModule } from '@angular/material/select';
+import { MatFormFieldModule } from '@angular/material/form-field';
 import { AlarmService } from '../../../core/services/alarm.service';
+import { AIBoxService } from '../../../core/services/aibox.service';
 import { Alarm, getAlarmSeverity, getBestAlarmImageUrl } from '../../../core/models/alarm.model';
 import { formatDate, formatTime, formatDateTime } from '../../../shared/utils/date.utils';
 
@@ -22,7 +25,9 @@ import { formatDate, formatTime, formatDateTime } from '../../../shared/utils/da
     MatProgressSpinnerModule,
     MatTooltipModule,
     MatBadgeModule,
-    MatDialogModule
+    MatDialogModule,
+    MatSelectModule,
+    MatFormFieldModule
   ],
   template: `
     <div class="admin-alarms">
@@ -38,18 +43,33 @@ import { formatDate, formatTime, formatDateTime } from '../../../shared/utils/da
           }
         </div>
         <div class="header-right">
-          <select [(ngModel)]="filterStatus" (change)="applyFilter()">
-            <option value="">All Status</option>
-            <option value="new">New</option>
-            <option value="acknowledged">Acknowledged</option>
-            <option value="resolved">Resolved</option>
-          </select>
-          <select [(ngModel)]="filterType" (change)="applyFilter()">
-            <option value="">All Types</option>
-            @for (type of alarmTypes(); track type) {
-              <option [value]="type">{{ type }}</option>
-            }
-          </select>
+          <mat-form-field appearance="outline" class="filter-field">
+            <mat-label>AI Box</mat-label>
+            <mat-select [(ngModel)]="filterAiBox" (ngModelChange)="applyFilter()">
+              <mat-option value="">All AI Boxes</mat-option>
+              @for (box of aiBoxService.aiBoxes(); track box.id) {
+                <mat-option [value]="box.id">{{ box.name }}</mat-option>
+              }
+            </mat-select>
+          </mat-form-field>
+          <mat-form-field appearance="outline" class="filter-field">
+            <mat-label>Status</mat-label>
+            <mat-select [(ngModel)]="filterStatus" (ngModelChange)="applyFilter()">
+              <mat-option value="">All Status</mat-option>
+              <mat-option value="new">New</mat-option>
+              <mat-option value="acknowledged">Acknowledged</mat-option>
+              <mat-option value="resolved">Resolved</mat-option>
+            </mat-select>
+          </mat-form-field>
+          <mat-form-field appearance="outline" class="filter-field">
+            <mat-label>Type</mat-label>
+            <mat-select [(ngModel)]="filterType" (ngModelChange)="applyFilter()">
+              <mat-option value="">All Types</mat-option>
+              @for (type of alarmTypes(); track type) {
+                <mat-option [value]="type">{{ type }}</mat-option>
+              }
+            </mat-select>
+          </mat-form-field>
           <button mat-stroked-button (click)="refresh()">
             <mat-icon>refresh</mat-icon>
             Refresh
@@ -96,6 +116,7 @@ import { formatDate, formatTime, formatDateTime } from '../../../shared/utils/da
             <div class="col-time">Time</div>
             <div class="col-type">Type</div>
             <div class="col-camera">Camera</div>
+            <div class="col-aibox">AI Box</div>
             <div class="col-confidence">Confidence</div>
             <div class="col-status">Status</div>
             <div class="col-actions">Actions</div>
@@ -115,6 +136,9 @@ import { formatDate, formatTime, formatDateTime } from '../../../shared/utils/da
                 </span>
               </div>
               <div class="col-camera">{{ alarm.camera_name || '-' }}</div>
+              <div class="col-aibox">
+                <span class="aibox-label">{{ alarm.aibox_name || '-' }}</span>
+              </div>
               <div class="col-confidence">
                 @if (alarm.confidence) {
                   <div class="confidence-bar">
@@ -195,6 +219,10 @@ import { formatDate, formatTime, formatDateTime } from '../../../shared/utils/da
                   <span class="detail-value">{{ selectedAlarm()?.camera_name || '-' }}</span>
                 </div>
                 <div class="detail-row">
+                  <span class="detail-label">AI Box</span>
+                  <span class="detail-value">{{ selectedAlarm()?.aibox_name || '-' }}</span>
+                </div>
+                <div class="detail-row">
                   <span class="detail-label">Location</span>
                   <span class="detail-value">{{ selectedAlarm()?.location || '-' }}</span>
                 </div>
@@ -267,13 +295,9 @@ import { formatDate, formatTime, formatDateTime } from '../../../shared/utils/da
     }
 
     .header-right {
-      display: flex; gap: 12px;
-      select {
-        padding: 8px 16px;
-        background: var(--glass-bg);
-        border: 1px solid var(--glass-border);
-        border-radius: var(--radius-sm);
-        color: var(--text-primary);
+      display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+      .filter-field {
+        min-width: 160px;
       }
     }
 
@@ -302,7 +326,7 @@ import { formatDate, formatTime, formatDateTime } from '../../../shared/utils/da
 
     .table-header, .table-row {
       display: grid;
-      grid-template-columns: 40px 140px 1fr 1fr 100px 110px 140px;
+      grid-template-columns: 40px 140px 1fr 1fr 120px 100px 110px 140px;
       gap: 12px; padding: 14px 16px; align-items: center;
     }
 
@@ -337,6 +361,15 @@ import { formatDate, formatTime, formatDateTime } from '../../../shared/utils/da
       &[data-severity="high"] { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
       &[data-severity="medium"] { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
       &[data-severity="low"] { background: rgba(34, 197, 94, 0.2); color: #22c55e; }
+    }
+
+    .col-aibox {
+      .aibox-label {
+        font-size: 12px; color: var(--text-secondary);
+        padding: 3px 8px; border-radius: 4px;
+        background: rgba(99, 102, 241, 0.1);
+        display: inline-block;
+      }
     }
 
     .confidence-bar {
@@ -420,9 +453,11 @@ import { formatDate, formatTime, formatDateTime } from '../../../shared/utils/da
 })
 export class AdminAlarmsComponent implements OnInit, OnDestroy {
   alarmService = inject(AlarmService);
+  aiBoxService = inject(AIBoxService);
   private dialog = inject(MatDialog);
 
   loading = signal(true);
+  filterAiBox = '';
   filterStatus = '';
   filterType = '';
   selectAll = false;
@@ -435,6 +470,9 @@ export class AdminAlarmsComponent implements OnInit, OnDestroy {
   filteredAlarms = computed(() => {
     let alarms = this.alarmService.alarms();
 
+    if (this.filterAiBox) {
+      alarms = alarms.filter(a => a.aibox_id === this.filterAiBox);
+    }
     if (this.filterStatus) {
       alarms = alarms.filter(a => a.status === this.filterStatus);
     }
@@ -452,6 +490,7 @@ export class AdminAlarmsComponent implements OnInit, OnDestroy {
   });
 
   ngOnInit() {
+    this.aiBoxService.loadAiBoxes().subscribe();
     this.loadData();
   }
 
@@ -566,11 +605,12 @@ export class AdminAlarmsComponent implements OnInit, OnDestroy {
   exportAlarms() {
     const alarms = this.filteredAlarms();
     const csv = [
-      ['Time', 'Type', 'Camera', 'Status', 'Confidence', 'Location'].join(','),
+      ['Time', 'Type', 'Camera', 'AI Box', 'Status', 'Confidence', 'Location'].join(','),
       ...alarms.map(a => [
         a.alarm_time,
         a.alarm_type,
         a.camera_name || '',
+        a.aibox_name || '',
         a.status,
         a.confidence ? (a.confidence * 100).toFixed(1) + '%' : '',
         a.location || ''

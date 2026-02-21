@@ -11,6 +11,7 @@ import { MatSelectModule } from '@angular/material/select';
 import { AnalyticsService } from '../../../core/services/analytics.service';
 import { BmappSensor, SensorDeviceType } from '../../../core/models/analytics.model';
 import { formatDateTime } from '../../../shared/utils/date.utils';
+import { AIBoxService } from '../../../core/services/aibox.service';
 
 @Component({
   selector: 'app-admin-sensor',
@@ -28,6 +29,14 @@ import { formatDateTime } from '../../../shared/utils/date.utils';
           <p class="subtitle">Manage sensor devices on BM-APP</p>
         </div>
         <div class="header-actions">
+          <mat-form-field appearance="outline" class="aibox-field">
+          <mat-select [(ngModel)]="selectedAiBoxId" (ngModelChange)="onAiBoxChange()">
+            <mat-option value="">Default Box</mat-option>
+            @for (box of aiBoxService.aiBoxes(); track box.id) {
+              <mat-option [value]="box.id">{{ box.name }} ({{ box.code }})</mat-option>
+            }
+          </mat-select>
+        </mat-form-field>
           <button class="action-btn primary" (click)="openCreateDialog()">
             <mat-icon>add</mat-icon>
             Add Sensor
@@ -226,7 +235,8 @@ import { formatDateTime } from '../../../shared/utils/date.utils';
     .header-left h2 { margin: 0; font-size: 24px; color: var(--text-primary); }
     .subtitle { margin: 4px 0 0; color: var(--text-secondary); font-size: 14px; }
 
-    .header-actions { display: flex; gap: 8px; align-items: center; }
+    .header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .aibox-select { padding: 8px 12px; background: var(--glass-bg); border: 1px solid var(--glass-border); border-radius: 8px; color: var(--text-primary); font-size: 14px; min-width: 180px; }
 
     .action-btn {
       display: flex; align-items: center; gap: 8px; padding: 10px 20px;
@@ -384,6 +394,9 @@ import { formatDateTime } from '../../../shared/utils/date.utils';
 export class AdminSensorComponent implements OnInit {
   private analyticsService = inject(AnalyticsService);
   private snackBar = inject(MatSnackBar);
+  aiBoxService = inject(AIBoxService);
+
+  selectedAiBoxId = '';
 
   sensors = signal<BmappSensor[]>([]);
   sensorTypes = signal<SensorDeviceType[]>([]);
@@ -402,7 +415,12 @@ export class AdminSensorComponent implements OnInit {
   });
 
   ngOnInit(): void {
+    this.aiBoxService.loadAiBoxes().subscribe();
     this.loadSensorTypes();
+    this.loadSensors();
+  }
+
+  onAiBoxChange(): void {
     this.loadSensors();
   }
 
@@ -419,7 +437,7 @@ export class AdminSensorComponent implements OnInit {
 
   loadSensors(): void {
     this.loading.set(true);
-    this.analyticsService.getSensorsBmapp().subscribe({
+    this.analyticsService.getSensorsBmapp(this.selectedAiBoxId || undefined).subscribe({
       next: (data) => {
         this.sensors.set(data.sensors || []);
         this.loading.set(false);

@@ -1,158 +1,102 @@
-import { Component, signal } from '@angular/core';
+import { Component, signal, inject, OnInit, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MatIconModule } from '@angular/material/icon';
 import { MatButtonModule } from '@angular/material/button';
-import { MatSlideToggleModule } from '@angular/material/slide-toggle';
+import { MatSelectModule } from '@angular/material/select';
+import { MatFormFieldModule } from '@angular/material/form-field';
+import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
+import { AIBoxService } from '../../../core/services/aibox.service';
+import { PreferencesService, SystemPreference } from '../../../core/services/preferences.service';
 
 @Component({
   selector: 'app-admin-basic',
   standalone: true,
-  imports: [CommonModule, FormsModule, MatIconModule, MatButtonModule, MatSlideToggleModule],
+  imports: [CommonModule, FormsModule, MatIconModule, MatButtonModule, MatProgressSpinnerModule,  MatSelectModule, MatFormFieldModule],
   template: `
     <div class="basic-page">
       <div class="page-header">
         <div class="header-left">
           <h2>Basic Settings</h2>
-          <p class="subtitle">Configure basic system settings and defaults</p>
+          <p class="subtitle">Configure core system preferences per AI Box</p>
         </div>
-        <button class="action-btn primary" (click)="saveSettings()">
-          <mat-icon>save</mat-icon>
-          Save Settings
-        </button>
-      </div>
-
-      <div class="settings-grid">
-        <div class="settings-card">
-          <h3><mat-icon>business</mat-icon> Organization Info</h3>
-          <div class="form-group">
-            <label>Organization Name</label>
-            <input type="text" [(ngModel)]="settings.orgName" placeholder="Company Name">
-          </div>
-          <div class="form-group">
-            <label>Site Name</label>
-            <input type="text" [(ngModel)]="settings.siteName" placeholder="Site/Location Name">
-          </div>
-          <div class="form-group">
-            <label>Contact Email</label>
-            <input type="email" [(ngModel)]="settings.contactEmail" placeholder="admin@company.com">
-          </div>
-          <div class="form-group">
-            <label>Contact Phone</label>
-            <input type="tel" [(ngModel)]="settings.contactPhone" placeholder="+62 21 xxx xxxx">
-          </div>
-          <div class="form-group">
-            <label>Address</label>
-            <textarea [(ngModel)]="settings.address" rows="3" placeholder="Full address"></textarea>
-          </div>
-        </div>
-
-        <div class="settings-card">
-          <h3><mat-icon>language</mat-icon> Regional Settings</h3>
-          <div class="form-group">
-            <label>Timezone</label>
-            <select [(ngModel)]="settings.timezone">
-              <option value="Asia/Jakarta">Asia/Jakarta (WIB)</option>
-              <option value="Asia/Makassar">Asia/Makassar (WITA)</option>
-              <option value="Asia/Jayapura">Asia/Jayapura (WIT)</option>
-              <option value="Asia/Singapore">Asia/Singapore</option>
-              <option value="UTC">UTC</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label>Language</label>
-            <select [(ngModel)]="settings.language">
-              <option value="en">English</option>
-              <option value="id">Bahasa Indonesia</option>
-              <option value="zh">Chinese</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label>Date Format</label>
-            <select [(ngModel)]="settings.dateFormat">
-              <option value="DD/MM/YYYY">DD/MM/YYYY</option>
-              <option value="MM/DD/YYYY">MM/DD/YYYY</option>
-              <option value="YYYY-MM-DD">YYYY-MM-DD</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label>Time Format</label>
-            <select [(ngModel)]="settings.timeFormat">
-              <option value="24h">24-hour (14:30)</option>
-              <option value="12h">12-hour (2:30 PM)</option>
-            </select>
-          </div>
-        </div>
-
-        <div class="settings-card">
-          <h3><mat-icon>tune</mat-icon> System Defaults</h3>
-          <div class="setting-row">
-            <div class="setting-info">
-              <span class="setting-label">Auto-Start AI Tasks</span>
-              <span class="setting-desc">Automatically start AI tasks on system boot</span>
-            </div>
-            <mat-slide-toggle [(ngModel)]="settings.autoStartTasks" color="primary"></mat-slide-toggle>
-          </div>
-          <div class="setting-row">
-            <div class="setting-info">
-              <span class="setting-label">Enable Notifications</span>
-              <span class="setting-desc">Show desktop notifications for alerts</span>
-            </div>
-            <mat-slide-toggle [(ngModel)]="settings.enableNotifications" color="primary"></mat-slide-toggle>
-          </div>
-          <div class="setting-row">
-            <div class="setting-info">
-              <span class="setting-label">Auto-Archive Events</span>
-              <span class="setting-desc">Archive old events automatically</span>
-            </div>
-            <mat-slide-toggle [(ngModel)]="settings.autoArchive" color="primary"></mat-slide-toggle>
-          </div>
-          <div class="form-group" style="margin-top: 16px;">
-            <label>Event Retention Days</label>
-            <input type="number" [(ngModel)]="settings.retentionDays" min="7" max="365">
-          </div>
-          <div class="form-group">
-            <label>Default Camera Preview Grid</label>
-            <select [(ngModel)]="settings.defaultGrid">
-              <option value="1x1">1x1 (Single)</option>
-              <option value="2x2">2x2 (4 cameras)</option>
-              <option value="3x3">3x3 (9 cameras)</option>
-              <option value="4x4">4x4 (16 cameras)</option>
-            </select>
-          </div>
-        </div>
-
-        <div class="settings-card">
-          <h3><mat-icon>security</mat-icon> Security Settings</h3>
-          <div class="setting-row">
-            <div class="setting-info">
-              <span class="setting-label">Require Strong Password</span>
-              <span class="setting-desc">Minimum 8 chars with uppercase, number, symbol</span>
-            </div>
-            <mat-slide-toggle [(ngModel)]="settings.strongPassword" color="primary"></mat-slide-toggle>
-          </div>
-          <div class="setting-row">
-            <div class="setting-info">
-              <span class="setting-label">Two-Factor Authentication</span>
-              <span class="setting-desc">Enable 2FA for all users</span>
-            </div>
-            <mat-slide-toggle [(ngModel)]="settings.twoFactorAuth" color="primary"></mat-slide-toggle>
-          </div>
-          <div class="form-group" style="margin-top: 16px;">
-            <label>Session Timeout (minutes)</label>
-            <input type="number" [(ngModel)]="settings.sessionTimeout" min="5" max="480">
-          </div>
-          <div class="form-group">
-            <label>Max Login Attempts</label>
-            <input type="number" [(ngModel)]="settings.maxLoginAttempts" min="3" max="10">
-          </div>
-          <div class="form-group">
-            <label>Password Expiry Days</label>
-            <input type="number" [(ngModel)]="settings.passwordExpiry" min="0" max="365">
-            <span class="helper-text">Set to 0 to disable password expiry</span>
-          </div>
+        <div class="header-actions">
+          <mat-form-field appearance="outline" class="aibox-field">
+          <mat-select [ngModel]="selectedAiBoxId()" (ngModelChange)="selectedAiBoxId.set($event); onAiBoxChange()">
+            <mat-option value="">Select AI Box</mat-option>
+            @for (box of aiBoxService.aiBoxes(); track box.id) {
+              <mat-option [value]="box.id">{{ box.name }} ({{ box.code }})</mat-option>
+            }
+          </mat-select>
+        </mat-form-field>
+          <button class="action-btn secondary" [disabled]="!selectedAiBoxId() || syncing()" (click)="syncFromBmapp()">
+            <mat-icon>cloud_download</mat-icon>
+            Sync
+          </button>
+          <button class="action-btn primary" [disabled]="!selectedAiBoxId() || saving()" (click)="saveAndApply()">
+            <mat-icon>save</mat-icon>
+            Save & Apply
+          </button>
         </div>
       </div>
+
+      @if (!selectedAiBoxId()) {
+        <div class="empty-state">
+          <mat-icon>tune</mat-icon>
+          <h3>Select an AI Box</h3>
+          <p>Choose an AI Box to configure its basic settings</p>
+        </div>
+      } @else if (loading()) {
+        <div class="loading-state"><mat-progress-spinner mode="indeterminate" diameter="40"></mat-progress-spinner></div>
+      } @else {
+        @if (syncMessage()) {
+          <div class="sync-message" [class.success]="syncSuccess()">
+            <mat-icon>{{ syncSuccess() ? 'check_circle' : 'error' }}</mat-icon>
+            {{ syncMessage() }}
+          </div>
+        }
+
+        @if (basicPrefs().length === 0) {
+          <div class="empty-state">
+            <mat-icon>info</mat-icon>
+            <h3>No basic settings found</h3>
+            <p>Sync from BM-APP to import settings for this box</p>
+            <button class="action-btn primary" (click)="syncFromBmapp()">
+              <mat-icon>cloud_download</mat-icon>
+              Sync Now
+            </button>
+          </div>
+        } @else {
+          <div class="settings-grid">
+            @for (pref of basicPrefs(); track pref.id) {
+              <div class="setting-item" [class.toggle-item]="pref.value_type === 'bool'">
+                <div class="setting-info">
+                  <label class="setting-label">{{ formatKey(pref.key) }}</label>
+                  @if (pref.description) {
+                    <span class="setting-desc">{{ pref.description }}</span>
+                  }
+                </div>
+                @if (pref.value_type === 'bool') {
+                  <label class="toggle">
+                    <input type="checkbox" [checked]="getBoolValue(pref)" (change)="onBoolChange(pref.id, $event)">
+                    <span class="toggle-slider"></span>
+                  </label>
+                } @else if (pref.value_type === 'int' || pref.value_type === 'float') {
+                  <input class="field-input number" type="number"
+                         [value]="getEditValue(pref)"
+                         (change)="onValueChange(pref.id, $event)"
+                         [placeholder]="pref.key">
+                } @else {
+                  <input class="field-input" type="text"
+                         [value]="getEditValue(pref)"
+                         (change)="onValueChange(pref.id, $event)"
+                         [placeholder]="pref.key">
+                }
+              </div>
+            }
+          </div>
+        }
+      }
     </div>
   `,
   styles: [`
@@ -160,56 +104,139 @@ import { MatSlideToggleModule } from '@angular/material/slide-toggle';
     .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; flex-wrap: wrap; gap: 16px; }
     .header-left h2 { margin: 0; font-size: 24px; color: var(--text-primary); }
     .subtitle { margin: 4px 0 0; color: var(--text-secondary); font-size: 14px; }
-    .action-btn { display: flex; align-items: center; gap: 8px; padding: 10px 20px; border: none; border-radius: 8px; font-size: 14px; cursor: pointer; }
-    .action-btn.primary { background: var(--accent-primary); color: white; }
-    .action-btn mat-icon { font-size: 18px; width: 18px; height: 18px; }
-
-    .settings-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 24px; }
-    .settings-card { background: var(--glass-bg); border: 1px solid var(--glass-border); border-radius: 16px; padding: 24px; }
-    .settings-card h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 20px; font-size: 16px; color: var(--text-primary); }
-    .settings-card h3 mat-icon { color: var(--accent-primary); }
-
-    .form-group { margin-bottom: 16px; }
-    .form-group label { display: block; font-size: 13px; color: var(--text-secondary); margin-bottom: 6px; }
-    .form-group input, .form-group select, .form-group textarea { width: 100%; padding: 10px 14px; background: rgba(0,0,0,0.2); border: 1px solid var(--glass-border); border-radius: 8px; color: var(--text-primary); font-size: 14px; resize: vertical; }
-    .form-group input:focus, .form-group select:focus, .form-group textarea:focus { outline: none; border-color: var(--accent-primary); }
-    .helper-text { display: block; font-size: 11px; color: var(--text-muted); margin-top: 4px; }
-
-    .setting-row { display: flex; justify-content: space-between; align-items: center; padding: 14px 0; border-bottom: 1px solid var(--glass-border); }
-    .setting-row:last-of-type { border-bottom: none; }
-    .setting-info { display: flex; flex-direction: column; gap: 2px; }
-    .setting-label { font-size: 14px; color: var(--text-primary); }
+    .header-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+    .aibox-select { padding: 8px 12px; background: var(--glass-bg); border: 1px solid var(--glass-border); border-radius: 8px; color: var(--text-primary); font-size: 14px; min-width: 180px; }
+    .empty-state, .loading-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 80px 20px; gap: 16px; color: var(--text-muted); }
+    .empty-state mat-icon { font-size: 64px; width: 64px; height: 64px; opacity: 0.3; }
+    .empty-state h3 { margin: 0; font-size: 20px; color: var(--text-primary); }
+    .sync-message { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); color: #ef4444; font-size: 14px; }
+    .sync-message.success { background: rgba(34, 197, 94, 0.1); border-color: rgba(34, 197, 94, 0.3); color: #22c55e; }
+    .settings-grid { display: flex; flex-direction: column; gap: 2px; background: var(--glass-bg); border: 1px solid var(--glass-border); border-radius: 12px; overflow: hidden; }
+    .setting-item { display: flex; justify-content: space-between; align-items: center; padding: 14px 20px; border-bottom: 1px solid var(--glass-border); gap: 16px; }
+    .setting-item:last-child { border-bottom: none; }
+    .setting-info { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+    .setting-label { font-size: 14px; color: var(--text-primary); font-weight: 500; }
     .setting-desc { font-size: 12px; color: var(--text-muted); }
-
-    @media (max-width: 1024px) {
-      .settings-grid { grid-template-columns: 1fr; }
-    }
+    .field-input { padding: 8px 12px; background: rgba(0,0,0,0.2); border: 1px solid var(--glass-border); border-radius: 6px; color: var(--text-primary); font-size: 14px; font-family: monospace; min-width: 200px; }
+    .field-input.number { min-width: 100px; }
+    .field-input:focus { outline: none; border-color: var(--accent-primary); }
+    .toggle { position: relative; display: inline-block; width: 44px; height: 24px; flex-shrink: 0; }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .toggle-slider { position: absolute; cursor: pointer; inset: 0; background: rgba(100,100,100,0.3); border-radius: 24px; transition: 0.2s; }
+    .toggle-slider:before { content: ''; position: absolute; width: 18px; height: 18px; left: 3px; bottom: 3px; background: white; border-radius: 50%; transition: 0.2s; }
+    .toggle input:checked + .toggle-slider { background: var(--accent-primary); }
+    .toggle input:checked + .toggle-slider:before { transform: translateX(20px); }
+    .action-btn { display: flex; align-items: center; gap: 8px; padding: 8px 14px; border: none; border-radius: 8px; font-size: 13px; cursor: pointer; }
+    .action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .action-btn.primary { background: var(--accent-primary); color: white; }
+    .action-btn.secondary { background: var(--glass-bg); color: var(--text-primary); border: 1px solid var(--glass-border); }
+    .action-btn mat-icon { font-size: 15px; width: 15px; height: 15px; }
   `]
 })
-export class AdminBasicComponent {
-  settings = {
-    orgName: 'PT. Example Indonesia',
-    siteName: 'Main Site',
-    contactEmail: 'admin@example.com',
-    contactPhone: '+62 21 1234567',
-    address: 'Jl. Example No. 123, Jakarta',
-    timezone: 'Asia/Jakarta',
-    language: 'en',
-    dateFormat: 'DD/MM/YYYY',
-    timeFormat: '24h',
-    autoStartTasks: true,
-    enableNotifications: true,
-    autoArchive: true,
-    retentionDays: 90,
-    defaultGrid: '2x2',
-    strongPassword: true,
-    twoFactorAuth: false,
-    sessionTimeout: 60,
-    maxLoginAttempts: 5,
-    passwordExpiry: 90
-  };
+export class AdminBasicComponent implements OnInit {
+  aiBoxService = inject(AIBoxService);
+  private prefsService = inject(PreferencesService);
 
-  saveSettings() {
-    console.log('Saving basic settings...', this.settings);
+  selectedAiBoxId = signal<string | null>(null);
+  preferences = signal<SystemPreference[]>([]);
+  loading = signal(false);
+  saving = signal(false);
+  syncing = signal(false);
+  syncMessage = signal('');
+  syncSuccess = signal(false);
+
+  private editValues = new Map<string, string>();
+
+  basicPrefs = computed(() => this.preferences().filter(p => p.category === 'basic'));
+
+  ngOnInit() {
+    this.aiBoxService.loadAiBoxes().subscribe();
+  }
+
+  onAiBoxChange() {
+    this.editValues.clear();
+    this.preferences.set([]);
+    this.loadPreferences();
+  }
+
+  loadPreferences() {
+    const id = this.selectedAiBoxId();
+    if (!id) return;
+    this.loading.set(true);
+    this.prefsService.getPreferences({ aibox_id: id, category: 'basic' }).subscribe({
+      next: (data) => { this.preferences.set(data); this.loading.set(false); },
+      error: () => this.loading.set(false)
+    });
+  }
+
+  getEditValue(pref: SystemPreference): string {
+    return this.editValues.get(pref.id) ?? pref.value;
+  }
+
+  getBoolValue(pref: SystemPreference): boolean {
+    const val = this.editValues.get(pref.id) ?? pref.value;
+    return val === 'true' || val === '1';
+  }
+
+  onValueChange(id: string, event: Event) {
+    this.editValues.set(id, (event.target as HTMLInputElement).value);
+  }
+
+  onBoolChange(id: string, event: Event) {
+    const checked = (event.target as HTMLInputElement).checked;
+    this.editValues.set(id, checked ? 'true' : 'false');
+  }
+
+  formatKey(key: string): string {
+    return key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  }
+
+  saveAndApply() {
+    const id = this.selectedAiBoxId();
+    if (!id) return;
+    this.saving.set(true);
+    const updates = Array.from(this.editValues.entries()).map(([prefId, value]) => {
+      const pref = this.preferences().find(p => p.id === prefId);
+      return { key: pref?.key || '', value };
+    }).filter(u => u.key);
+
+    if (updates.length === 0) {
+      this.prefsService.applyToBmapp(id).subscribe({
+        next: (r) => { this.saving.set(false); this.showMsg(r.message, r.success); },
+        error: (err) => { this.saving.set(false); this.showMsg(err.error?.detail, false); }
+      });
+      return;
+    }
+
+    this.prefsService.bulkUpdate(id, updates).subscribe({
+      next: () => {
+        this.editValues.clear();
+        this.prefsService.applyToBmapp(id).subscribe({
+          next: (r) => { this.saving.set(false); this.showMsg(r.message, r.success); },
+          error: (err) => { this.saving.set(false); this.showMsg(err.error?.detail, false); }
+        });
+      },
+      error: (err) => { this.saving.set(false); this.showMsg(err.error?.detail, false); }
+    });
+  }
+
+  syncFromBmapp() {
+    const id = this.selectedAiBoxId();
+    if (!id) return;
+    this.syncing.set(true);
+    this.prefsService.syncFromBmapp(id).subscribe({
+      next: (result) => {
+        this.syncing.set(false);
+        this.loadPreferences();
+        this.showMsg(result.message, result.success);
+      },
+      error: (err) => { this.syncing.set(false); this.showMsg(err.error?.detail, false); }
+    });
+  }
+
+  private showMsg(msg: string, success: boolean) {
+    this.syncMessage.set(msg);
+    this.syncSuccess.set(success);
+    setTimeout(() => this.syncMessage.set(''), 5000);
   }
 }

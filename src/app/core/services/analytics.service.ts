@@ -33,6 +33,7 @@ export class AnalyticsService {
     end_date?: string;
     limit?: number;
     offset?: number;
+    aibox_id?: string;
   }): Observable<PeopleCount[]> {
     return this.http.get<PeopleCount[]>(`${this.apiUrl}/people-count`, {
       params: this.buildParams(params)
@@ -53,6 +54,7 @@ export class AnalyticsService {
     end_date?: string;
     limit?: number;
     offset?: number;
+    aibox_id?: string;
   }): Observable<ZoneOccupancy[]> {
     return this.http.get<ZoneOccupancy[]>(`${this.apiUrl}/zone-occupancy`, {
       params: this.buildParams(params)
@@ -89,6 +91,7 @@ export class AnalyticsService {
     end_date?: string;
     limit?: number;
     offset?: number;
+    aibox_id?: string;
   }): Observable<StoreCount[]> {
     return this.http.get<StoreCount[]>(`${this.apiUrl}/store-count`, {
       params: this.buildParams(params)
@@ -131,8 +134,9 @@ export class AnalyticsService {
     });
   }
 
-  getSchedulesBmapp(): Observable<{ schedules: BmappSchedule[] }> {
-    return this.http.get<{ schedules: BmappSchedule[] }>(`${this.apiUrl}/schedules/bmapp`);
+  getSchedulesBmapp(aiboxId?: string): Observable<{ schedules: BmappSchedule[] }> {
+    const params = aiboxId ? this.buildParams({ aibox_id: aiboxId }) : undefined;
+    return this.http.get<{ schedules: BmappSchedule[] }>(`${this.apiUrl}/schedules/bmapp`, { params });
   }
 
   syncSchedules(): Observable<AnalyticsSyncResult> {
@@ -166,8 +170,9 @@ export class AnalyticsService {
     return this.http.get<{ types: SensorDeviceType[] }>(`${this.apiUrl}/sensor-devices/types`);
   }
 
-  getSensorsBmapp(): Observable<{ sensors: BmappSensor[] }> {
-    return this.http.get<{ sensors: BmappSensor[] }>(`${this.apiUrl}/sensor-devices/bmapp`);
+  getSensorsBmapp(aiboxId?: string): Observable<{ sensors: BmappSensor[] }> {
+    const params = aiboxId ? this.buildParams({ aibox_id: aiboxId }) : undefined;
+    return this.http.get<{ sensors: BmappSensor[] }>(`${this.apiUrl}/sensor-devices/bmapp`, { params });
   }
 
   syncSensorDevices(): Observable<AnalyticsSyncResult> {

@@ -1,99 +1,137 @@
-import { Component, signal } from '@angular/core';
+import { Component, signal, inject, OnInit, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MatIconModule } from '@angular/material/icon';
 import { MatButtonModule } from '@angular/material/button';
-import { MatSlideToggleModule } from '@angular/material/slide-toggle';
-
-interface Feature {
-  id: string;
-  name: string;
-  description: string;
-  category: string;
-  enabled: boolean;
-  premium: boolean;
-  icon: string;
-}
+import { MatSelectModule } from '@angular/material/select';
+import { MatFormFieldModule } from '@angular/material/form-field';
+import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
+import { AIBoxService } from '../../../core/services/aibox.service';
+import { ThresholdsService, AlgorithmThreshold } from '../../../core/services/thresholds.service';
 
 @Component({
   selector: 'app-admin-feature-management',
   standalone: true,
-  imports: [CommonModule, FormsModule, MatIconModule, MatButtonModule, MatSlideToggleModule],
+  imports: [CommonModule, FormsModule, MatIconModule, MatButtonModule, MatProgressSpinnerModule,  MatSelectModule, MatFormFieldModule],
   template: `
     <div class="feature-management-page">
       <div class="page-header">
         <div class="header-left">
           <h2>Feature Management</h2>
-          <p class="subtitle">Enable or disable system features and modules</p>
+          <p class="subtitle">Enable or disable AI algorithm features per AI Box</p>
         </div>
-        <button class="action-btn primary" (click)="saveChanges()">
-          <mat-icon>save</mat-icon>
-          Save Changes
-        </button>
+        <div class="header-actions">
+          <mat-form-field appearance="outline" class="aibox-field">
+          <mat-select [ngModel]="selectedAiBoxId()" (ngModelChange)="selectedAiBoxId.set($event); onAiBoxChange()">
+            <mat-option value="">Select AI Box</mat-option>
+            @for (box of aiBoxService.aiBoxes(); track box.id) {
+              <mat-option [value]="box.id">{{ box.name }} ({{ box.code }})</mat-option>
+            }
+          </mat-select>
+        </mat-form-field>
+          <button class="action-btn secondary" [disabled]="!selectedAiBoxId() || syncing()" (click)="syncFromBmapp()">
+            <mat-icon>cloud_download</mat-icon>
+            Sync
+          </button>
+          <button class="action-btn secondary" [disabled]="!selectedAiBoxId() || saving()" (click)="saveChanges()">
+            <mat-icon>save</mat-icon>
+            Save Changes
+          </button>
+          <button class="action-btn secondary" [disabled]="!selectedAiBoxId() || saving()" (click)="applyToBmapp()">
+            <mat-icon>cloud_upload</mat-icon>
+            Apply
+          </button>
+        </div>
       </div>
 
-      <div class="stats-row">
-        <div class="stat-card">
+      @if (!selectedAiBoxId()) {
+        <div class="empty-state">
           <mat-icon>extension</mat-icon>
-          <div class="stat-info">
-            <span class="value">{{ features().length }}</span>
-            <span class="label">Total Features</span>
-          </div>
+          <h3>Select an AI Box</h3>
+          <p>Choose an AI Box to manage its AI algorithm features</p>
         </div>
-        <div class="stat-card enabled">
-          <mat-icon>check_circle</mat-icon>
-          <div class="stat-info">
-            <span class="value">{{ getEnabledCount() }}</span>
-            <span class="label">Enabled</span>
+      } @else if (loading()) {
+        <div class="loading-state"><mat-progress-spinner mode="indeterminate" diameter="40"></mat-progress-spinner></div>
+      } @else {
+        @if (syncMessage()) {
+          <div class="sync-message" [class.success]="syncSuccess()">
+            <mat-icon>{{ syncSuccess() ? 'check_circle' : 'error' }}</mat-icon>
+            {{ syncMessage() }}
           </div>
-        </div>
-        <div class="stat-card disabled">
-          <mat-icon>cancel</mat-icon>
-          <div class="stat-info">
-            <span class="value">{{ getDisabledCount() }}</span>
-            <span class="label">Disabled</span>
-          </div>
-        </div>
-        <div class="stat-card premium">
-          <mat-icon>star</mat-icon>
-          <div class="stat-info">
-            <span class="value">{{ getPremiumCount() }}</span>
-            <span class="label">Premium</span>
-          </div>
-        </div>
-      </div>
+        }
 
-      @for (category of categories; track category) {
-        <div class="category-section">
-          <h3 class="category-title">{{ category }}</h3>
-          <div class="features-grid">
-            @for (feature of getFeaturesByCategory(category); track feature.id) {
-              <div class="feature-card" [class.enabled]="feature.enabled" [class.disabled]="!feature.enabled">
-                <div class="feature-header">
-                  <div class="feature-icon">
-                    <mat-icon>{{ feature.icon }}</mat-icon>
-                  </div>
-                  <mat-slide-toggle [(ngModel)]="feature.enabled" color="primary"></mat-slide-toggle>
-                </div>
-                <div class="feature-body">
-                  <div class="feature-title">
-                    <h4>{{ feature.name }}</h4>
-                    @if (feature.premium) {
-                      <span class="premium-badge"><mat-icon>star</mat-icon>Premium</span>
-                    }
-                  </div>
-                  <p class="feature-desc">{{ feature.description }}</p>
-                </div>
-                <div class="feature-footer">
-                  <span class="status-text">{{ feature.enabled ? 'Enabled' : 'Disabled' }}</span>
-                  <button mat-icon-button (click)="configureFeature(feature)">
-                    <mat-icon>settings</mat-icon>
-                  </button>
-                </div>
+        @if (thresholds().length === 0) {
+          <div class="empty-state">
+            <mat-icon>info</mat-icon>
+            <h3>No algorithm thresholds found</h3>
+            <p>Sync from BM-APP to import algorithm capabilities</p>
+            <button class="action-btn primary" (click)="syncFromBmapp()">
+              <mat-icon>cloud_download</mat-icon>
+              Sync Now
+            </button>
+          </div>
+        } @else {
+          <div class="stats-row">
+            <div class="stat-card">
+              <mat-icon>extension</mat-icon>
+              <div class="stat-info">
+                <span class="value">{{ thresholds().length }}</span>
+                <span class="label">Total Features</span>
+              </div>
+            </div>
+            <div class="stat-card enabled">
+              <mat-icon>check_circle</mat-icon>
+              <div class="stat-info">
+                <span class="value">{{ enabledCount() }}</span>
+                <span class="label">Enabled</span>
+              </div>
+            </div>
+            <div class="stat-card disabled">
+              <mat-icon>cancel</mat-icon>
+              <div class="stat-info">
+                <span class="value">{{ disabledCount() }}</span>
+                <span class="label">Disabled</span>
+              </div>
+            </div>
+            <div class="stat-card modified">
+              <mat-icon>edit</mat-icon>
+              <div class="stat-info">
+                <span class="value">{{ pendingChanges() }}</span>
+                <span class="label">Pending Changes</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="features-table">
+            <div class="table-header">
+              <span>#</span>
+              <span>Algorithm Name</span>
+              <span>Threshold</span>
+              <span>Status</span>
+              <span>Synced</span>
+            </div>
+            @for (thresh of thresholds(); track thresh.id) {
+              <div class="table-row" [class.modified]="hasEdit(thresh.id)" [class.disabled-row]="isDisabled(thresh)">
+                <span class="index-cell">{{ thresh.algorithm_index }}</span>
+                <span class="name-cell">{{ thresh.algorithm_name }}</span>
+                <span class="threshold-cell">
+                  <input type="range" min="0" max="1" step="0.01"
+                         [value]="getThresholdValue(thresh)"
+                         (input)="onSliderInput(thresh.id, $event)"
+                         [disabled]="isDisabled(thresh)">
+                  <span class="threshold-val">{{ formatThreshold(getThresholdValue(thresh)) }}</span>
+                </span>
+                <span class="status-cell">
+                  <label class="toggle" [title]="isDisabled(thresh) ? 'Enable' : 'Disable'">
+                    <input type="checkbox" [checked]="!isDisabled(thresh)" (change)="toggleFeature(thresh, $event)">
+                    <span class="toggle-slider"></span>
+                  </label>
+                </span>
+                <span class="sync-dot" [class.synced]="thresh.is_synced_bmapp" [title]="thresh.is_synced_bmapp ? 'Synced' : 'Not synced'"></span>
               </div>
             }
           </div>
-        </div>
+        }
       }
     </div>
   `,
@@ -102,85 +140,186 @@ interface Feature {
     .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; flex-wrap: wrap; gap: 16px; }
     .header-left h2 { margin: 0; font-size: 24px; color: var(--text-primary); }
     .subtitle { margin: 4px 0 0; color: var(--text-secondary); font-size: 14px; }
-    .action-btn { display: flex; align-items: center; gap: 8px; padding: 10px 20px; border: none; border-radius: 8px; font-size: 14px; cursor: pointer; }
-    .action-btn.primary { background: var(--accent-primary); color: white; }
-    .action-btn mat-icon { font-size: 18px; width: 18px; height: 18px; }
-
-    .stats-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 32px; }
+    .header-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+    .aibox-select { padding: 8px 12px; background: var(--glass-bg); border: 1px solid var(--glass-border); border-radius: 8px; color: var(--text-primary); font-size: 14px; min-width: 180px; }
+    .empty-state, .loading-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 80px 20px; gap: 16px; color: var(--text-muted); }
+    .empty-state mat-icon { font-size: 64px; width: 64px; height: 64px; opacity: 0.3; }
+    .empty-state h3 { margin: 0; font-size: 20px; color: var(--text-primary); }
+    .sync-message { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); color: #ef4444; font-size: 14px; }
+    .sync-message.success { background: rgba(34, 197, 94, 0.1); border-color: rgba(34, 197, 94, 0.3); color: #22c55e; }
+    .stats-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
     .stat-card { display: flex; align-items: center; gap: 12px; padding: 16px 20px; background: var(--glass-bg); border: 1px solid var(--glass-border); border-radius: 12px; }
     .stat-card mat-icon { font-size: 28px; width: 28px; height: 28px; color: var(--accent-primary); }
     .stat-card.enabled mat-icon { color: #22c55e; }
     .stat-card.disabled mat-icon { color: #6b7280; }
-    .stat-card.premium mat-icon { color: #f59e0b; }
+    .stat-card.modified mat-icon { color: #f59e0b; }
     .stat-info { display: flex; flex-direction: column; }
     .stat-info .value { font-size: 24px; font-weight: 600; color: var(--text-primary); }
     .stat-info .label { font-size: 12px; color: var(--text-muted); }
-
-    .category-section { margin-bottom: 32px; }
-    .category-title { font-size: 16px; color: var(--text-primary); margin: 0 0 16px; padding-bottom: 8px; border-bottom: 1px solid var(--glass-border); }
-
-    .features-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
-    .feature-card { background: var(--glass-bg); border: 1px solid var(--glass-border); border-radius: 12px; padding: 20px; transition: all 0.2s; }
-    .feature-card.enabled { border-color: rgba(34, 197, 94, 0.3); }
-    .feature-card.disabled { opacity: 0.7; }
-    .feature-card:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
-
-    .feature-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
-    .feature-icon { width: 48px; height: 48px; border-radius: 12px; background: rgba(0, 212, 255, 0.1); display: flex; align-items: center; justify-content: center; }
-    .feature-icon mat-icon { font-size: 24px; width: 24px; height: 24px; color: var(--accent-primary); }
-    .feature-card.disabled .feature-icon { background: rgba(100,100,100,0.1); }
-    .feature-card.disabled .feature-icon mat-icon { color: var(--text-muted); }
-
-    .feature-body { margin-bottom: 16px; }
-    .feature-title { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-    .feature-title h4 { margin: 0; font-size: 15px; color: var(--text-primary); }
-    .premium-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; background: rgba(245, 158, 11, 0.1); color: #f59e0b; font-size: 10px; font-weight: 600; border-radius: 4px; }
-    .premium-badge mat-icon { font-size: 12px; width: 12px; height: 12px; }
-    .feature-desc { margin: 0; font-size: 13px; color: var(--text-muted); line-height: 1.5; }
-
-    .feature-footer { display: flex; justify-content: space-between; align-items: center; padding-top: 12px; border-top: 1px solid var(--glass-border); }
-    .status-text { font-size: 12px; color: var(--text-secondary); }
-    .feature-card.enabled .status-text { color: #22c55e; }
-    .feature-footer button { color: var(--text-secondary); }
-
-    @media (max-width: 768px) {
-      .stats-row { grid-template-columns: repeat(2, 1fr); }
-    }
+    .features-table { background: var(--glass-bg); border: 1px solid var(--glass-border); border-radius: 12px; overflow: hidden; }
+    .table-header, .table-row { display: grid; grid-template-columns: 50px 1fr 200px 80px 50px; gap: 12px; padding: 10px 16px; align-items: center; font-size: 13px; }
+    .table-header { background: rgba(0,0,0,0.2); font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+    .table-row { border-top: 1px solid var(--glass-border); transition: background 0.15s; }
+    .table-row:hover { background: rgba(0,212,255,0.03); }
+    .table-row.modified { background: rgba(245,158,11,0.04); }
+    .table-row.disabled-row { opacity: 0.5; }
+    .index-cell { font-family: monospace; font-size: 12px; color: var(--text-muted); }
+    .name-cell { font-size: 13px; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .threshold-cell { display: flex; align-items: center; gap: 8px; }
+    .threshold-cell input[type="range"] { flex: 1; accent-color: var(--accent-primary); }
+    .threshold-val { font-size: 12px; color: var(--text-muted); font-family: monospace; min-width: 36px; text-align: right; }
+    .status-cell { display: flex; align-items: center; }
+    .toggle { position: relative; display: inline-block; width: 40px; height: 22px; }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .toggle-slider { position: absolute; cursor: pointer; inset: 0; background: rgba(100,100,100,0.3); border-radius: 22px; transition: 0.2s; }
+    .toggle-slider:before { content: ''; position: absolute; width: 16px; height: 16px; left: 3px; bottom: 3px; background: white; border-radius: 50%; transition: 0.2s; }
+    .toggle input:checked + .toggle-slider { background: var(--accent-primary); }
+    .toggle input:checked + .toggle-slider:before { transform: translateX(18px); }
+    .sync-dot { width: 8px; height: 8px; border-radius: 50%; background: #6b7280; display: inline-block; margin: 0 auto; }
+    .sync-dot.synced { background: #22c55e; }
+    .action-btn { display: flex; align-items: center; gap: 8px; padding: 8px 14px; border: none; border-radius: 8px; font-size: 13px; cursor: pointer; }
+    .action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .action-btn.primary { background: var(--accent-primary); color: white; }
+    .action-btn.secondary { background: var(--glass-bg); color: var(--text-primary); border: 1px solid var(--glass-border); }
+    .action-btn mat-icon { font-size: 15px; width: 15px; height: 15px; }
+    @media (max-width: 768px) { .stats-row { grid-template-columns: repeat(2, 1fr); } }
   `]
 })
-export class AdminFeatureManagementComponent {
-  categories = ['AI Detection', 'Safety Monitoring', 'Communication', 'Reporting', 'Integration'];
+export class AdminFeatureManagementComponent implements OnInit {
+  aiBoxService = inject(AIBoxService);
+  private thresholdsService = inject(ThresholdsService);
 
-  features = signal<Feature[]>([
-    { id: '1', name: 'Object Detection', description: 'Detect and track objects in video streams using AI models', category: 'AI Detection', enabled: true, premium: false, icon: 'track_changes' },
-    { id: '2', name: 'Face Recognition', description: 'Identify and verify individuals using facial recognition', category: 'AI Detection', enabled: true, premium: true, icon: 'face' },
-    { id: '3', name: 'License Plate Recognition', description: 'Automatically read and record vehicle license plates', category: 'AI Detection', enabled: false, premium: true, icon: 'directions_car' },
-    { id: '4', name: 'PPE Detection', description: 'Monitor compliance with personal protective equipment requirements', category: 'Safety Monitoring', enabled: true, premium: false, icon: 'checkroom' },
-    { id: '5', name: 'Zone Intrusion', description: 'Alert when unauthorized access to restricted zones is detected', category: 'Safety Monitoring', enabled: true, premium: false, icon: 'security' },
-    { id: '6', name: 'Fire Detection', description: 'Real-time fire and smoke detection with instant alerts', category: 'Safety Monitoring', enabled: true, premium: false, icon: 'local_fire_department' },
-    { id: '7', name: 'Push Notifications', description: 'Send real-time notifications to mobile devices', category: 'Communication', enabled: true, premium: false, icon: 'notifications' },
-    { id: '8', name: 'Email Alerts', description: 'Send automated email alerts for critical events', category: 'Communication', enabled: true, premium: false, icon: 'email' },
-    { id: '9', name: 'PTT Radio', description: 'Push-to-talk radio communication integration', category: 'Communication', enabled: false, premium: true, icon: 'mic' },
-    { id: '10', name: 'Analytics Dashboard', description: 'Comprehensive analytics and data visualization', category: 'Reporting', enabled: true, premium: false, icon: 'bar_chart' },
-    { id: '11', name: 'Custom Reports', description: 'Generate custom reports with advanced filtering', category: 'Reporting', enabled: true, premium: true, icon: 'description' },
-    { id: '12', name: 'API Access', description: 'RESTful API for third-party integrations', category: 'Integration', enabled: true, premium: true, icon: 'api' },
-    { id: '13', name: 'Modbus Integration', description: 'Connect with industrial Modbus devices', category: 'Integration', enabled: false, premium: true, icon: 'electrical_services' },
-    { id: '14', name: 'Webhook Support', description: 'Send event data to external systems via webhooks', category: 'Integration', enabled: true, premium: false, icon: 'webhook' }
-  ]);
+  selectedAiBoxId = signal<string | null>(null);
+  thresholds = signal<AlgorithmThreshold[]>([]);
+  loading = signal(false);
+  saving = signal(false);
+  syncing = signal(false);
+  syncMessage = signal('');
+  syncSuccess = signal(false);
 
-  getEnabledCount(): number { return this.features().filter(f => f.enabled).length; }
-  getDisabledCount(): number { return this.features().filter(f => !f.enabled).length; }
-  getPremiumCount(): number { return this.features().filter(f => f.premium).length; }
+  private editValues = new Map<string, number>();
+  private disabledIds = new Set<string>();
 
-  getFeaturesByCategory(category: string): Feature[] {
-    return this.features().filter(f => f.category === category);
+  enabledCount = computed(() => this.thresholds().filter(t => !this.isDisabled(t)).length);
+  disabledCount = computed(() => this.thresholds().filter(t => this.isDisabled(t)).length);
+  pendingChanges = computed(() => this.editValues.size + this.disabledIds.size);
+
+  ngOnInit() {
+    this.aiBoxService.loadAiBoxes().subscribe();
+  }
+
+  onAiBoxChange() {
+    this.editValues.clear();
+    this.disabledIds.clear();
+    this.thresholds.set([]);
+    this.loadThresholds();
+  }
+
+  loadThresholds() {
+    const id = this.selectedAiBoxId();
+    if (!id) return;
+    this.loading.set(true);
+    this.thresholdsService.getThresholds({ aibox_id: id }).subscribe({
+      next: (data) => { this.thresholds.set(data); this.loading.set(false); },
+      error: () => this.loading.set(false)
+    });
+  }
+
+  isDisabled(thresh: AlgorithmThreshold): boolean {
+    if (this.disabledIds.has(thresh.id)) return true;
+    const editVal = this.editValues.get(thresh.id);
+    return editVal !== undefined ? editVal === 0 : thresh.threshold_value === 0;
+  }
+
+  hasEdit(id: string): boolean {
+    return this.editValues.has(id) || this.disabledIds.has(id);
+  }
+
+  getThresholdValue(thresh: AlgorithmThreshold): number {
+    return this.editValues.get(thresh.id) ?? thresh.threshold_value;
+  }
+
+  formatThreshold(val: number): string {
+    return val.toFixed(2);
+  }
+
+  onSliderInput(id: string, event: Event) {
+    const val = parseFloat((event.target as HTMLInputElement).value);
+    this.editValues.set(id, val);
+    if (val === 0) {
+      this.disabledIds.add(id);
+    } else {
+      this.disabledIds.delete(id);
+    }
+    this.thresholds.update(t => [...t]);
+  }
+
+  toggleFeature(thresh: AlgorithmThreshold, event: Event) {
+    const enabled = (event.target as HTMLInputElement).checked;
+    if (enabled) {
+      this.disabledIds.delete(thresh.id);
+      if (this.editValues.get(thresh.id) === 0) {
+        this.editValues.set(thresh.id, 0.5);
+      } else if (!this.editValues.has(thresh.id) && thresh.threshold_value === 0) {
+        this.editValues.set(thresh.id, 0.5);
+      }
+    } else {
+      this.disabledIds.add(thresh.id);
+      this.editValues.set(thresh.id, 0);
+    }
+    this.thresholds.update(t => [...t]);
   }
 
   saveChanges() {
-    console.log('Saving feature settings...', this.features());
+    const id = this.selectedAiBoxId();
+    if (!id || this.editValues.size === 0) return;
+    this.saving.set(true);
+    const updates = Array.from(this.editValues.entries()).map(([threshId, value]) => ({
+      id: threshId,
+      threshold_value: value
+    }));
+    this.thresholdsService.bulkUpdate(id, updates).subscribe({
+      next: (result) => {
+        this.saving.set(false);
+        this.editValues.clear();
+        this.disabledIds.clear();
+        this.loadThresholds();
+        this.showMsg(`Saved ${result.updated} features`, true);
+      },
+      error: (err) => {
+        this.saving.set(false);
+        this.showMsg(err.error?.detail || 'Save failed', false);
+      }
+    });
   }
 
-  configureFeature(feature: Feature) {
-    console.log('Configuring feature:', feature.name);
+  applyToBmapp() {
+    const id = this.selectedAiBoxId();
+    if (!id) return;
+    this.saving.set(true);
+    this.thresholdsService.applyToBmapp(id).subscribe({
+      next: (result) => { this.saving.set(false); this.showMsg(result.message, result.success); },
+      error: (err) => { this.saving.set(false); this.showMsg(err.error?.detail || 'Apply failed', false); }
+    });
+  }
+
+  syncFromBmapp() {
+    const id = this.selectedAiBoxId();
+    if (!id) return;
+    this.syncing.set(true);
+    this.thresholdsService.syncFromBmapp(id).subscribe({
+      next: (result) => {
+        this.syncing.set(false);
+        this.loadThresholds();
+        this.showMsg(result.message, result.success);
+      },
+      error: (err) => { this.syncing.set(false); this.showMsg(err.error?.detail || 'Sync failed', false); }
+    });
+  }
+
+  private showMsg(msg: string, success: boolean) {
+    this.syncMessage.set(msg);
+    this.syncSuccess.set(success);
+    setTimeout(() => this.syncMessage.set(''), 5000);
   }
 }

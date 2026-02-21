@@ -1,270 +1,354 @@
-import { Component, signal } from '@angular/core';
+import { Component, signal, inject, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { FormsModule } from '@angular/forms';
 import { MatIconModule } from '@angular/material/icon';
 import { MatButtonModule } from '@angular/material/button';
-import { MatProgressBarModule } from '@angular/material/progress-bar';
-
-interface SystemTool {
-  id: string;
-  name: string;
-  description: string;
-  icon: string;
-  color: string;
-  danger?: boolean;
-}
-
-interface LogEntry {
-  id: string;
-  timestamp: string;
-  level: 'info' | 'warning' | 'error';
-  message: string;
-}
+import { MatSelectModule } from '@angular/material/select';
+import { MatFormFieldModule } from '@angular/material/form-field';
+import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
+import { AIBoxService } from '../../../core/services/aibox.service';
+import { ToolsService, PingResult, OnvifDevice, SystemInfo } from '../../../core/services/tools.service';
 
 @Component({
   selector: 'app-admin-tools',
   standalone: true,
-  imports: [CommonModule, MatIconModule, MatButtonModule, MatProgressBarModule],
+  imports: [CommonModule, FormsModule, MatIconModule, MatButtonModule, MatProgressSpinnerModule,  MatSelectModule, MatFormFieldModule],
   template: `
     <div class="tools-page">
       <div class="page-header">
         <div class="header-left">
           <h2>System Tools</h2>
-          <p class="subtitle">System administration and maintenance utilities</p>
+          <p class="subtitle">Network diagnostics, ONVIF discovery, and system administration</p>
         </div>
+        <mat-form-field appearance="outline" class="aibox-field">
+          <mat-select [ngModel]="selectedAiBoxId()" (ngModelChange)="selectedAiBoxId.set($event); onAiBoxChange()">
+            <mat-option value="">Select AI Box</mat-option>
+            @for (box of aiBoxService.aiBoxes(); track box.id) {
+              <mat-option [value]="box.id">{{ box.name }} ({{ box.code }})</mat-option>
+            }
+          </mat-select>
+        </mat-form-field>
       </div>
 
-      <div class="status-section">
-        <h3 class="section-title">System Status</h3>
-        <div class="status-grid">
-          <div class="status-card">
-            <div class="gauge">
-              <svg viewBox="0 0 100 50">
-                <path d="M10,50 A40,40 0 0,1 90,50" fill="none" stroke="var(--glass-border)" stroke-width="8" stroke-linecap="round"/>
-                <path d="M10,50 A40,40 0 0,1 90,50" fill="none" stroke="#22c55e" stroke-width="8" stroke-linecap="round" [attr.stroke-dasharray]="'126'" [attr.stroke-dashoffset]="126 - (systemStatus().cpu * 1.26)"/>
-              </svg>
-              <span class="value">{{ systemStatus().cpu }}%</span>
-            </div>
-            <span class="label">CPU Usage</span>
-          </div>
-          <div class="status-card">
-            <div class="gauge">
-              <svg viewBox="0 0 100 50">
-                <path d="M10,50 A40,40 0 0,1 90,50" fill="none" stroke="var(--glass-border)" stroke-width="8" stroke-linecap="round"/>
-                <path d="M10,50 A40,40 0 0,1 90,50" fill="none" stroke="#3b82f6" stroke-width="8" stroke-linecap="round" [attr.stroke-dasharray]="'126'" [attr.stroke-dashoffset]="126 - (systemStatus().memory * 1.26)"/>
-              </svg>
-              <span class="value">{{ systemStatus().memory }}%</span>
-            </div>
-            <span class="label">Memory</span>
-          </div>
-          <div class="status-card">
-            <div class="gauge">
-              <svg viewBox="0 0 100 50">
-                <path d="M10,50 A40,40 0 0,1 90,50" fill="none" stroke="var(--glass-border)" stroke-width="8" stroke-linecap="round"/>
-                <path d="M10,50 A40,40 0 0,1 90,50" fill="none" stroke="#f59e0b" stroke-width="8" stroke-linecap="round" [attr.stroke-dasharray]="'126'" [attr.stroke-dashoffset]="126 - (systemStatus().disk * 1.26)"/>
-              </svg>
-              <span class="value">{{ systemStatus().disk }}%</span>
-            </div>
-            <span class="label">Disk Usage</span>
-          </div>
-          <div class="status-card">
-            <div class="gauge">
-              <svg viewBox="0 0 100 50">
-                <path d="M10,50 A40,40 0 0,1 90,50" fill="none" stroke="var(--glass-border)" stroke-width="8" stroke-linecap="round"/>
-                <path d="M10,50 A40,40 0 0,1 90,50" fill="none" stroke="#ef4444" stroke-width="8" stroke-linecap="round" [attr.stroke-dasharray]="'126'" [attr.stroke-dashoffset]="126 - (systemStatus().temp * 1.26)"/>
-              </svg>
-              <span class="value">{{ systemStatus().temp }}°C</span>
-            </div>
-            <span class="label">Temperature</span>
-          </div>
+      @if (!selectedAiBoxId()) {
+        <div class="empty-state">
+          <mat-icon>build</mat-icon>
+          <h3>Select an AI Box</h3>
+          <p>Choose an AI Box to access system tools</p>
         </div>
-        <div class="system-info">
-          <div class="info-item"><mat-icon>dns</mat-icon><span>Hostname:</span><span>{{ systemStatus().hostname }}</span></div>
-          <div class="info-item"><mat-icon>info</mat-icon><span>Version:</span><span>{{ systemStatus().version }}</span></div>
-          <div class="info-item"><mat-icon>schedule</mat-icon><span>Uptime:</span><span>{{ systemStatus().uptime }}</span></div>
-        </div>
-      </div>
-
-      <h3 class="section-title">Maintenance Tools</h3>
-      <div class="tools-grid">
-        @for (tool of tools; track tool.id) {
-          <div class="tool-card" [class.danger]="tool.danger" (click)="executeTool(tool)">
-            <div class="tool-icon" [style.background]="tool.color">
-              <mat-icon>{{ tool.icon }}</mat-icon>
-            </div>
-            <div class="tool-info">
-              <h4>{{ tool.name }}</h4>
-              <p>{{ tool.description }}</p>
-            </div>
+      } @else {
+        <!-- System Info -->
+        <div class="section-card">
+          <div class="section-header">
+            <mat-icon>monitor_heart</mat-icon>
+            <h3>System Information</h3>
+            <button class="icon-btn" [disabled]="loadingInfo()" (click)="loadSystemInfo()" title="Refresh">
+              <mat-icon>refresh</mat-icon>
+            </button>
           </div>
-        }
-      </div>
-
-      <h3 class="section-title">Quick Actions</h3>
-      <div class="quick-actions">
-        <button class="quick-btn" (click)="clearCache()"><mat-icon>delete_sweep</mat-icon>Clear Cache</button>
-        <button class="quick-btn" (click)="syncTime()"><mat-icon>sync</mat-icon>Sync Time</button>
-        <button class="quick-btn" (click)="testNetwork()"><mat-icon>network_check</mat-icon>Test Network</button>
-        <button class="quick-btn" (click)="checkUpdates()"><mat-icon>system_update</mat-icon>Check Updates</button>
-      </div>
-
-      <h3 class="section-title">System Logs</h3>
-      <div class="logs-section">
-        <div class="logs-header">
-          <div class="log-filters">
-            <button class="filter-btn" [class.active]="logFilter() === 'all'" (click)="logFilter.set('all')">All</button>
-            <button class="filter-btn" [class.active]="logFilter() === 'info'" (click)="logFilter.set('info')">Info</button>
-            <button class="filter-btn" [class.active]="logFilter() === 'warning'" (click)="logFilter.set('warning')">Warning</button>
-            <button class="filter-btn" [class.active]="logFilter() === 'error'" (click)="logFilter.set('error')">Error</button>
-          </div>
-          <button class="action-btn secondary" (click)="refreshLogs()"><mat-icon>refresh</mat-icon>Refresh</button>
+          @if (loadingInfo()) {
+            <div class="loading-row"><mat-progress-spinner mode="indeterminate" diameter="24"></mat-progress-spinner> Loading...</div>
+          } @else if (systemInfo()) {
+            <div class="info-grid">
+              <div class="info-item">
+                <span class="info-label">CPU Usage</span>
+                <span class="info-value">{{ systemInfo()!.cpu_usage != null ? systemInfo()!.cpu_usage!.toFixed(1) + '%' : 'N/A' }}</span>
+              </div>
+              <div class="info-item">
+                <span class="info-label">Memory Usage</span>
+                <span class="info-value">{{ systemInfo()!.memory_usage != null ? systemInfo()!.memory_usage!.toFixed(1) + '%' : 'N/A' }}</span>
+              </div>
+              <div class="info-item">
+                <span class="info-label">Disk Usage</span>
+                <span class="info-value">{{ systemInfo()!.disk_usage != null ? systemInfo()!.disk_usage!.toFixed(1) + '%' : 'N/A' }}</span>
+              </div>
+              <div class="info-item">
+                <span class="info-label">Uptime</span>
+                <span class="info-value">{{ systemInfo()!.uptime || 'N/A' }}</span>
+              </div>
+              <div class="info-item">
+                <span class="info-label">Version</span>
+                <span class="info-value">{{ systemInfo()!.version || 'N/A' }}</span>
+              </div>
+            </div>
+          } @else {
+            <p class="muted">Click refresh to load system info</p>
+          }
         </div>
-        <div class="logs-list">
-          @for (log of filteredLogs(); track log.id) {
-            <div class="log-entry" [class]="log.level">
-              <span class="log-time">{{ log.timestamp }}</span>
-              <span class="log-level">{{ log.level }}</span>
-              <span class="log-message">{{ log.message }}</span>
+
+        <!-- Network Ping -->
+        <div class="section-card">
+          <div class="section-header">
+            <mat-icon>network_ping</mat-icon>
+            <h3>Network Ping</h3>
+          </div>
+          <div class="tool-row">
+            <input type="text" [(ngModel)]="pingHost" placeholder="Enter host or IP (e.g. 8.8.8.8)" class="tool-input">
+            <input type="number" [(ngModel)]="pingCount" min="1" max="10" placeholder="Count" class="tool-input small">
+            <button class="action-btn primary" [disabled]="!pingHost || pinging()" (click)="runPing()">
+              @if (pinging()) { <mat-progress-spinner mode="indeterminate" diameter="16"></mat-progress-spinner> }
+              @else { <mat-icon>play_arrow</mat-icon> }
+              Ping
+            </button>
+          </div>
+          @if (pingResult()) {
+            <div class="result-box" [class.success]="pingResult()!.success" [class.error]="!pingResult()!.success">
+              <div class="result-header">
+                <mat-icon>{{ pingResult()!.success ? 'check_circle' : 'error' }}</mat-icon>
+                <strong>{{ pingResult()!.host }}</strong>
+                <span class="status-tag" [class.ok]="pingResult()!.success">{{ pingResult()!.success ? 'Reachable' : 'Unreachable' }}</span>
+              </div>
+              @if (pingResult()!.output) {
+                <pre class="output-text">{{ pingResult()!.output }}</pre>
+              }
+              @if (pingResult()!.error) {
+                <p class="error-text">{{ pingResult()!.error }}</p>
+              }
             </div>
           }
         </div>
-      </div>
 
-      @if (showProgress()) {
-        <div class="progress-overlay">
-          <div class="progress-dialog">
-            <h4>{{ progressTitle() }}</h4>
-            <mat-progress-bar mode="indeterminate"></mat-progress-bar>
-            <p>Please wait...</p>
+        <!-- ONVIF Discovery -->
+        <div class="section-card">
+          <div class="section-header">
+            <mat-icon>videocam</mat-icon>
+            <h3>ONVIF Camera Discovery</h3>
+            <button class="action-btn secondary" [disabled]="discoveringOnvif()" (click)="discoverOnvif()">
+              @if (discoveringOnvif()) { <mat-progress-spinner mode="indeterminate" diameter="16"></mat-progress-spinner> }
+              @else { <mat-icon>search</mat-icon> }
+              Scan Network
+            </button>
+          </div>
+          @if (onvifDevices().length > 0) {
+            <div class="devices-grid">
+              @for (device of onvifDevices(); track device.ip) {
+                <div class="device-card">
+                  <mat-icon>videocam</mat-icon>
+                  <div class="device-info">
+                    <strong>{{ device.name || device.model || 'Unknown Camera' }}</strong>
+                    <span>{{ device.ip }}:{{ device.port }}</span>
+                    @if (device.manufacturer) { <span class="muted">{{ device.manufacturer }}</span> }
+                  </div>
+                </div>
+              }
+            </div>
+          } @else if (onvifScanned()) {
+            <p class="muted">No ONVIF devices found on network</p>
+          }
+        </div>
+
+        <!-- Danger Zone -->
+        <div class="section-card danger-zone">
+          <div class="section-header">
+            <mat-icon>warning</mat-icon>
+            <h3>Danger Zone</h3>
+          </div>
+          <div class="danger-actions">
+            <div class="danger-item">
+              <div class="danger-info">
+                <strong>Restart Service</strong>
+                <p>Restart the BM-APP service on this AI Box</p>
+              </div>
+              <button class="action-btn warning" [disabled]="restarting()" (click)="restartService()">
+                <mat-icon>restart_alt</mat-icon>
+                Restart
+              </button>
+            </div>
+            <div class="danger-item">
+              <div class="danger-info">
+                <strong>Factory Reset</strong>
+                <p>Reset AI Box to factory defaults. This cannot be undone!</p>
+              </div>
+              <button class="action-btn danger" (click)="confirmFactoryReset()">
+                <mat-icon>delete_forever</mat-icon>
+                Factory Reset
+              </button>
+            </div>
           </div>
         </div>
+
+        @if (actionMessage()) {
+          <div class="action-toast" [class.success]="actionSuccess()">
+            <mat-icon>{{ actionSuccess() ? 'check_circle' : 'error' }}</mat-icon>
+            {{ actionMessage() }}
+          </div>
+        }
       }
     </div>
   `,
   styles: [`
     .tools-page { padding: 0; }
-    .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; }
+    .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; flex-wrap: wrap; gap: 16px; }
     .header-left h2 { margin: 0; font-size: 24px; color: var(--text-primary); }
     .subtitle { margin: 4px 0 0; color: var(--text-secondary); font-size: 14px; }
-    .section-title { font-size: 16px; color: var(--text-primary); margin: 32px 0 16px; }
+    .aibox-select { padding: 8px 12px; background: var(--glass-bg); border: 1px solid var(--glass-border); border-radius: 8px; color: var(--text-primary); font-size: 14px; min-width: 200px; }
 
-    .status-section { background: var(--glass-bg); border: 1px solid var(--glass-border); border-radius: 16px; padding: 24px; margin-bottom: 24px; }
-    .status-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; margin-bottom: 24px; }
-    .status-card { text-align: center; }
-    .gauge { position: relative; width: 100px; height: 60px; margin: 0 auto 8px; }
-    .gauge svg { width: 100%; height: 100%; }
-    .gauge .value { position: absolute; bottom: 0; left: 50%; transform: translateX(-50%); font-size: 18px; font-weight: 600; color: var(--text-primary); }
-    .status-card .label { font-size: 13px; color: var(--text-muted); }
+    .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 80px 20px; gap: 16px; color: var(--text-muted); }
+    .empty-state mat-icon { font-size: 64px; width: 64px; height: 64px; opacity: 0.3; }
+    .empty-state h3 { margin: 0; font-size: 20px; color: var(--text-primary); }
 
-    .system-info { display: flex; gap: 32px; padding-top: 16px; border-top: 1px solid var(--glass-border); }
-    .info-item { display: flex; align-items: center; gap: 8px; font-size: 13px; }
-    .info-item mat-icon { font-size: 18px; width: 18px; height: 18px; color: var(--accent-primary); }
-    .info-item span:first-of-type { color: var(--text-muted); }
-    .info-item span:last-child { color: var(--text-primary); }
+    .section-card { background: var(--glass-bg); border: 1px solid var(--glass-border); border-radius: 12px; padding: 20px; margin-bottom: 20px; }
+    .section-card.danger-zone { border-color: rgba(239, 68, 68, 0.3); }
+    .section-header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+    .section-header mat-icon { color: var(--accent-primary); font-size: 22px; width: 22px; height: 22px; }
+    .section-card.danger-zone .section-header mat-icon { color: #ef4444; }
+    .section-header h3 { margin: 0; font-size: 16px; color: var(--text-primary); flex: 1; }
 
-    .tools-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
-    .tool-card { display: flex; align-items: center; gap: 16px; padding: 20px; background: var(--glass-bg); border: 1px solid var(--glass-border); border-radius: 12px; cursor: pointer; transition: all 0.2s; }
-    .tool-card:hover { transform: translateY(-2px); border-color: var(--accent-primary); }
-    .tool-card.danger:hover { border-color: #ef4444; }
-    .tool-icon { width: 48px; height: 48px; border-radius: 12px; display: flex; align-items: center; justify-content: center; }
-    .tool-icon mat-icon { font-size: 24px; width: 24px; height: 24px; color: white; }
-    .tool-info h4 { margin: 0 0 4px; font-size: 14px; color: var(--text-primary); }
-    .tool-info p { margin: 0; font-size: 12px; color: var(--text-muted); }
+    .icon-btn { background: none; border: 1px solid var(--glass-border); border-radius: 6px; padding: 4px 8px; color: var(--text-muted); cursor: pointer; }
+    .icon-btn:hover { color: var(--text-primary); }
 
-    .quick-actions { display: flex; gap: 12px; flex-wrap: wrap; }
-    .quick-btn { display: flex; align-items: center; gap: 8px; padding: 12px 20px; background: var(--glass-bg); border: 1px solid var(--glass-border); border-radius: 8px; color: var(--text-primary); font-size: 13px; cursor: pointer; transition: all 0.2s; }
-    .quick-btn:hover { background: var(--glass-bg-hover); border-color: var(--accent-primary); }
-    .quick-btn mat-icon { font-size: 18px; width: 18px; height: 18px; }
+    .loading-row { display: flex; align-items: center; gap: 12px; color: var(--text-muted); font-size: 14px; }
+    .muted { color: var(--text-muted); font-size: 14px; margin: 0; }
 
-    .logs-section { background: var(--glass-bg); border: 1px solid var(--glass-border); border-radius: 16px; overflow: hidden; }
-    .logs-header { display: flex; justify-content: space-between; align-items: center; padding: 16px; border-bottom: 1px solid var(--glass-border); }
-    .log-filters { display: flex; gap: 8px; }
-    .filter-btn { padding: 6px 14px; background: transparent; border: 1px solid var(--glass-border); border-radius: 6px; color: var(--text-secondary); font-size: 12px; cursor: pointer; }
-    .filter-btn.active { background: var(--accent-primary); border-color: var(--accent-primary); color: white; }
-    .action-btn { display: flex; align-items: center; gap: 6px; padding: 8px 16px; border: 1px solid var(--glass-border); border-radius: 6px; background: transparent; color: var(--text-primary); font-size: 12px; cursor: pointer; }
-    .action-btn mat-icon { font-size: 16px; width: 16px; height: 16px; }
+    .info-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
+    .info-item { display: flex; flex-direction: column; gap: 4px; }
+    .info-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+    .info-value { font-size: 18px; font-weight: 600; color: var(--text-primary); font-family: monospace; }
 
-    .logs-list { max-height: 300px; overflow-y: auto; }
-    .log-entry { display: grid; grid-template-columns: 140px 80px 1fr; gap: 16px; padding: 12px 16px; border-bottom: 1px solid var(--glass-border); font-size: 12px; font-family: monospace; }
-    .log-time { color: var(--text-muted); }
-    .log-level { text-transform: uppercase; font-weight: 600; }
-    .log-entry.info .log-level { color: #3b82f6; }
-    .log-entry.warning .log-level { color: #f59e0b; }
-    .log-entry.error .log-level { color: #ef4444; }
-    .log-message { color: var(--text-primary); }
+    .tool-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
+    .tool-input { padding: 10px 14px; background: var(--glass-bg); border: 1px solid var(--glass-border); border-radius: 8px; color: var(--text-primary); font-size: 14px; flex: 1; min-width: 200px; }
+    .tool-input.small { flex: 0 0 80px; min-width: 60px; }
 
-    .progress-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 1000; }
-    .progress-dialog { background: var(--glass-bg); border-radius: 16px; padding: 32px; text-align: center; min-width: 300px; }
-    .progress-dialog h4 { margin: 0 0 20px; color: var(--text-primary); }
-    .progress-dialog p { margin: 16px 0 0; color: var(--text-muted); font-size: 13px; }
+    .action-btn { display: flex; align-items: center; gap: 8px; padding: 10px 16px; border: none; border-radius: 8px; font-size: 13px; cursor: pointer; white-space: nowrap; }
+    .action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .action-btn.primary { background: var(--accent-primary); color: white; }
+    .action-btn.secondary { background: var(--glass-bg); color: var(--text-primary); border: 1px solid var(--glass-border); }
+    .action-btn.warning { background: rgba(245, 158, 11, 0.2); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.3); }
+    .action-btn.danger { background: rgba(239, 68, 68, 0.2); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3); }
+    .action-btn mat-icon, .action-btn mat-progress-spinner { font-size: 16px; width: 16px; height: 16px; }
 
-    @media (max-width: 768px) {
-      .status-grid { grid-template-columns: repeat(2, 1fr); }
-      .system-info { flex-direction: column; gap: 12px; }
-    }
+    .result-box { padding: 16px; border-radius: 8px; border: 1px solid var(--glass-border); background: rgba(0,0,0,0.2); }
+    .result-box.success { border-color: rgba(34, 197, 94, 0.3); }
+    .result-box.error { border-color: rgba(239, 68, 68, 0.3); }
+    .result-header { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+    .result-header mat-icon { font-size: 18px; width: 18px; height: 18px; }
+    .result-box.success .result-header mat-icon { color: #22c55e; }
+    .result-box.error .result-header mat-icon { color: #ef4444; }
+    .status-tag { font-size: 11px; padding: 2px 8px; border-radius: 4px; background: rgba(107,114,128,0.2); color: var(--text-muted); }
+    .status-tag.ok { background: rgba(34,197,94,0.1); color: #22c55e; }
+    .output-text { margin: 0; font-size: 12px; font-family: monospace; color: var(--text-secondary); white-space: pre-wrap; overflow-x: auto; }
+    .error-text { margin: 0; font-size: 13px; color: #ef4444; }
+
+    .devices-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+    .device-card { display: flex; align-items: center; gap: 12px; padding: 14px; background: rgba(0,0,0,0.2); border-radius: 8px; border: 1px solid var(--glass-border); }
+    .device-card mat-icon { font-size: 28px; width: 28px; height: 28px; color: var(--accent-primary); }
+    .device-info { display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+    .device-info strong { color: var(--text-primary); }
+    .device-info span { color: var(--text-muted); font-family: monospace; }
+
+    .danger-actions { display: flex; flex-direction: column; gap: 16px; }
+    .danger-item { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px; background: rgba(239, 68, 68, 0.05); border-radius: 8px; }
+    .danger-info strong { font-size: 14px; color: var(--text-primary); }
+    .danger-info p { margin: 4px 0 0; font-size: 12px; color: var(--text-muted); }
+
+    .action-toast { display: flex; align-items: center; gap: 10px; padding: 14px 18px; border-radius: 10px; margin-top: 16px; font-size: 14px; background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3); color: #ef4444; }
+    .action-toast.success { background: rgba(34,197,94,0.1); border-color: rgba(34,197,94,0.3); color: #22c55e; }
   `]
 })
-export class AdminToolsComponent {
-  logFilter = signal<'all' | 'info' | 'warning' | 'error'>('all');
-  showProgress = signal(false);
-  progressTitle = signal('');
+export class AdminToolsComponent implements OnInit {
+  aiBoxService = inject(AIBoxService);
+  private toolsService = inject(ToolsService);
 
-  systemStatus = signal({
-    cpu: 45,
-    memory: 62,
-    disk: 58,
-    temp: 52,
-    hostname: 'hse-monitor-01',
-    version: 'v1.0.67',
-    uptime: '15 days, 4 hours'
-  });
+  selectedAiBoxId = signal<string | null>(null);
+  systemInfo = signal<SystemInfo | null>(null);
+  loadingInfo = signal(false);
 
-  tools: SystemTool[] = [
-    { id: '1', name: 'Backup System', description: 'Create full system backup', icon: 'backup', color: '#3b82f6' },
-    { id: '2', name: 'Restore Backup', description: 'Restore from backup file', icon: 'restore', color: '#22c55e' },
-    { id: '3', name: 'Export Config', description: 'Export system configuration', icon: 'file_download', color: '#8b5cf6' },
-    { id: '4', name: 'Import Config', description: 'Import configuration file', icon: 'file_upload', color: '#f59e0b' },
-    { id: '5', name: 'Clear Logs', description: 'Clear all system logs', icon: 'delete_sweep', color: '#6b7280' },
-    { id: '6', name: 'Restart Services', description: 'Restart all services', icon: 'restart_alt', color: '#06b6d4' },
-    { id: '7', name: 'Reboot System', description: 'Reboot the device', icon: 'power_settings_new', color: '#f97316', danger: true },
-    { id: '8', name: 'Factory Reset', description: 'Reset to factory defaults', icon: 'settings_backup_restore', color: '#ef4444', danger: true }
-  ];
+  pingHost = '';
+  pingCount = 4;
+  pinging = signal(false);
+  pingResult = signal<PingResult | null>(null);
 
-  logs = signal<LogEntry[]>([
-    { id: '1', timestamp: '2024-01-28 10:30:15', level: 'info', message: 'System started successfully' },
-    { id: '2', timestamp: '2024-01-28 10:31:22', level: 'info', message: 'AI detection service initialized' },
-    { id: '3', timestamp: '2024-01-28 10:35:45', level: 'warning', message: 'High CPU usage detected (85%)' },
-    { id: '4', timestamp: '2024-01-28 10:40:18', level: 'error', message: 'Failed to connect to camera RTSP stream' },
-    { id: '5', timestamp: '2024-01-28 10:42:33', level: 'info', message: 'Camera reconnected successfully' },
-    { id: '6', timestamp: '2024-01-28 10:45:00', level: 'info', message: 'Alarm triggered: No helmet detected' }
-  ]);
+  discoveringOnvif = signal(false);
+  onvifDevices = signal<OnvifDevice[]>([]);
+  onvifScanned = signal(false);
 
-  filteredLogs = signal<LogEntry[]>([]);
+  restarting = signal(false);
+  actionMessage = signal('');
+  actionSuccess = signal(false);
 
-  constructor() {
-    this.updateFilteredLogs();
+  ngOnInit() {
+    this.aiBoxService.loadAiBoxes().subscribe();
   }
 
-  updateFilteredLogs() {
-    const filter = this.logFilter();
-    if (filter === 'all') {
-      this.filteredLogs.set(this.logs());
-    } else {
-      this.filteredLogs.set(this.logs().filter(l => l.level === filter));
-    }
+  onAiBoxChange() {
+    this.systemInfo.set(null);
+    this.pingResult.set(null);
+    this.onvifDevices.set([]);
+    this.onvifScanned.set(false);
   }
 
-  executeTool(tool: SystemTool) {
-    if (tool.danger && !confirm(`Are you sure you want to ${tool.name.toLowerCase()}? This action cannot be undone.`)) {
-      return;
-    }
-    this.progressTitle.set(tool.name);
-    this.showProgress.set(true);
-    setTimeout(() => this.showProgress.set(false), 2000);
+  loadSystemInfo() {
+    const id = this.selectedAiBoxId();
+    if (!id) return;
+    this.loadingInfo.set(true);
+    this.toolsService.getSystemInfo(id).subscribe({
+      next: (info) => { this.systemInfo.set(info); this.loadingInfo.set(false); },
+      error: (err) => {
+        this.loadingInfo.set(false);
+        this.showToast(`Failed: ${err.error?.detail || err.message}`, false);
+      }
+    });
   }
 
-  clearCache() { console.log('Clearing cache...'); }
-  syncTime() { console.log('Syncing time...'); }
-  testNetwork() { console.log('Testing network...'); }
-  checkUpdates() { console.log('Checking updates...'); }
-  refreshLogs() { this.updateFilteredLogs(); }
+  runPing() {
+    const id = this.selectedAiBoxId();
+    if (!id || !this.pingHost) return;
+    this.pinging.set(true);
+    this.pingResult.set(null);
+    this.toolsService.ping(id, this.pingHost, this.pingCount).subscribe({
+      next: (result) => { this.pingResult.set(result); this.pinging.set(false); },
+      error: (err) => {
+        this.pinging.set(false);
+        this.pingResult.set({ host: this.pingHost, success: false, error: err.error?.detail || err.message });
+      }
+    });
+  }
+
+  discoverOnvif() {
+    const id = this.selectedAiBoxId();
+    if (!id) return;
+    this.discoveringOnvif.set(true);
+    this.onvifDevices.set([]);
+    this.toolsService.discoverOnvif(id).subscribe({
+      next: (devices) => {
+        this.onvifDevices.set(devices);
+        this.onvifScanned.set(true);
+        this.discoveringOnvif.set(false);
+      },
+      error: (err) => {
+        this.discoveringOnvif.set(false);
+        this.onvifScanned.set(true);
+        this.showToast(`Discovery failed: ${err.error?.detail || err.message}`, false);
+      }
+    });
+  }
+
+  restartService() {
+    const id = this.selectedAiBoxId();
+    if (!id) return;
+    if (!confirm('Are you sure you want to restart the BM-APP service?')) return;
+    this.restarting.set(true);
+    this.toolsService.restartService(id).subscribe({
+      next: () => { this.restarting.set(false); this.showToast('Service restart initiated', true); },
+      error: (err) => { this.restarting.set(false); this.showToast(`Restart failed: ${err.error?.detail || err.message}`, false); }
+    });
+  }
+
+  confirmFactoryReset() {
+    const id = this.selectedAiBoxId();
+    if (!id) return;
+    const box = this.aiBoxService.aiBoxes().find(b => b.id === id);
+    if (!confirm(`WARNING: This will factory reset "${box?.name}". All data will be lost. Are you absolutely sure?`)) return;
+    if (!confirm('This action cannot be undone. Confirm factory reset?')) return;
+    this.toolsService.factoryReset(id).subscribe({
+      next: () => this.showToast('Factory reset initiated', true),
+      error: (err) => this.showToast(`Reset failed: ${err.error?.detail || err.message}`, false)
+    });
+  }
+
+  private showToast(msg: string, success: boolean) {
+    this.actionMessage.set(msg);
+    this.actionSuccess.set(success);
+    setTimeout(() => this.actionMessage.set(''), 5000);
+  }
 }

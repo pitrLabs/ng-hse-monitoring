@@ -1,124 +1,85 @@
-import { Component, signal } from '@angular/core';
+import { Component, signal, inject, OnInit, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MatIconModule } from '@angular/material/icon';
 import { MatButtonModule } from '@angular/material/button';
-import { MatSlideToggleModule } from '@angular/material/slide-toggle';
-
-interface NetworkInterface {
-  id: string;
-  name: string;
-  type: 'ethernet' | 'wifi' | 'loopback';
-  status: 'connected' | 'disconnected' | 'error';
-  ip: string;
-  subnet: string;
-  gateway: string;
-  dns: string;
-  mac: string;
-  speed?: string;
-  ssid?: string;
-}
+import { MatSelectModule } from '@angular/material/select';
+import { MatFormFieldModule } from '@angular/material/form-field';
+import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
+import { AIBoxService } from '../../../core/services/aibox.service';
+import { PreferencesService, SystemPreference } from '../../../core/services/preferences.service';
 
 @Component({
   selector: 'app-admin-network',
   standalone: true,
-  imports: [CommonModule, FormsModule, MatIconModule, MatButtonModule, MatSlideToggleModule],
+  imports: [CommonModule, FormsModule, MatIconModule, MatButtonModule, MatProgressSpinnerModule,  MatSelectModule, MatFormFieldModule],
   template: `
     <div class="network-page">
       <div class="page-header">
         <div class="header-left">
           <h2>Network Configuration</h2>
-          <p class="subtitle">Manage network interfaces and connectivity</p>
+          <p class="subtitle">Manage network settings per AI Box</p>
         </div>
-        <button class="action-btn primary" (click)="refresh()">
-          <mat-icon>refresh</mat-icon>
-          Refresh
-        </button>
+        <div class="header-actions">
+          <mat-form-field appearance="outline" class="aibox-field">
+          <mat-select [ngModel]="selectedAiBoxId()" (ngModelChange)="selectedAiBoxId.set($event); onAiBoxChange()">
+            <mat-option value="">Select AI Box</mat-option>
+            @for (box of aiBoxService.aiBoxes(); track box.id) {
+              <mat-option [value]="box.id">{{ box.name }} ({{ box.code }})</mat-option>
+            }
+          </mat-select>
+        </mat-form-field>
+          <button class="action-btn secondary" [disabled]="!selectedAiBoxId() || syncing()" (click)="syncFromBmapp()">
+            <mat-icon>cloud_download</mat-icon>
+            Sync
+          </button>
+          <button class="action-btn secondary" [disabled]="!selectedAiBoxId() || saving()" (click)="saveAndApply()">
+            <mat-icon>cloud_upload</mat-icon>
+            Save & Apply
+          </button>
+        </div>
       </div>
 
-      <div class="status-cards">
-        <div class="status-card">
+      @if (!selectedAiBoxId()) {
+        <div class="empty-state">
           <mat-icon>wifi</mat-icon>
-          <div class="info">
-            <span class="label">Network Status</span>
-            <span class="value online">Online</span>
-          </div>
+          <h3>Select an AI Box</h3>
+          <p>Choose an AI Box to configure its network settings</p>
         </div>
-        <div class="status-card">
-          <mat-icon>settings_ethernet</mat-icon>
-          <div class="info">
-            <span class="label">Active Interfaces</span>
-            <span class="value">{{ getConnectedCount() }}</span>
-          </div>
-        </div>
-        <div class="status-card">
-          <mat-icon>speed</mat-icon>
-          <div class="info">
-            <span class="label">Network Speed</span>
-            <span class="value">{{ getPrimarySpeed() }}</span>
-          </div>
-        </div>
-        <div class="status-card">
-          <mat-icon>public</mat-icon>
-          <div class="info">
-            <span class="label">External IP</span>
-            <span class="value">203.0.113.45</span>
-          </div>
-        </div>
-      </div>
-
-      <h3 class="section-title">Network Interfaces</h3>
-      <div class="interfaces-grid">
-        @for (iface of interfaces(); track iface.id) {
-          <div class="interface-card" [class]="iface.status">
-            <div class="card-header">
-              <mat-icon>{{ getInterfaceIcon(iface.type) }}</mat-icon>
-              <div class="iface-info">
-                <h4>{{ iface.name }}</h4>
-                <span class="status-badge" [class]="iface.status">{{ iface.status }}</span>
-              </div>
-            </div>
-            <div class="card-body">
-              <div class="info-row"><span>IP Address:</span><span>{{ iface.ip }}</span></div>
-              <div class="info-row"><span>Subnet:</span><span>{{ iface.subnet }}</span></div>
-              <div class="info-row"><span>Gateway:</span><span>{{ iface.gateway }}</span></div>
-              <div class="info-row"><span>DNS:</span><span>{{ iface.dns }}</span></div>
-              <div class="info-row"><span>MAC:</span><span>{{ iface.mac }}</span></div>
-              @if (iface.speed) {
-                <div class="info-row"><span>Speed:</span><span>{{ iface.speed }}</span></div>
-              }
-              @if (iface.ssid) {
-                <div class="info-row"><span>SSID:</span><span>{{ iface.ssid }}</span></div>
-              }
-            </div>
+      } @else if (loading()) {
+        <div class="loading-state"><mat-progress-spinner mode="indeterminate" diameter="40"></mat-progress-spinner></div>
+      } @else {
+        @if (syncMessage()) {
+          <div class="sync-message" [class.success]="syncSuccess()">
+            <mat-icon>{{ syncSuccess() ? 'check_circle' : 'error' }}</mat-icon>
+            {{ syncMessage() }}
           </div>
         }
-      </div>
 
-      <h3 class="section-title">Ethernet Configuration</h3>
-      <div class="config-card">
-        <div class="config-row">
-          <span>Use DHCP</span>
-          <mat-slide-toggle [(ngModel)]="useDhcp" color="primary"></mat-slide-toggle>
+        <div class="config-grid">
+          @for (pref of networkPrefs(); track pref.id) {
+            <div class="config-field">
+              <label>{{ formatKey(pref.key) }}</label>
+              <input class="field-input" type="text"
+                     [value]="getEditValue(pref)"
+                     (change)="onValueChange(pref.id, $event)"
+                     [placeholder]="pref.key">
+            </div>
+          }
         </div>
-        @if (!useDhcp) {
-          <div class="static-config">
-            <div class="form-row">
-              <label>IP Address</label>
-              <input type="text" [(ngModel)]="staticIp" placeholder="192.168.1.100">
-            </div>
-            <div class="form-row">
-              <label>Subnet Mask</label>
-              <input type="text" [(ngModel)]="staticSubnet" placeholder="255.255.255.0">
-            </div>
-            <div class="form-row">
-              <label>Gateway</label>
-              <input type="text" [(ngModel)]="staticGateway" placeholder="192.168.1.1">
-            </div>
+
+        @if (networkPrefs().length === 0) {
+          <div class="empty-state">
+            <mat-icon>info</mat-icon>
+            <h3>No network settings</h3>
+            <p>Sync from BM-APP to import network configuration</p>
+            <button class="action-btn primary" (click)="syncFromBmapp()">
+              <mat-icon>cloud_download</mat-icon>
+              Sync Now
+            </button>
           </div>
         }
-        <button class="action-btn primary" (click)="saveConfig()">Save Configuration</button>
-      </div>
+      }
     </div>
   `,
   styles: [`
@@ -126,84 +87,120 @@ interface NetworkInterface {
     .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; flex-wrap: wrap; gap: 16px; }
     .header-left h2 { margin: 0; font-size: 24px; color: var(--text-primary); }
     .subtitle { margin: 4px 0 0; color: var(--text-secondary); font-size: 14px; }
-    .action-btn { display: flex; align-items: center; gap: 8px; padding: 10px 20px; border: none; border-radius: 8px; font-size: 14px; cursor: pointer; }
+    .header-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+    .aibox-select { padding: 8px 12px; background: var(--glass-bg); border: 1px solid var(--glass-border); border-radius: 8px; color: var(--text-primary); font-size: 14px; min-width: 180px; }
+    .empty-state, .loading-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 80px 20px; gap: 16px; color: var(--text-muted); }
+    .empty-state mat-icon { font-size: 64px; width: 64px; height: 64px; opacity: 0.3; }
+    .empty-state h3 { margin: 0; font-size: 20px; color: var(--text-primary); }
+    .sync-message { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); color: #ef4444; font-size: 14px; }
+    .sync-message.success { background: rgba(34, 197, 94, 0.1); border-color: rgba(34, 197, 94, 0.3); color: #22c55e; }
+    .config-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+    .config-field { display: flex; flex-direction: column; gap: 6px; }
+    .config-field label { font-size: 13px; color: var(--text-muted); font-weight: 500; }
+    .field-input { padding: 10px 14px; background: var(--glass-bg); border: 1px solid var(--glass-border); border-radius: 8px; color: var(--text-primary); font-size: 14px; font-family: monospace; }
+    .field-input:focus { outline: none; border-color: var(--accent-primary); }
+    .action-btn { display: flex; align-items: center; gap: 8px; padding: 8px 14px; border: none; border-radius: 8px; font-size: 13px; cursor: pointer; }
+    .action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
     .action-btn.primary { background: var(--accent-primary); color: white; }
-    .action-btn mat-icon { font-size: 18px; width: 18px; height: 18px; }
-
-    .status-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 16px; margin-bottom: 32px; }
-    .status-card { display: flex; align-items: center; gap: 16px; padding: 20px; background: var(--glass-bg); border: 1px solid var(--glass-border); border-radius: 12px; }
-    .status-card mat-icon { font-size: 32px; width: 32px; height: 32px; color: var(--accent-primary); }
-    .status-card .info { display: flex; flex-direction: column; }
-    .status-card .label { font-size: 12px; color: var(--text-muted); }
-    .status-card .value { font-size: 18px; font-weight: 600; color: var(--text-primary); }
-    .status-card .value.online { color: #22c55e; }
-
-    .section-title { font-size: 18px; color: var(--text-primary); margin: 32px 0 16px; }
-
-    .interfaces-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; margin-bottom: 32px; }
-    .interface-card { background: var(--glass-bg); border: 1px solid var(--glass-border); border-radius: 12px; overflow: hidden; }
-    .interface-card.connected { border-left: 4px solid #22c55e; }
-    .interface-card.disconnected { border-left: 4px solid #6b7280; }
-    .interface-card.error { border-left: 4px solid #ef4444; }
-
-    .card-header { display: flex; align-items: center; gap: 12px; padding: 16px; background: rgba(0,0,0,0.1); }
-    .card-header mat-icon { font-size: 24px; width: 24px; height: 24px; color: var(--accent-primary); }
-    .iface-info h4 { margin: 0; font-size: 14px; color: var(--text-primary); }
-    .status-badge { font-size: 11px; padding: 2px 8px; border-radius: 4px; text-transform: uppercase; }
-    .status-badge.connected { background: rgba(34, 197, 94, 0.1); color: #22c55e; }
-    .status-badge.disconnected { background: rgba(107, 114, 128, 0.1); color: #6b7280; }
-    .status-badge.error { background: rgba(239, 68, 68, 0.1); color: #ef4444; }
-
-    .card-body { padding: 16px; }
-    .info-row { display: flex; justify-content: space-between; padding: 6px 0; font-size: 13px; border-bottom: 1px solid var(--glass-border); }
-    .info-row:last-child { border-bottom: none; }
-    .info-row span:first-child { color: var(--text-muted); }
-    .info-row span:last-child { color: var(--text-primary); font-family: monospace; }
-
-    .config-card { background: var(--glass-bg); border: 1px solid var(--glass-border); border-radius: 12px; padding: 20px; }
-    .config-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; font-size: 14px; color: var(--text-primary); }
-    .static-config { display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px; padding: 16px; background: rgba(0,0,0,0.1); border-radius: 8px; }
-    .form-row { display: flex; flex-direction: column; gap: 4px; }
-    .form-row label { font-size: 12px; color: var(--text-muted); }
-    .form-row input { padding: 10px 12px; background: var(--glass-bg); border: 1px solid var(--glass-border); border-radius: 6px; color: var(--text-primary); font-size: 14px; font-family: monospace; }
+    .action-btn.secondary { background: var(--glass-bg); color: var(--text-primary); border: 1px solid var(--glass-border); }
+    .action-btn mat-icon { font-size: 15px; width: 15px; height: 15px; }
   `]
 })
-export class AdminNetworkComponent {
-  useDhcp = true;
-  staticIp = '';
-  staticSubnet = '';
-  staticGateway = '';
+export class AdminNetworkComponent implements OnInit {
+  aiBoxService = inject(AIBoxService);
+  private prefsService = inject(PreferencesService);
 
-  interfaces = signal<NetworkInterface[]>([
-    { id: '1', name: 'eth0', type: 'ethernet', status: 'connected', ip: '192.168.1.100', subnet: '255.255.255.0', gateway: '192.168.1.1', dns: '8.8.8.8', mac: '00:1A:2B:3C:4D:5E', speed: '1 Gbps' },
-    { id: '2', name: 'eth1', type: 'ethernet', status: 'disconnected', ip: '-', subnet: '-', gateway: '-', dns: '-', mac: '00:1A:2B:3C:4D:5F' },
-    { id: '3', name: 'wlan0', type: 'wifi', status: 'connected', ip: '192.168.1.101', subnet: '255.255.255.0', gateway: '192.168.1.1', dns: '8.8.8.8', mac: '00:1A:2B:3C:4D:60', ssid: 'HSE-Network' },
-    { id: '4', name: 'lo', type: 'loopback', status: 'connected', ip: '127.0.0.1', subnet: '255.0.0.0', gateway: '-', dns: '-', mac: '00:00:00:00:00:00' }
-  ]);
+  selectedAiBoxId = signal<string | null>(null);
+  preferences = signal<SystemPreference[]>([]);
+  loading = signal(false);
+  saving = signal(false);
+  syncing = signal(false);
+  syncMessage = signal('');
+  syncSuccess = signal(false);
 
-  getConnectedCount(): number {
-    return this.interfaces().filter(i => i.status === 'connected').length;
+  private editValues = new Map<string, string>();
+
+  networkPrefs = computed(() => this.preferences().filter(p => p.category === 'network'));
+
+  ngOnInit() {
+    this.aiBoxService.loadAiBoxes().subscribe();
   }
 
-  getPrimarySpeed(): string {
-    const eth = this.interfaces().find(i => i.type === 'ethernet' && i.status === 'connected');
-    return eth?.speed || 'N/A';
+  onAiBoxChange() {
+    this.editValues.clear();
+    this.preferences.set([]);
+    this.loadPreferences();
   }
 
-  getInterfaceIcon(type: string): string {
-    switch (type) {
-      case 'ethernet': return 'settings_ethernet';
-      case 'wifi': return 'wifi';
-      case 'loopback': return 'loop';
-      default: return 'device_hub';
+  loadPreferences() {
+    const id = this.selectedAiBoxId();
+    if (!id) return;
+    this.loading.set(true);
+    this.prefsService.getPreferences({ aibox_id: id, category: 'network' }).subscribe({
+      next: (data) => { this.preferences.set(data); this.loading.set(false); },
+      error: () => this.loading.set(false)
+    });
+  }
+
+  getEditValue(pref: SystemPreference): string {
+    return this.editValues.get(pref.id) ?? pref.value;
+  }
+
+  onValueChange(id: string, event: Event) {
+    this.editValues.set(id, (event.target as HTMLInputElement).value);
+  }
+
+  formatKey(key: string): string {
+    return key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  }
+
+  saveAndApply() {
+    const id = this.selectedAiBoxId();
+    if (!id) return;
+    this.saving.set(true);
+    const updates = Array.from(this.editValues.entries()).map(([prefId, value]) => {
+      const pref = this.preferences().find(p => p.id === prefId);
+      return { key: pref?.key || '', value };
+    }).filter(u => u.key);
+
+    if (updates.length === 0) {
+      this.saving.set(false);
+      this.prefsService.applyToBmapp(id).subscribe({
+        next: (r) => { this.saving.set(false); this.showMsg(r.message, r.success); },
+        error: (err) => { this.saving.set(false); this.showMsg(err.error?.detail, false); }
+      });
+      return;
     }
+
+    this.prefsService.bulkUpdate(id, updates).subscribe({
+      next: () => {
+        this.editValues.clear();
+        this.prefsService.applyToBmapp(id).subscribe({
+          next: (r) => { this.saving.set(false); this.showMsg(r.message, r.success); },
+          error: (err) => { this.saving.set(false); this.showMsg(err.error?.detail, false); }
+        });
+      },
+      error: (err) => { this.saving.set(false); this.showMsg(err.error?.detail, false); }
+    });
   }
 
-  refresh() {
-    console.log('Refreshing network info...');
+  syncFromBmapp() {
+    const id = this.selectedAiBoxId();
+    if (!id) return;
+    this.syncing.set(true);
+    this.prefsService.syncFromBmapp(id).subscribe({
+      next: (result) => {
+        this.syncing.set(false);
+        this.loadPreferences();
+        this.showMsg(result.message, result.success);
+      },
+      error: (err) => { this.syncing.set(false); this.showMsg(err.error?.detail, false); }
+    });
   }
 
-  saveConfig() {
-    console.log('Saving network config...', { useDhcp: this.useDhcp, staticIp: this.staticIp });
+  private showMsg(msg: string, success: boolean) {
+    this.syncMessage.set(msg);
+    this.syncSuccess.set(success);
+    setTimeout(() => this.syncMessage.set(''), 5000);
   }
 }

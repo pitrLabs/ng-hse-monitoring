@@ -3,6 +3,7 @@ version: "3.9"
 services:
   ui:
     build: .
+    container_name: cont-fe-hse-monitoring
     restart: always
     ports:
       - "4222:4222"

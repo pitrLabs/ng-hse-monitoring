@@ -155,6 +155,11 @@ export const routes: Routes = [
         canActivate: [superuserGuard]
       },
       {
+        path: 'admin/logging',
+        loadComponent: () => import('./features/admin/logging/logging').then(m => m.AdminLoggingComponent),
+        canActivate: [superuserGuard]
+      },
+      {
         path: 'admin/network',
         loadComponent: () => import('./features/admin/network/network').then(m => m.AdminNetworkComponent),
         canActivate: [superuserGuard]

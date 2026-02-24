@@ -238,9 +238,41 @@ interface Stats {
                 </div>
 
                 @if (log.changes_summary || log.error_message) {
-                  <div class="timeline-summary">
+                  <div class="timeline-summary" [class.error-summary]="log.status === 'failed'">
                     <mat-icon>{{ log.error_message ? 'error_outline' : 'info' }}</mat-icon>
                     <span>{{ log.error_message || log.changes_summary }}</span>
+                  </div>
+                }
+
+                <!-- Additional details for failed events -->
+                @if (log.status === 'failed') {
+                  <div class="failure-details">
+                    <div class="detail-item">
+                      <mat-icon class="detail-icon">person_outline</mat-icon>
+                      <span class="detail-label">Attempted by:</span>
+                      <span class="detail-value">{{ log.username }} ({{ log.user_email }})</span>
+                    </div>
+                    @if (log.ip_address) {
+                      <div class="detail-item">
+                        <mat-icon class="detail-icon">language</mat-icon>
+                        <span class="detail-label">IP Address:</span>
+                        <span class="detail-value">{{ log.ip_address }}</span>
+                      </div>
+                    }
+                    @if (log.endpoint) {
+                      <div class="detail-item">
+                        <mat-icon class="detail-icon">api</mat-icon>
+                        <span class="detail-label">Endpoint:</span>
+                        <span class="detail-value">{{ log.method }} {{ log.endpoint }}</span>
+                      </div>
+                    }
+                    @if (log.user_agent) {
+                      <div class="detail-item">
+                        <mat-icon class="detail-icon">devices</mat-icon>
+                        <span class="detail-label">User Agent:</span>
+                        <span class="detail-value user-agent">{{ log.user_agent }}</span>
+                      </div>
+                    }
                   </div>
                 }
               </div>
@@ -328,10 +360,14 @@ interface Stats {
       border-radius: var(--radius-md); transition: all 0.2s;
       &:hover {
         transform: translateX(4px);
-        box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-        border-color: var(--accent-primary);
+        box-shadow: 0 0 0 2px var(--accent-primary), 0 4px 12px rgba(0,0,0,0.2);
       }
-      &.failed { border-left: 4px solid #ef4444; }
+      &.failed {
+        border-left: 4px solid #ef4444;
+        &:hover {
+          box-shadow: inset 4px 0 0 0 #ef4444, 0 0 0 2px #ef4444, 0 4px 12px rgba(0,0,0,0.2);
+        }
+      }
     }
 
     .timeline-marker {
@@ -395,6 +431,58 @@ interface Stats {
       padding: 8px 12px; background: var(--glass-bg-hover); border-radius: 6px;
       font-size: 13px; color: var(--text-secondary);
       mat-icon { font-size: 16px; width: 16px; height: 16px; color: var(--text-tertiary); }
+      &.error-summary {
+        background: rgba(239, 68, 68, 0.1);
+        border: 1px solid rgba(239, 68, 68, 0.3);
+        color: #ef4444;
+        font-weight: 500;
+        mat-icon { color: #ef4444; }
+      }
+    }
+
+    /* Failure Details */
+    .failure-details {
+      margin-top: 12px;
+      padding: 12px;
+      background: rgba(239, 68, 68, 0.05);
+      border: 1px solid rgba(239, 68, 68, 0.2);
+      border-radius: 6px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+
+      .detail-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+        color: var(--text-secondary);
+
+        .detail-icon {
+          font-size: 16px;
+          width: 16px;
+          height: 16px;
+          color: #ef4444;
+        }
+
+        .detail-label {
+          font-weight: 600;
+          color: var(--text-tertiary);
+          min-width: 100px;
+        }
+
+        .detail-value {
+          color: var(--text-primary);
+          font-family: monospace;
+          font-size: 11px;
+
+          &.user-agent {
+            white-space: normal;
+            word-break: break-word;
+            line-height: 1.4;
+          }
+        }
+      }
     }
 
     /* Pagination */
@@ -543,10 +631,15 @@ export class AdminLoggingComponent implements OnInit {
   }
 
   formatTime(timestamp: string): string {
-    const date = new Date(timestamp);
+    // Backend returns UTC timestamp without 'Z' indicator
+    // Add 'Z' to ensure it's parsed as UTC, then convert to local time
+    const utcTimestamp = timestamp.endsWith('Z') ? timestamp : timestamp + 'Z';
+    const date = new Date(utcTimestamp);
+
     return date.toLocaleString('id-ID', {
       year: 'numeric', month: 'short', day: 'numeric',
-      hour: '2-digit', minute: '2-digit', second: '2-digit'
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+      timeZone: 'Asia/Jakarta' // WIB timezone
     });
   }
 

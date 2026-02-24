@@ -139,6 +139,11 @@ export class AITaskService {
     return this.http.post<{ message: string }>(`${this.api}/ai-tasks/sync-bmapp`, {});
   }
 
+  // Import tasks from BM-APP into database
+  importFromBmapp(): Observable<{ message: string; imported: number; skipped: number; total_from_bmapp: number; errors: string[] | null }> {
+    return this.http.post<{ message: string; imported: number; skipped: number; total_from_bmapp: number; errors: string[] | null }>(`${this.api}/ai-tasks/import-from-bmapp`, {});
+  }
+
   // Get available AI abilities/algorithms
   getAbilities(): Observable<AIAbility[]> {
     return this.http.get<{ abilities: AIAbility[] }>(`${this.api}/ai-tasks/abilities/list`).pipe(

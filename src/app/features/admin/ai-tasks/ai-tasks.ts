@@ -1,4 +1,4 @@
-import { Component, OnInit, signal, inject } from '@angular/core';
+import { Component, OnInit, signal, inject, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { MatIconModule } from '@angular/material/icon';
@@ -14,6 +14,7 @@ import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 import { forkJoin } from 'rxjs';
 import { AITaskService, AITask, AIAbility } from '../../../core/services/ai-task.service';
 import { VideoSourceService, VideoSource } from '../../../core/services/video-source.service';
+import { AIBoxService, AIBox } from '../../../core/services/aibox.service';
 
 @Component({
   standalone: true,
@@ -29,9 +30,38 @@ import { VideoSourceService, VideoSource } from '../../../core/services/video-so
       <div class="page-header">
         <div class="header-left">
           <h2>AI Task Management</h2>
-          <span class="count">{{ aiTasks().length }} tasks</span>
+          <span class="count">{{ filteredTasks().length }} / {{ aiTasks().length }} tasks</span>
         </div>
         <div class="header-right">
+          <mat-form-field class="aibox-filter" appearance="outline">
+            <mat-label>Filter by AI Box</mat-label>
+            <mat-select [value]="selectedAiBoxId()" (selectionChange)="onAiBoxFilterChange($event.value)">
+              <mat-select-trigger>
+                @if (selectedAiBoxId()) {
+                  {{ getSelectedBoxName() }}
+                } @else {
+                  All AI Boxes
+                }
+              </mat-select-trigger>
+              <mat-option value="">All AI Boxes</mat-option>
+              @for (box of aiBoxes(); track box.id) {
+                <mat-option [value]="box.id">
+                  <span class="box-option">
+                    <span class="box-code">{{ box.code }}</span>
+                    <span class="box-name">{{ box.name }}</span>
+                  </span>
+                </mat-option>
+              }
+            </mat-select>
+          </mat-form-field>
+          <button mat-stroked-button (click)="importFromBmapp()" [disabled]="importing()">
+            @if (importing()) {
+              <mat-spinner diameter="18"></mat-spinner>
+            } @else {
+              <mat-icon>cloud_download</mat-icon>
+            }
+            Import from BM-APP
+          </button>
           <button mat-stroked-button (click)="syncToBmapp()" [disabled]="syncing()">
             @if (syncing()) {
               <mat-spinner diameter="18"></mat-spinner>
@@ -57,14 +87,21 @@ import { VideoSourceService, VideoSource } from '../../../core/services/video-so
         </div>
       } @else {
         <div class="tasks-grid">
-          @for (task of aiTasks(); track task.id) {
+          @for (task of filteredTasks(); track task.id) {
             <div class="task-card" [class.running]="isTaskRunning(task)" [class.failed]="task.status === 'failed'">
               <div class="task-header">
                 <div class="task-status" [class.active]="isTaskRunning(task)" [class.error]="task.status === 'failed'">
                   <mat-icon>{{ getStatusIcon(task) }}</mat-icon>
                 </div>
                 <div class="task-info">
-                  <h3>{{ task.task_name }}</h3>
+                  <div class="task-title-row">
+                    <h3>{{ task.task_name }}</h3>
+                    @if (task.video_source?.aibox) {
+                      <span class="aibox-badge" [matTooltip]="task.video_source?.aibox?.name || ''">
+                        {{ task.video_source?.aibox?.code }}
+                      </span>
+                    }
+                  </div>
                   <span class="task-media">{{ task.video_source?.name || task.video_source?.stream_name || 'Unknown Source' }}</span>
                 </div>
                 <div class="task-actions">
@@ -131,6 +168,25 @@ import { VideoSourceService, VideoSource } from '../../../core/services/video-so
                 </div>
               } @else {
                 <div class="form-group">
+                  <label>Select AI Box *</label>
+                  <mat-form-field appearance="outline" class="aibox-select">
+                    <mat-select [(ngModel)]="newTask.aibox_id" placeholder="-- Select AI Box --" (selectionChange)="onDialogBoxChange()">
+                      @for (box of aiBoxes(); track box.id) {
+                        <mat-option [value]="box.id">
+                          <span class="box-select-option">
+                            <span class="box-code">{{ box.code }}</span>
+                            <span class="box-name">{{ box.name }}</span>
+                          </span>
+                        </mat-option>
+                      }
+                    </mat-select>
+                  </mat-form-field>
+                  @if (aiBoxes().length === 0) {
+                    <span class="hint warning">No AI Boxes available. Create one first.</span>
+                  }
+                </div>
+
+                <div class="form-group">
                   <label>Task Name (optional)</label>
                   <input type="text" [(ngModel)]="newTask.task_name" placeholder="Auto-generated if empty">
                   <span class="hint">Leave empty to auto-generate from video source name</span>
@@ -138,27 +194,37 @@ import { VideoSourceService, VideoSource } from '../../../core/services/video-so
 
                 <div class="form-group">
                   <label>Select Video Source *</label>
-                  <select [(ngModel)]="newTask.video_source_id">
-                    <option value="">-- Select Video Source --</option>
-                    @for (source of videoSources(); track source.id) {
-                      <option [value]="source.id">{{ source.name }} ({{ source.stream_name }})</option>
-                    }
-                  </select>
-                  @if (videoSources().length === 0) {
-                    <span class="hint warning">No video sources available. Create one first in Video Sources.</span>
+                  <mat-form-field appearance="outline" class="video-source-select">
+                    <mat-select [(ngModel)]="newTask.video_source_id" placeholder="-- Select Video Source --" [disabled]="!newTask.aibox_id">
+                      @for (source of filteredVideoSources(); track source.id) {
+                        <mat-option [value]="source.id">
+                          <span class="source-option">
+                            <span class="source-name">{{ source.name }}</span>
+                            <span class="source-stream">({{ source.stream_name }})</span>
+                          </span>
+                        </mat-option>
+                      }
+                    </mat-select>
+                  </mat-form-field>
+                  @if (!newTask.aibox_id) {
+                    <span class="hint">Select an AI Box first</span>
+                  } @else if (filteredVideoSources().length === 0) {
+                    <span class="hint warning">No video sources available for this box.</span>
                   }
                 </div>
 
                 <div class="form-group">
                   <label>AI Algorithms *</label>
                   <div class="algorithm-list">
-                    @for (ability of abilities(); track ability.id) {
+                    @for (ability of abilities(); track $index) {
                       <label class="algorithm-item">
                         <input type="checkbox"
                           [checked]="isAlgorithmSelected(ability.id)"
                           (change)="toggleAlgorithm(ability.id)">
                         <span class="algo-name">{{ ability.name }}</span>
-                        <span class="algo-desc">{{ ability.description }}</span>
+                        @if (ability.description && ability.description !== ability.name) {
+                          <span class="algo-desc">{{ ability.description }}</span>
+                        }
                       </label>
                     }
                     @if (abilities().length === 0) {
@@ -190,7 +256,7 @@ import { VideoSourceService, VideoSource } from '../../../core/services/video-so
                 } @else {
                   <ng-container>
                     <mat-icon>add</mat-icon>
-                    Create Task
+                    <span>Create Task</span>
                   </ng-container>
                 }
               </button>
@@ -211,7 +277,75 @@ import { VideoSourceService, VideoSource } from '../../../core/services/video-so
       .count { font-size: 14px; color: var(--text-tertiary); padding: 4px 12px; background: var(--glass-bg); border-radius: 20px; }
     }
 
-    .header-right { display: flex; gap: 12px; }
+    .header-right { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+
+    .aibox-filter {
+      min-width: 220px;
+
+      ::ng-deep {
+        .mat-mdc-form-field-flex {
+          background: var(--glass-bg);
+          border-radius: 8px;
+        }
+
+        .mat-mdc-text-field-wrapper {
+          background: transparent;
+        }
+
+        .mat-mdc-form-field-infix {
+          min-height: 40px;
+          padding: 8px 0;
+        }
+
+        .mdc-notched-outline__leading,
+        .mdc-notched-outline__notch,
+        .mdc-notched-outline__trailing {
+          border-color: var(--glass-border) !important;
+        }
+
+        .mat-mdc-form-field.mat-focused {
+          .mdc-notched-outline__leading,
+          .mdc-notched-outline__notch,
+          .mdc-notched-outline__trailing {
+            border-color: var(--accent-primary) !important;
+          }
+        }
+
+        .mat-mdc-select-value,
+        .mat-mdc-form-field-label {
+          color: var(--text-primary) !important;
+        }
+
+        .mat-mdc-select-arrow {
+          color: var(--text-secondary);
+        }
+      }
+
+      .box-option {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+
+        .box-code {
+          display: inline-block;
+          padding: 2px 8px;
+          background: var(--accent-gradient);
+          color: white;
+          font-size: 11px;
+          font-weight: 600;
+          border-radius: 4px;
+          text-transform: uppercase;
+          min-width: 50px;
+          text-align: center;
+        }
+
+        .box-name {
+          font-size: 14px;
+          color: var(--text-primary);
+        }
+      }
+    }
+
     .btn-primary { background: var(--accent-gradient) !important; color: white !important; }
 
     .loading-container { display: flex; justify-content: center; align-items: center; min-height: 300px; }
@@ -260,7 +394,24 @@ import { VideoSourceService, VideoSource } from '../../../core/services/video-so
 
     .task-info {
       flex: 1;
-      h3 { margin: 0 0 4px; font-size: 14px; color: var(--text-primary); }
+
+      .task-title-row {
+        display: flex; align-items: center; gap: 8px; margin-bottom: 4px;
+      }
+
+      h3 { margin: 0; font-size: 14px; color: var(--text-primary); }
+
+      .aibox-badge {
+        padding: 2px 8px;
+        background: var(--accent-gradient);
+        color: white;
+        font-size: 10px;
+        font-weight: 600;
+        border-radius: 4px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+
       .task-media { font-size: 12px; color: var(--text-tertiary); }
     }
 
@@ -371,7 +522,7 @@ import { VideoSourceService, VideoSource } from '../../../core/services/video-so
         color: var(--text-secondary);
       }
 
-      input, select, textarea {
+      input, textarea {
         width: 100%;
         padding: 12px 16px;
         background: var(--glass-bg);
@@ -390,11 +541,6 @@ import { VideoSourceService, VideoSource } from '../../../core/services/video-so
         }
       }
 
-      select {
-        cursor: pointer;
-        option { background: #1a1a2e; color: var(--text-primary); }
-      }
-
       .hint {
         display: block;
         margin-top: 6px;
@@ -402,6 +548,85 @@ import { VideoSourceService, VideoSource } from '../../../core/services/video-so
         color: var(--text-muted);
 
         &.warning { color: #f59e0b; }
+      }
+
+      .aibox-select,
+      .video-source-select {
+        width: 100%;
+
+        ::ng-deep {
+          .mat-mdc-form-field-flex {
+            background: var(--glass-bg);
+            border-radius: 8px;
+          }
+
+          .mdc-notched-outline__leading,
+          .mdc-notched-outline__notch,
+          .mdc-notched-outline__trailing {
+            border-color: var(--glass-border) !important;
+          }
+
+          .mat-mdc-form-field.mat-focused {
+            .mdc-notched-outline__leading,
+            .mdc-notched-outline__notch,
+            .mdc-notched-outline__trailing {
+              border-color: var(--accent-primary) !important;
+            }
+          }
+
+          .mat-mdc-select-value,
+          .mat-mdc-select-placeholder {
+            color: var(--text-primary) !important;
+          }
+
+          .mat-mdc-select-disabled {
+            .mat-mdc-select-value {
+              color: var(--text-muted) !important;
+            }
+          }
+        }
+      }
+
+      .box-select-option {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+
+        .box-code {
+          display: inline-block;
+          padding: 3px 8px;
+          background: var(--accent-gradient);
+          color: white;
+          font-size: 10px;
+          font-weight: 600;
+          border-radius: 4px;
+          text-transform: uppercase;
+          min-width: 50px;
+          text-align: center;
+        }
+
+        .box-name {
+          font-size: 14px;
+          color: var(--text-primary);
+          font-weight: 500;
+        }
+      }
+
+      .source-option {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+
+        .source-name {
+          font-size: 14px;
+          color: var(--text-primary);
+          font-weight: 500;
+        }
+
+        .source-stream {
+          font-size: 12px;
+          color: var(--text-tertiary);
+        }
       }
     }
 
@@ -478,9 +703,38 @@ import { VideoSourceService, VideoSource } from '../../../core/services/video-so
       border-top: 1px solid var(--glass-border);
 
       button {
-        display: flex;
-        align-items: center;
-        gap: 8px;
+        ::ng-deep {
+          .mat-mdc-button-touch-target {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+          }
+
+          .mdc-button__label {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+          }
+
+          mat-icon {
+            margin: 0 !important;
+            padding: 0;
+            font-size: 18px;
+            width: 18px;
+            height: 18px;
+            line-height: 18px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+          }
+
+          span {
+            line-height: 1;
+            display: inline-flex;
+            align-items: center;
+          }
+        }
       }
     }
   `]
@@ -488,9 +742,11 @@ import { VideoSourceService, VideoSource } from '../../../core/services/video-so
 export class AdminAiTasksComponent implements OnInit {
   private aiTaskService = inject(AITaskService);
   private videoSourceService = inject(VideoSourceService);
+  private aiBoxService = inject(AIBoxService);
   private snackBar = inject(MatSnackBar);
 
   loading = signal(true);
+  importing = signal(false);
   syncing = signal(false);
   aiTasks = signal<AITask[]>([]);
   showCreateDialog = signal(false);
@@ -499,8 +755,23 @@ export class AdminAiTasksComponent implements OnInit {
 
   videoSources = signal<VideoSource[]>([]);
   abilities = signal<AIAbility[]>([]);
+  aiBoxes = signal<AIBox[]>([]);
+  selectedAiBoxId = signal<string>('');
+
+  // Computed signal for filtered tasks
+  filteredTasks = computed(() => {
+    const tasks = this.aiTasks();
+    const boxId = this.selectedAiBoxId();
+
+    if (!boxId) return tasks;
+
+    return tasks.filter(task =>
+      task.video_source?.aibox_id === boxId
+    );
+  });
 
   newTask = {
+    aibox_id: '',
     task_name: '',
     video_source_id: '',
     algorithms: [] as number[],
@@ -508,7 +779,20 @@ export class AdminAiTasksComponent implements OnInit {
     auto_start: true
   };
 
-  ngOnInit() { this.loadTasks(); }
+  // Filtered video sources based on selected AI Box
+  filteredVideoSources = computed(() => {
+    const sources = this.videoSources();
+    const boxId = this.newTask.aibox_id;
+
+    if (!boxId) return [];
+
+    return sources.filter(s => s.aibox_id === boxId);
+  });
+
+  ngOnInit() {
+    this.loadTasks();
+    this.loadAIBoxes();
+  }
 
   loadTasks() {
     this.loading.set(true);
@@ -525,8 +809,57 @@ export class AdminAiTasksComponent implements OnInit {
     });
   }
 
+  loadAIBoxes() {
+    this.aiBoxService.loadAiBoxes().subscribe({
+      next: (boxes: AIBox[]) => {
+        this.aiBoxes.set(boxes);
+      },
+      error: (err: any) => {
+        console.error('Load AI boxes error:', err);
+      }
+    });
+  }
+
+  onAiBoxFilterChange(value: string) {
+    this.selectedAiBoxId.set(value);
+    // Filtered tasks will update automatically via computed signal
+  }
+
+  getSelectedBoxName(): string {
+    const boxId = this.selectedAiBoxId();
+    if (!boxId) return 'All AI Boxes';
+
+    const box = this.aiBoxes().find(b => b.id === boxId);
+    return box ? box.name : 'All AI Boxes';
+  }
+
   refreshData() {
     this.loadTasks();
+  }
+
+  importFromBmapp() {
+    this.importing.set(true);
+    this.aiTaskService.importFromBmapp().subscribe({
+      next: (res) => {
+        this.importing.set(false);
+        const summary = `Imported ${res.imported} tasks, skipped ${res.skipped} (total: ${res.total_from_bmapp} from BM-APP)`;
+        this.showSuccess(summary);
+
+        // Show errors if any
+        if (res.errors && res.errors.length > 0) {
+          console.warn('Import errors:', res.errors);
+          this.showError(`Import completed with ${res.errors.length} errors. Check console for details.`);
+        }
+
+        // Refresh to see new tasks
+        setTimeout(() => this.loadTasks(), 1000);
+      },
+      error: (err) => {
+        console.error('Import error:', err);
+        this.importing.set(false);
+        this.showError(err.error?.detail || 'Failed to import tasks from BM-APP');
+      }
+    });
   }
 
   syncToBmapp() {
@@ -598,12 +931,18 @@ export class AdminAiTasksComponent implements OnInit {
 
   resetNewTask() {
     this.newTask = {
+      aibox_id: '',
       task_name: '',
       video_source_id: '',
       algorithms: [],
       description: '',
       auto_start: true
     };
+  }
+
+  onDialogBoxChange() {
+    // Reset video source selection when box changes
+    this.newTask.video_source_id = '';
   }
 
   loadDialogData() {
@@ -614,10 +953,14 @@ export class AdminAiTasksComponent implements OnInit {
     }).subscribe({
       next: ({ sources, abilities }) => {
         this.videoSources.set(sources);
-        this.abilities.set(abilities);
+        // Deduplicate abilities by ID (BM-APP can return duplicates)
+        const uniqueAbilities = abilities.filter((ability, index, self) =>
+          index === self.findIndex(a => a.id === ability.id)
+        );
+        this.abilities.set(uniqueAbilities);
         this.dialogLoading.set(false);
       },
-      error: (err) => {
+      error: (err: any) => {
         console.error('Load dialog data error:', err);
         this.dialogLoading.set(false);
         this.showError('Failed to load video sources and abilities');
@@ -640,6 +983,7 @@ export class AdminAiTasksComponent implements OnInit {
 
   canCreateTask(): boolean {
     return !!(
+      this.newTask.aibox_id &&
       this.newTask.video_source_id &&
       this.newTask.algorithms.length > 0
     );

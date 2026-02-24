@@ -2,6 +2,7 @@ import { Injectable, signal } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable, tap, catchError, throwError } from 'rxjs';
 import { environment } from '../../../environments/environment';
+import { AIBox } from './aibox.service';
 
 export interface VideoSource {
   id: string;
@@ -13,6 +14,7 @@ export interface VideoSource {
   location?: string;
   group_id?: string | null;  // Reference to CameraGroup
   aibox_id?: string | null;  // Reference to AIBox
+  aibox?: AIBox | null;  // Full AIBox object
   is_active: boolean;
   sound_alert: boolean;
   is_synced_bmapp: boolean;

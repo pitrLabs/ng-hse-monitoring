@@ -11,19 +11,21 @@ import { TrackingService } from './core/services/tracking.service';
 /**
  * Initialize authentication state before app starts.
  * This ensures user data is loaded before any routing happens.
+ * After auth completes, initialize tracking service.
  */
 function initializeAuth(): () => Promise<void> {
   const authService = inject(AuthService);
-  return () => authService.initAuth();
-}
-
-/**
- * Initialize page tracking service.
- * Tracks user navigation for audit logging.
- */
-function initializeTracking(): () => void {
   const trackingService = inject(TrackingService);
-  return () => trackingService.initialize();
+
+  return async () => {
+    // Wait for auth to complete first
+    await authService.initAuth();
+
+    // Then initialize tracking (only if user is authenticated)
+    if (authService.currentUser()) {
+      trackingService.initialize();
+    }
+  };
 }
 
 export const appConfig: ApplicationConfig = {
@@ -35,11 +37,6 @@ export const appConfig: ApplicationConfig = {
     {
       provide: APP_INITIALIZER,
       useFactory: initializeAuth,
-      multi: true
-    },
-    {
-      provide: APP_INITIALIZER,
-      useFactory: initializeTracking,
       multi: true
     }
   ]
